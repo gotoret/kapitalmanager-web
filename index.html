@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>💹 Kapital Manager v1.91</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Segoe UI',Arial,sans-serif;background:#f8fafc;min-height:100vh;font-size:13px;}
+button,input,select{font-family:inherit;font-size:13px;}
+button{cursor:pointer;}
+input:focus,select:focus{outline:2px solid #2563eb;outline-offset:1px;}
+::-webkit-scrollbar{width:6px;height:6px;}
+::-webkit-scrollbar-track{background:#f1f5f9;}
+::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px;}
+table{border-collapse:collapse;width:100%;}
+th{background:#f1f5f9;padding:8px 10px;text-align:left;color:#475569;font-weight:600;font-size:11px;border-bottom:2px solid #e2e8f0;white-space:nowrap;user-select:none;}
+th.sortable{cursor:pointer;}
+th.sortable:hover{background:#e2e8f0;}
+td{padding:7px 10px;border-bottom:1px solid #f1f5f9;}
+tr:nth-child(even) td{background:#f8fafc;}
+tr:hover td{background:#eff6ff!important;cursor:pointer;}
+.btn{background:#2563eb;color:#fff;border:none;border-radius:7px;padding:7px 14px;font-weight:600;}
+.btn:hover{background:#1d4ed8;}
+.btn:disabled{background:#94a3b8;cursor:not-allowed;}
+.btn-sm{background:#2563eb;color:#fff;border:none;border-radius:5px;padding:3px 9px;font-weight:600;font-size:11px;}
+.btn-gray{background:#64748b;color:#fff;border:none;border-radius:7px;padding:7px 14px;font-weight:600;}
+.btn-gray:hover{background:#475569;}
+.btn-danger{background:#dc2626;color:#fff;border:none;border-radius:7px;padding:7px 14px;font-weight:600;}
+.btn-danger:hover{background:#b91c1c;}
+.btn-danger-sm{background:#dc2626;color:#fff;border:none;border-radius:5px;padding:3px 9px;font-weight:600;font-size:11px;}
+.btn-green{background:#059669;color:#fff;border:none;border-radius:7px;padding:7px 14px;font-weight:600;}
+.inp{width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:6px 10px;}
+.inp-sm{border:1px solid #cbd5e1;border-radius:6px;padding:5px 8px;}
+.card{background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:16px;}
+.badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;}
+.modal{background:#fff;border-radius:16px;padding:24px;width:480px;max-width:95%;max-height:85vh;overflow-y:auto;box-shadow:0 24px 60px rgba(0,0,0,0.18);}
+.modal h3{font-size:15px;color:#1d4ed8;margin-bottom:18px;}
+.field{margin-bottom:12px;}
+.field label{display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.metric-card{background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:10px 14px;min-width:0;}
+.metric-label{color:#64748b;font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;}
+.metric-value{font-size:18px;font-weight:700;line-height:1.2;}
+#app{display:flex;flex-direction:column;height:100vh;overflow:hidden;}
+#header{background:#fff;border-bottom:1px solid #e2e8f0;padding:10px 16px;flex-shrink:0;}
+#header-top{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;}
+#metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;}
+#tabs-bar{display:flex;background:#fff;border-bottom:1px solid #e2e8f0;overflow-x:auto;flex-shrink:0;}
+.tab-btn{padding:10px 16px;background:none;border:none;border-bottom:2px solid transparent;color:#64748b;white-space:nowrap;font-weight:400;}
+.tab-btn.active{color:#2563eb;border-bottom-color:#2563eb;font-weight:700;}
+.tab-btn:hover{color:#2563eb;}
+#content{flex:1;overflow:auto;}
+#alert-banner{margin-top:8px;background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:6px 12px;font-size:12px;color:#b45309;font-weight:600;display:none;}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid #e2e8f0;background:#f8fafc;align-items:center;}
+.progress-bar-wrap{background:#e2e8f0;border-radius:18px;height:36px;position:relative;overflow:hidden;}
+.progress-bar-fill{height:36px;border-radius:18px;transition:width 0.5s;}
+.progress-bar-label{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;}
+/* Autocomplete */
+.ac-wrap{position:relative;}
+.ac-list{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.12);z-index:500;max-height:220px;overflow-y:auto;margin-top:2px;}
+.ac-item{padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid #f1f5f9;}
+.ac-item:hover,.ac-item.selected{background:#eff6ff;}
+.ac-item .ac-ticker{font-weight:700;color:#1d4ed8;margin-right:6px;}
+.ac-item .ac-name{color:#475569;}
+.ac-item .ac-exch{color:#94a3b8;font-size:11px;float:right;}
+.price-tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:3px 8px;border-radius:20px;font-weight:600;}
+.price-live{background:#d1fae5;color:#065f46;}
+.price-sim{background:#fef3c7;color:#92400e;}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid #e2e8f0;border-top-color:#2563eb;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <div id="header-top">
+      <span style="font-size:22px;font-weight:700;color:#1d4ed8;letter-spacing:1px">💹 Kapital Manager</span>
+      <span style="font-size:11px;color:#94a3b8">v1.91</span>
+      <span id="price-mode-tag" class="price-tag price-sim">⚡ Precios simulados</span>
+      <div style="flex:1"></div>
+      <span id="last-update-label" style="font-size:11px;color:#94a3b8">Sin actualizar | Próx: 60s</span>
+      <button class="btn" style="padding:5px 12px;font-size:12px" onclick="refreshPrices()">↻ Actualizar</button>
+    </div>
+    <div id="metrics-grid"></div>
+    <div id="alert-banner"></div>
+  </div>
+  <div id="tabs-bar"></div>
+  <div id="content"></div>
+</div>
+
+<div id="disclaimer-overlay" class="overlay" style="z-index:2000">
+  <div class="modal" style="width:560px">
+    <div style="text-align:center;font-size:40px;margin-bottom:8px">⚠️</div>
+    <h2 style="text-align:center;color:#dc2626;font-size:14px;font-weight:700;margin-bottom:16px;line-height:1.4">AVISO IMPORTANTE — NO ES RECOMENDACIÓN DE INVERSIÓN</h2>
+    <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:10px;padding:14px;font-size:11px;color:#334155;line-height:1.8;margin-bottom:20px">
+      <p style="margin-bottom:8px">Kapital Manager es una herramienta de seguimiento y análisis personal de carteras de inversión con fines exclusivamente informativos y educativos.</p>
+      <p style="margin-bottom:8px">• La información proporcionada <strong>NO constituye</strong> asesoramiento financiero ni recomendación de compra, venta o mantenimiento de valores.</p>
+      <p style="margin-bottom:8px">• Los precios en tiempo real se obtienen de Yahoo Finance. Pueden tener retraso de 15 min.</p>
+      <p style="margin-bottom:8px">• Invertir en bolsa conlleva riesgo de pérdida parcial o total del capital.</p>
+      <p>• El usuario es el único responsable de sus decisiones. Consulta con un asesor regulado por la CNMV.</p>
+    </div>
+    <button class="btn" style="width:100%;padding:13px;font-size:13px" onclick="acceptDisclaimer()">✅ He leído y entendido este aviso — Continuar</button>
+  </div>
+</div>
+
+<div id="modal-overlay" class="overlay" style="display:none" onclick="if(event.target===this)closeModal()">
+  <div id="modal-box" class="modal"></div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// DATA
+// ─────────────────────────────────────────────
+const DEFAULT_PORTFOLIO = [
+  {date:"2021-03-30",ticker:"ACX.MC",name:"ACERINOX",shares:197,avg_cost:10.18,currency:"EUR",sector:"Materiales Básicos"},
+  {date:"2021-04-06",ticker:"TEF.MC",name:"TELEFONICA",shares:295,avg_cost:3.80,currency:"EUR",sector:"Comunicaciones"},
+  {date:"2021-04-09",ticker:"REP.MC",name:"REPSOL",shares:95,avg_cost:10.18,currency:"EUR",sector:"Energía"},
+  {date:"2021-05-03",ticker:"ENG.MC",name:"ENAGAS",shares:54,avg_cost:18.24,currency:"EUR",sector:"Utilities"},
+  {date:"2021-06-02",ticker:"MAP.MC",name:"MAPFRE",shares:534,avg_cost:1.87,currency:"EUR",sector:"Servicios Financieros"},
+  {date:"2021-06-28",ticker:"ACS.MC",name:"ACS",shares:50,avg_cost:22.69,currency:"EUR",sector:"Industria"},
+  {date:"2021-08-03",ticker:"EBRO.MC",name:"EBRO FOODS",shares:58,avg_cost:16.98,currency:"EUR",sector:"Consumo Defensivo"},
+  {date:"2021-09-24",ticker:"IBE.MC",name:"IBERDROLA",shares:122,avg_cost:9.26,currency:"EUR",sector:"Utilities"},
+  {date:"2021-11-09",ticker:"LOG.MC",name:"LOGISTA",shares:57,avg_cost:17.48,currency:"EUR",sector:"Industria"},
+  {date:"2022-02-15",ticker:"MCM.MC",name:"MIQUEL Y COSTAS",shares:80,avg_cost:12.38,currency:"EUR",sector:"Industria"},
+  {date:"2022-06-15",ticker:"TROW",name:"T. ROWE PRICE",shares:14,avg_cost:109.20,currency:"USD",sector:"Servicios Financieros"},
+  {date:"2022-12-06",ticker:"KNOP",name:"KNOT Offshore Partners",shares:102,avg_cost:9.80,currency:"USD",sector:"Energía"},
+  {date:"2023-01-12",ticker:"INTC",name:"INTEL CORPORATION",shares:35,avg_cost:25.39,currency:"USD",sector:"Tecnología"},
+  {date:"2023-01-25",ticker:"MMM",name:"3M",shares:20,avg_cost:107.75,currency:"USD",sector:"Industria"},
+  {date:"2023-04-04",ticker:"VZ",name:"VERIZON",shares:28,avg_cost:39.21,currency:"USD",sector:"Comunicaciones"},
+  {date:"2023-05-16",ticker:"WPC",name:"W.P. CAREY",shares:26,avg_cost:70.10,currency:"USD",sector:"Inmobiliario"},
+  {date:"2023-06-14",ticker:"CVS",name:"CVS Health Corp",shares:16,avg_cost:68.22,currency:"USD",sector:"Salud"},
+  {date:"2023-09-07",ticker:"BTI",name:"BRITISH AMERICAN TOBACCO",shares:32,avg_cost:25.85,currency:"USD",sector:"Consumo Defensivo"},
+  {date:"2023-10-02",ticker:"KHC",name:"KRAFT HEINZ",shares:16,avg_cost:33.15,currency:"USD",sector:"Consumo Defensivo"},
+  {date:"2023-10-06",ticker:"KO",name:"COCA COLA",shares:10,avg_cost:52.00,currency:"USD",sector:"Consumo Defensivo"},
+  {date:"2023-12-15",ticker:"PFE",name:"PFIZER",shares:40,avg_cost:26.72,currency:"USD",sector:"Salud"},
+  {date:"2024-01-24",ticker:"MO",name:"ALTRIA",shares:14,avg_cost:40.20,currency:"USD",sector:"Consumo Defensivo"},
+  {date:"2024-01-31",ticker:"NWN",name:"Northwest Natural",shares:15,avg_cost:34.43,currency:"USD",sector:"Utilities"},
+  {date:"2024-02-14",ticker:"UVV",name:"Universal Corporation",shares:10,avg_cost:49.75,currency:"USD",sector:"Consumo Defensivo"},
+  {date:"2024-04-29",ticker:"BEN",name:"Franklin Resources",shares:31,avg_cost:23.45,currency:"USD",sector:"Servicios Financieros"},
+];
+
+const FX_FALLBACK = {USD:0.92,GBP:1.17,JPY:0.0062,CHF:1.02,CAD:0.68,AUD:0.60,EUR:1.0};
+const PIE_COLORS = ["#4ade80","#60a5fa","#f59e0b","#f87171","#a78bfa","#34d399","#fb923c","#38bdf8","#e879f9","#94a3b8","#fbbf24","#6366f1"];
+const TABS = ["📋 Cartera","🔔 Alertas","💰 Dividendos","📝 Transacciones","📊 Gráficos","🎯 Objetivos","📐 Valoración"];
+const CURRENCIES = ["EUR","USD","GBP","CHF","CAD","AUD","JPY"];
+const SECTORS = ["Tecnología","Servicios Financieros","Salud","Consumo Cíclico","Consumo Defensivo","Energía","Materiales Básicos","Industria","Utilities","Inmobiliario","Comunicaciones"];
+
+// CORS proxies — se prueban en orden hasta que uno funcione
+const PROXIES = [
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
+];
+
+const SEARCH_PROXIES = [
+  q => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
+  q => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
+];
+
+// ─────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────
+let _uid = Date.now();
+const uid = () => ++_uid;
+const ls = {
+  get:(k,d)=>{try{const v=localStorage.getItem(k);return v!==null?JSON.parse(v):d;}catch(e){return d;}},
+  set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
+};
+
+let state = {
+  positions: ls.get("km_positions", DEFAULT_PORTFOLIO),
+  alerts: ls.get("km_alerts", []),
+  dividends: ls.get("km_dividends", []),
+  transactions: ls.get("km_transactions", []),
+  priceCache: {},       // ticker -> precio en divisa original
+  fxCache: {},          // "EURUSD=X" -> tasa
+  divInfo: [],
+  activeTab: 0,
+  sortCol: null,
+  sortDir: 1,
+  selectedTicker: null,
+  countdown: 60,
+  lastUpdate: null,
+  livePrices: false,    // true si al menos un precio real fue obtenido
+};
+
+const save = () => {
+  ls.set("km_positions", state.positions);
+  ls.set("km_alerts", state.alerts);
+  ls.set("km_dividends", state.dividends);
+  ls.set("km_transactions", state.transactions);
+};
+
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+const getFX = (cur) => state.fxCache[cur] || FX_FALLBACK[cur] || 1;
+const toEUR = (v, cur) => (v||0) * getFX(cur);
+const fmtEUR = v => "€"+((v||0).toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2}));
+const fmtPct = v => (v>=0?"+":"")+((v||0).toFixed(2))+"%";
+const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+const pnlColor = v => v>=0?"#16a34a":"#dc2626";
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+function buildDivInfo() {
+  state.divInfo = state.positions.map(p => ({
+    ticker:p.ticker, name:p.name, shares:p.shares, currency:p.currency,
+    div_rate: +(p.avg_cost*0.045).toFixed(4),
+    div_yield: 0.045,
+    annual_income: +(p.avg_cost*p.shares*0.045).toFixed(2),
+    ex_date: new Date(Date.now()+30*864e5).toISOString().slice(0,10),
+    freq: "Trimestral"
+  }));
+}
+
+// ─────────────────────────────────────────────
+// YAHOO FINANCE — precios reales
+// ─────────────────────────────────────────────
+async function fetchWithProxy(proxies, ticker) {
+  for (const proxyFn of proxies) {
+    try {
+      const url = proxyFn(ticker);
+      const res = await fetch(url, {signal: AbortSignal.timeout(6000)});
+      if (!res.ok) continue;
+      const data = await res.json();
+      const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      if (price) return price;
+    } catch(e) { /* try next */ }
+  }
+  return null;
+}
+
+async function fetchYahooSearch(query) {
+  for (const proxyFn of SEARCH_PROXIES) {
+    try {
+      const url = proxyFn(query);
+      const res = await fetch(url, {signal: AbortSignal.timeout(6000)});
+      if (!res.ok) continue;
+      const data = await res.json();
+      const quotes = data?.quotes || [];
+      return quotes.filter(q => q.quoteType === "EQUITY" || q.quoteType === "ETF").map(q => ({
+        ticker: q.symbol,
+        name: q.longname || q.shortname || q.symbol,
+        exchange: q.exchange || "",
+        type: q.quoteType || ""
+      }));
+    } catch(e) { /* try next */ }
+  }
+  return [];
+}
+
+async function fetchFXRates() {
+  const pairs = ["EURUSD=X","EURGBP=X","EURJPY=X","EURCHF=X","EURCAD=X","EURAUD=X"];
+  for (const pair of pairs) {
+    const price = await fetchWithProxy(PROXIES, pair);
+    if (price) {
+      // pair es "EURxxx=X", extraemos la divisa destino
+      const cur = pair.replace("EUR","").replace("=X","");
+      // price = EUR/XXX, así que 1 XXX = 1/price EUR
+      state.fxCache[cur] = +(1/price).toFixed(6);
+    }
+  }
+  state.fxCache["EUR"] = 1.0;
+}
+
+async function refreshPrices() {
+  // Primero tipos de cambio
+  await fetchFXRates();
+
+  let liveCount = 0;
+  const tickers = state.positions.map(p=>p.ticker);
+
+  for (const ticker of tickers) {
+    const price = await fetchWithProxy(PROXIES, ticker);
+    if (price) {
+      state.priceCache[ticker] = price;
+      liveCount++;
+    } else {
+      // Precio simulado como fallback
+      if (!state.priceCache[ticker]) {
+        const pos = state.positions.find(p=>p.ticker===ticker);
+        state.priceCache[ticker] = +(pos.avg_cost*(1+(Math.random()-0.45)*0.06)).toFixed(4);
+      }
+    }
+    await sleep(120); // evitar rate limiting
+  }
+
+  state.livePrices = liveCount > 0;
+  state.lastUpdate = new Date();
+  state.countdown = 60;
+
+  // Actualizar badge
+  const tag = document.getElementById("price-mode-tag");
+  if (tag) {
+    if (state.livePrices) {
+      tag.className = "price-tag price-live";
+      tag.textContent = `✅ ${liveCount}/${tickers.length} precios en tiempo real`;
+    } else {
+      tag.className = "price-tag price-sim";
+      tag.textContent = "⚡ Precios simulados (sin conexión)";
+    }
+  }
+
+  checkAlerts();
+  renderHeader();
+  renderActiveTab();
+}
+
+// ─────────────────────────────────────────────
+// COUNTDOWN
+// ─────────────────────────────────────────────
+let countdownInterval = null;
+function startCountdown() {
+  if (countdownInterval) clearInterval(countdownInterval);
+  countdownInterval = setInterval(() => {
+    state.countdown--;
+    if (state.countdown <= 0) { refreshPrices(); return; }
+    const el = document.getElementById("last-update-label");
+    if (el && state.lastUpdate) el.textContent = `Actualizado: ${state.lastUpdate.toLocaleTimeString("es-ES")} | Próx: ${state.countdown}s`;
+  }, 1000);
+}
+
+function checkAlerts() {
+  state.alerts.forEach(a => {
+    if (!a.active || a.triggered) return;
+    const pos = state.positions.find(p=>p.ticker===a.ticker);
+    const cp = state.priceCache[a.ticker]; if (!cp) return;
+    const cpE = toEUR(cp, pos?.currency||"EUR");
+    if ((a.direction==="ABOVE"&&cpE>=a.price)||(a.direction==="BELOW"&&cpE<=a.price)) {
+      a.triggered=true; a.active=false;
+    }
+  });
+  save();
+}
+
+// ─────────────────────────────────────────────
+// AUTOCOMPLETE TICKER
+// ─────────────────────────────────────────────
+let acTimeout = null;
+let acResults = [];
+let acIdx = -1;
+
+function setupAutocomplete(inputId, onSelect) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  const wrap = input.parentElement;
+  wrap.style.position = "relative";
+
+  input.addEventListener("input", () => {
+    clearTimeout(acTimeout);
+    const q = input.value.trim();
+    closeAcList(inputId);
+    if (q.length < 2) return;
+    acTimeout = setTimeout(() => doSearch(q, inputId, onSelect), 350);
+  });
+
+  input.addEventListener("keydown", e => {
+    const list = document.getElementById("ac-list-"+inputId);
+    if (!list) return;
+    if (e.key==="ArrowDown") { acIdx=Math.min(acIdx+1,acResults.length-1); highlightAc(inputId); e.preventDefault(); }
+    else if (e.key==="ArrowUp") { acIdx=Math.max(acIdx-1,0); highlightAc(inputId); e.preventDefault(); }
+    else if (e.key==="Enter" && acIdx>=0) { selectAc(inputId, acIdx, onSelect); e.preventDefault(); }
+    else if (e.key==="Escape") closeAcList(inputId);
+  });
+
+  document.addEventListener("click", e => { if (!wrap.contains(e.target)) closeAcList(inputId); }, {once:false});
+}
+
+async function doSearch(q, inputId, onSelect) {
+  const results = await fetchYahooSearch(q);
+  acResults = results;
+  acIdx = -1;
+  const existing = document.getElementById("ac-list-"+inputId);
+  if (existing) existing.remove();
+  if (!results.length) return;
+
+  const input = document.getElementById(inputId);
+  if (!input) return;
+
+  const list = document.createElement("div");
+  list.id = "ac-list-"+inputId;
+  list.className = "ac-list";
+  results.forEach((r,i) => {
+    const item = document.createElement("div");
+    item.className = "ac-item";
+    item.innerHTML = `<span class="ac-ticker">${esc(r.ticker)}</span><span class="ac-name">${esc(r.name)}</span><span class="ac-exch">${esc(r.exchange)}</span>`;
+    item.addEventListener("mousedown", e => { e.preventDefault(); selectAc(inputId, i, onSelect); });
+    list.appendChild(item);
+  });
+  input.parentElement.appendChild(list);
+}
+
+function highlightAc(inputId) {
+  const items = document.querySelectorAll(`#ac-list-${inputId} .ac-item`);
+  items.forEach((el,i) => el.classList.toggle("selected", i===acIdx));
+}
+
+function selectAc(inputId, idx, onSelect) {
+  const r = acResults[idx];
+  if (!r) return;
+  const input = document.getElementById(inputId);
+  if (input) input.value = r.ticker;
+  closeAcList(inputId);
+  if (onSelect) onSelect(r);
+}
+
+function closeAcList(inputId) {
+  const list = document.getElementById("ac-list-"+inputId);
+  if (list) list.remove();
+  acIdx = -1;
+}
+
+// ─────────────────────────────────────────────
+// RENDER HEADER
+// ─────────────────────────────────────────────
+function renderHeader() {
+  const totals = state.positions.reduce((acc,p)=>{
+    const inv = toEUR(p.shares*p.avg_cost, p.currency);
+    const cur = state.priceCache[p.ticker] ? toEUR(p.shares*state.priceCache[p.ticker], p.currency) : inv;
+    acc.inv+=inv; acc.cur+=cur; return acc;
+  },{inv:0,cur:0});
+  const pnl = totals.cur - totals.inv;
+  const pct = totals.inv ? pnl/totals.inv*100 : 0;
+  const pc = pnlColor(pnl);
+  const activeAlerts = state.alerts.filter(a=>a.active&&!a.triggered).length;
+  const triggered = state.alerts.filter(a=>a.triggered);
+
+  document.getElementById("metrics-grid").innerHTML = `
+    <div class="metric-card" style="border-left:3px solid #2563eb"><div class="metric-label">INVERTIDO</div><div class="metric-value" style="color:#2563eb">${fmtEUR(totals.inv)}</div></div>
+    <div class="metric-card" style="border-left:3px solid #0284c7"><div class="metric-label">VALOR ACTUAL</div><div class="metric-value" style="color:#0284c7">${fmtEUR(totals.cur)}</div></div>
+    <div class="metric-card" style="border-left:3px solid ${pc}"><div class="metric-label">GANANCIA / PÉRDIDA</div><div class="metric-value" style="color:${pc}">${pnl>=0?"+":""}${fmtEUR(Math.abs(pnl))}</div></div>
+    <div class="metric-card" style="border-left:3px solid ${pc}"><div class="metric-label">RENTABILIDAD</div><div class="metric-value" style="color:${pc}">${fmtPct(pct)}</div></div>
+    <div class="metric-card" style="border-left:3px solid #7c3aed"><div class="metric-label">POSICIONES</div><div class="metric-value" style="color:#7c3aed">${state.positions.length}</div></div>
+    <div class="metric-card" style="border-left:3px solid #b45309"><div class="metric-label">ALERTAS ACTIVAS</div><div class="metric-value" style="color:#b45309">${activeAlerts}</div>${triggered.length?`<div style="color:#94a3b8;font-size:10px;margin-top:2px">${triggered.length} disparada(s)</div>`:""}</div>
+  `;
+
+  const banner = document.getElementById("alert-banner");
+  if (triggered.length) {
+    banner.style.display="block";
+    banner.textContent = "⚡ "+triggered.map(a=>`${a.ticker} ${a.direction==="ABOVE"?"subió":"bajó"} a ${fmtEUR(a.price)}`).join("  ·  ");
+  } else { banner.style.display="none"; }
+
+  const lbl = document.getElementById("last-update-label");
+  if (lbl) lbl.textContent = state.lastUpdate ? `Actualizado: ${state.lastUpdate.toLocaleTimeString("es-ES")} | Próx: ${state.countdown}s` : `Sin actualizar | Próx: ${state.countdown}s`;
+}
+
+// ─────────────────────────────────────────────
+// TABS
+// ─────────────────────────────────────────────
+function renderTabs() {
+  document.getElementById("tabs-bar").innerHTML = TABS.map((t,i)=>
+    `<button class="tab-btn ${state.activeTab===i?"active":""}" onclick="switchTab(${i})">${esc(t)}</button>`
+  ).join("");
+}
+
+function switchTab(i) { state.activeTab=i; state.selectedTicker=null; renderTabs(); renderActiveTab(); }
+
+function renderActiveTab() {
+  const el = document.getElementById("content");
+  switch(state.activeTab) {
+    case 0: el.innerHTML = renderPortfolio(); break;
+    case 1: el.innerHTML = renderAlerts(); break;
+    case 2: el.innerHTML = renderDividends(); break;
+    case 3: el.innerHTML = renderTransactions(); break;
+    case 4: el.innerHTML = renderCharts(); break;
+    case 5: el.innerHTML = renderGoals(); break;
+    case 6: el.innerHTML = renderValuation(); break;
+  }
+}
+
+// ─────────────────────────────────────────────
+// TAB 0 — CARTERA
+// ─────────────────────────────────────────────
+function renderPortfolio() {
+  const filter = (document.getElementById("port-filter")||{}).value||"";
+  let rows = state.positions.filter(p=>
+    p.ticker.toLowerCase().includes(filter.toLowerCase())||
+    (p.name||"").toLowerCase().includes(filter.toLowerCase())||
+    (p.sector||"").toLowerCase().includes(filter.toLowerCase())
+  );
+
+  const getV = (p,col) => {
+    const cp=state.priceCache[p.ticker],cur=p.currency;
+    const inv=toEUR(p.shares*p.avg_cost,cur);
+    const curV=cp?toEUR(p.shares*cp,cur):null;
+    const pnl=curV!==null?curV-inv:null;
+    const di=state.divInfo.find(d=>d.ticker===p.ticker);
+    return {ticker:p.ticker,empresa:p.name||"",acciones:p.shares,coste:toEUR(p.avg_cost,cur),precio:cp?toEUR(cp,cur):0,valor:curV||inv,pnl:pnl||0,pct:pnl&&inv?pnl/inv*100:0,yield:(di?.div_yield||0)*100,sector:p.sector||""}[col]||0;
+  };
+
+  if (state.sortCol) rows = [...rows].sort((a,b)=>state.sortDir*(getV(a,state.sortCol)<getV(b,state.sortCol)?-1:1));
+
+  const cols = [
+    {k:"ticker",l:"Ticker"},{k:"empresa",l:"Empresa"},{k:"acciones",l:"Acc.",al:"center"},
+    {k:"coste",l:"Coste medio",al:"right"},{k:"precio",l:"Precio actual",al:"right"},
+    {k:"valor",l:"Valor total",al:"right"},{k:"pnl",l:"G/P €",al:"right"},
+    {k:"pct",l:"G/P %",al:"right"},{k:"yield",l:"Yield %",al:"center"},{k:"sector",l:"Sector"},
+  ];
+
+  const thead = cols.map(c=>{
+    const arrow = state.sortCol===c.k?(state.sortDir>0?" ↑":" ↓"):"";
+    return `<th class="sortable" style="text-align:${c.al||"left"}" onclick="sortPortfolio('${c.k}')">${c.l}${arrow}</th>`;
+  }).join("");
+
+  const tbody = rows.map(pos => {
+    const cp=state.priceCache[pos.ticker],cur=pos.currency;
+    const inv=toEUR(pos.shares*pos.avg_cost,cur);
+    const cpE=cp?toEUR(cp,cur):null;
+    const curE=cpE?pos.shares*cpE:null;
+    const pnl=curE!==null?curE-inv:null;
+    const pct=pnl!==null&&inv?pnl/inv*100:null;
+    const pc=pnl!==null?pnlColor(pnl):"#94a3b8";
+    const di=state.divInfo.find(d=>d.ticker===pos.ticker);
+    const yld=di?(di.div_yield||0)*100:null;
+    const yc=yld?(yld>=4?"#16a34a":yld>=2?"#b45309":"#dc2626"):"#94a3b8";
+    const sel=state.selectedTicker===pos.ticker;
+    return `<tr style="${sel?"background:#eff6ff!important":""}" onclick="selectTicker('${esc(pos.ticker)}')">
+      <td style="color:#1d4ed8;font-weight:700">${esc(pos.ticker)}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pos.name)}</td>
+      <td style="text-align:center">${Math.round(pos.shares)}</td>
+      <td style="text-align:right">${fmtEUR(toEUR(pos.avg_cost,cur))}</td>
+      <td style="text-align:right">${cpE?fmtEUR(cpE):'<span style="color:#94a3b8">…</span>'}</td>
+      <td style="text-align:right;font-weight:600">${fmtEUR(curE||inv)}</td>
+      <td style="text-align:right;color:${pc};font-weight:600">${pnl!==null?(pnl>=0?"+":"")+fmtEUR(Math.abs(pnl)):"…"}</td>
+      <td style="text-align:right;color:${pc};font-weight:600">${pct!==null?fmtPct(pct):"…"}</td>
+      <td style="text-align:center;color:${yc};font-weight:600">${yld?yld.toFixed(2)+"%":"—"}</td>
+      <td style="color:#64748b;font-size:12px">${esc(pos.sector)}</td>
+    </tr>`;
+  }).join("");
+
+  const selPos = state.selectedTicker ? state.positions.find(p=>p.ticker===state.selectedTicker) : null;
+  const panel = selPos ? `
+    <div style="width:260px;border-left:1px solid #e2e8f0;padding:14px;background:#f8fafc;overflow-y:auto;flex-shrink:0">
+      <div style="font-weight:700;font-size:15px;color:#1d4ed8;margin-bottom:2px">${esc(selPos.ticker)}</div>
+      <div style="color:#64748b;font-size:12px;margin-bottom:12px">${esc(selPos.name)}</div>
+      ${[["Acciones",Math.round(selPos.shares)],["Coste medio",fmtEUR(toEUR(selPos.avg_cost,selPos.currency))],
+        ["Precio actual",state.priceCache[selPos.ticker]?fmtEUR(toEUR(state.priceCache[selPos.ticker],selPos.currency)):"Sin datos"],
+        ["Valor total",fmtEUR(toEUR((state.priceCache[selPos.ticker]||selPos.avg_cost)*selPos.shares,selPos.currency))],
+        ["Sector",selPos.sector||"—"],["Divisa",selPos.currency],["Fecha",selPos.date||"—"]
+      ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #e2e8f0;font-size:12px"><span style="color:#64748b">${k}</span><span style="font-weight:600">${v}</span></div>`).join("")}
+      <div style="margin-top:12px;display:flex;flex-direction:column;gap:6px">
+        <button class="btn" style="font-size:12px;padding:6px 10px" onclick="openEditPos('${esc(selPos.ticker)}')">✏ Editar posición</button>
+        <button class="btn-danger" style="font-size:12px;padding:6px 10px" onclick="deletePosition('${esc(selPos.ticker)}')">✕ Eliminar</button>
+        <button class="btn-green" style="font-size:12px;padding:6px 10px" onclick="openAddAlert('${esc(selPos.ticker)}')">🔔 Nueva alerta</button>
+      </div>
+    </div>` : "";
+
+  return `
+    <div style="display:flex;height:100%;overflow:hidden">
+      <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+        <div class="toolbar">
+          <button class="btn" onclick="openAddPos()">＋ Añadir</button>
+          <button class="btn" style="background:#475569" onclick="openEditPos()">✏ Editar</button>
+          <button class="btn-danger" onclick="deletePosition()">✕ Eliminar</button>
+          <button class="btn-green" onclick="openAddAlert()">🔔 Alerta</button>
+          <div style="flex:1"></div>
+          <input id="port-filter" class="inp-sm" placeholder="🔍 Filtrar..." style="width:190px" value="${esc(filter)}" oninput="renderActiveTab()">
+        </div>
+        <div style="flex:1;overflow:auto">
+          <table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>
+        </div>
+      </div>
+      ${panel}
+    </div>`;
+}
+
+function sortPortfolio(col) {
+  if(state.sortCol===col) state.sortDir*=-1; else {state.sortCol=col;state.sortDir=1;}
+  renderActiveTab();
+}
+function selectTicker(tk) {
+  state.selectedTicker = state.selectedTicker===tk?null:tk;
+  renderActiveTab();
+}
+
+// ─────────────────────────────────────────────
+// TAB 1 — ALERTAS
+// ─────────────────────────────────────────────
+function renderAlerts() {
+  const rows = state.alerts.map(a=>{
+    const cond=a.direction==="ABOVE"?"↑ Sube a":"↓ Baja a";
+    const st=a.triggered?"✅ Disparada":a.active?"🟢 Activa":"⬛ Inactiva";
+    const sc=a.triggered?"#16a34a":a.active?"#2563eb":"#94a3b8";
+    return `<tr>
+      <td style="color:#94a3b8">${a.id}</td>
+      <td style="color:#1d4ed8;font-weight:700">${esc(a.ticker)}</td>
+      <td>${cond}</td><td style="font-weight:600">${fmtEUR(a.price)}</td>
+      <td style="color:${sc};font-weight:600">${st}</td>
+      <td style="color:#64748b">${(a.created_at||"").slice(0,16)}</td>
+      <td><button class="btn-danger-sm" onclick="deleteAlert(${a.id})">✕</button></td>
+    </tr>`;
+  }).join("");
+  return `<div style="padding:14px">
+    <div style="margin-bottom:12px"><button class="btn" onclick="openAddAlert()">＋ Nueva alerta</button></div>
+    <table><thead><tr>${["ID","Ticker","Condición","Precio objetivo","Estado","Creada",""].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+    <tbody>${rows||`<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:28px">Sin alertas configuradas</td></tr>`}</tbody></table>
+  </div>`;
+}
+function deleteAlert(id){ state.alerts=state.alerts.filter(a=>a.id!==id); save(); renderActiveTab(); renderHeader(); }
+
+// ─────────────────────────────────────────────
+// TAB 2 — DIVIDENDOS
+// ─────────────────────────────────────────────
+function renderDividends() {
+  const totalAnn = state.divInfo.reduce((s,d)=>s+toEUR(d.annual_income||0,d.currency||"EUR"),0);
+  const divRows = state.divInfo.map((d)=>{
+    const yp=(d.div_yield||0)*100;
+    const yc=yp>=4?"#16a34a":yp>=2?"#b45309":"#dc2626";
+    return `<tr>
+      <td style="color:#1d4ed8;font-weight:700">${esc(d.ticker)}</td>
+      <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.name)}</td>
+      <td>${Math.round(d.shares||0)}</td>
+      <td style="font-weight:600">${d.div_rate?d.div_rate.toFixed(4)+" "+d.currency:"—"}</td>
+      <td style="color:${yc};font-weight:600">${yp?yp.toFixed(2)+"%":"—"}</td>
+      <td style="color:#64748b">${d.ex_date||"—"}</td>
+      <td><span class="badge" style="background:#b4530922;color:#b45309">${d.freq||"—"}</span></td>
+      <td style="font-weight:600;color:#b45309">${fmtEUR(toEUR(d.annual_income||0,d.currency||"EUR"))}</td>
+    </tr>`;
+  }).join("");
+  const histRows = state.dividends.map(d=>`<tr>
+    <td style="color:#64748b">${(d.date||"").slice(0,10)}</td>
+    <td style="color:#1d4ed8;font-weight:700">${esc(d.ticker)}</td>
+    <td>${d.shares}</td><td>${fmtEUR(d.amount)}</td>
+    <td style="font-weight:600;color:#b45309">${fmtEUR(d.amount*d.shares)}</td>
+    <td style="color:#64748b">${esc(d.notes||"—")}</td>
+    <td><button class="btn-danger-sm" onclick="deleteDividend(${d.id})">✕</button></td>
+  </tr>`).join("");
+  return `<div style="padding:14px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px">
+      ${["ANUAL","MENSUAL","DIARIO","POR HORA"].map((l,i)=>{
+        const v=[totalAnn,totalAnn/12,totalAnn/365,totalAnn/8760][i];
+        return `<div class="metric-card" style="border-left:3px solid #b45309"><div class="metric-label">${l}</div><div class="metric-value" style="color:#b45309">${fmtEUR(v)}</div></div>`;
+      }).join("")}
+    </div>
+    <div style="margin-bottom:12px"><button class="btn" onclick="openAddDividend()">💰 Registrar dividendo</button></div>
+    <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">Dividendos esperados por posición</h4>
+    <div style="overflow-x:auto;margin-bottom:20px">
+      <table style="min-width:700px"><thead><tr>${["Ticker","Empresa","Acciones","Div./acc","Yield %","Ex-date","Frecuencia","Ingreso anual"].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+      <tbody>${divRows||`<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>`}</tbody></table>
+    </div>
+    <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">Historial de cobros registrados</h4>
+    <table><thead><tr>${["Fecha","Ticker","Acc.","Importe/acc","Total","Notas",""].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+    <tbody>${histRows||`<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px">Sin dividendos registrados</td></tr>`}</tbody></table>
+  </div>`;
+}
+function deleteDividend(id){ state.dividends=state.dividends.filter(d=>d.id!==id); save(); renderActiveTab(); }
+
+// ─────────────────────────────────────────────
+// TAB 3 — TRANSACCIONES
+// ─────────────────────────────────────────────
+function renderTransactions() {
+  const rows = state.transactions.map(t=>`<tr>
+    <td style="color:#94a3b8">${t.id}</td>
+    <td style="color:#64748b">${(t.date||"").slice(0,16)}</td>
+    <td style="color:#1d4ed8;font-weight:700">${esc(t.ticker)}</td>
+    <td><span class="badge" style="background:${t.type==="BUY"?"#2563eb":"#dc2626"}22;color:${t.type==="BUY"?"#2563eb":"#dc2626"}">${t.type}</span></td>
+    <td>${t.shares}</td><td>${fmtEUR(t.price)}</td>
+    <td style="font-weight:600">${fmtEUR(t.shares*t.price)}</td>
+    <td style="color:#64748b">${esc(t.notes||"—")}</td>
+    <td><button class="btn-danger-sm" onclick="deleteTransaction(${t.id})">✕</button></td>
+  </tr>`).join("");
+  return `<div style="padding:14px;overflow-x:auto">
+    <table style="min-width:650px"><thead><tr>${["ID","Fecha","Ticker","Tipo","Acciones","Precio","Total","Notas",""].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+    <tbody>${rows||`<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:28px">Sin transacciones registradas</td></tr>`}</tbody></table>
+  </div>`;
+}
+function deleteTransaction(id){ if(!confirm("¿Eliminar esta transacción?")) return; state.transactions=state.transactions.filter(t=>t.id!==id); save(); renderActiveTab(); }
+
+// ─────────────────────────────────────────────
+// TAB 4 — GRÁFICOS
+// ─────────────────────────────────────────────
+function renderCharts() {
+  const sectorData={},currData={};
+  state.positions.forEach(p=>{
+    const v=toEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares,p.currency);
+    sectorData[p.sector||"Otro"]=(sectorData[p.sector||"Otro"]||0)+v;
+    currData[p.currency||"EUR"]=(currData[p.currency||"EUR"]||0)+v;
+  });
+  const total=Object.values(sectorData).reduce((a,b)=>a+b,0)||1;
+  const sectors=Object.entries(sectorData).sort((a,b)=>b[1]-a[1]);
+  const currencies=Object.entries(currData).sort((a,b)=>b[1]-a[1]);
+  const top=[...state.positions].sort((a,b)=>toEUR((state.priceCache[b.ticker]||b.avg_cost)*b.shares,b.currency)-toEUR((state.priceCache[a.ticker]||a.avg_cost)*a.shares,a.currency)).slice(0,8);
+
+  const barChart=(data,cFn)=>data.map(([lbl,v],i)=>`
+    <div style="margin-bottom:9px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:3px;font-size:12px">
+        <span style="color:#475569">${esc(lbl)}</span>
+        <span style="font-weight:600;color:#334155">${((v/total)*100).toFixed(1)}% — ${fmtEUR(v)}</span>
+      </div>
+      <div style="background:#e2e8f0;border-radius:6px;height:8px">
+        <div style="background:${cFn?cFn(i):PIE_COLORS[i%PIE_COLORS.length]};border-radius:6px;height:8px;width:${Math.max((v/total)*100,0).toFixed(1)}%"></div>
+      </div>
+    </div>`).join("");
+
+  const posCards=state.positions.map(p=>{
+    const cp=state.priceCache[p.ticker],inv=toEUR(p.shares*p.avg_cost,p.currency);
+    const cur=cp?toEUR(p.shares*cp,p.currency):null;
+    const pnl=cur!==null?cur-inv:null,pct=pnl!==null&&inv?pnl/inv*100:null;
+    const c=pnl!==null?pnlColor(pnl):"#94a3b8";
+    return `<div style="background:#f8fafc;border-radius:8px;padding:10px;border:1px solid #e2e8f0;border-left:3px solid ${c}">
+      <div style="font-weight:700;font-size:12px;color:#1d4ed8">${esc(p.ticker)}</div>
+      <div style="font-size:10px;color:#64748b;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</div>
+      <div style="font-weight:600;font-size:13px">${fmtEUR(cur||inv)}</div>
+      ${pct!==null?`<div style="font-size:11px;color:${c};font-weight:600">${fmtPct(pct)}</div>`:""}
+    </div>`;
+  }).join("");
+
+  const topBars=top.map((p,i)=>{
+    const v=toEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares,p.currency);
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+      <span style="color:#94a3b8;font-size:11px;min-width:18px">#${i+1}</span>
+      <span style="color:#1d4ed8;font-weight:700;font-size:12px;min-width:72px">${esc(p.ticker)}</span>
+      <div style="flex:1;background:#e2e8f0;border-radius:4px;height:6px">
+        <div style="background:${PIE_COLORS[i%PIE_COLORS.length]};border-radius:4px;height:6px;width:${((v/total)*100).toFixed(1)}%"></div>
+      </div>
+      <span style="font-size:12px;font-weight:600;min-width:90px;text-align:right">${fmtEUR(v)}</span>
+    </div>`;
+  }).join("");
+
+  const legend=sectors.map(([s],i)=>`<span style="font-size:11px;display:inline-flex;align-items:center;gap:3px;color:#475569"><span style="width:9px;height:9px;border-radius:2px;background:${PIE_COLORS[i%PIE_COLORS.length]};display:inline-block;flex-shrink:0"></span>${esc(s)}</span>`).join(" ");
+
+  return `<div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px">
+    <div class="card">
+      <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:14px">Distribución por Sector</h3>
+      ${barChart(sectors)}
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">${legend}</div>
+    </div>
+    <div class="card">
+      <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:14px">Distribución por Divisa</h3>
+      ${barChart(currencies,i=>["#2563eb","#f59e0b","#16a34a","#dc2626"][i%4])}
+      <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin:18px 0 12px">Top posiciones por valor</h3>
+      ${topBars}
+    </div>
+    <div class="card" style="grid-column:1/-1">
+      <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">Resumen visual de cartera</h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">${posCards}</div>
+    </div>
+  </div>`;
+}
+
+// ─────────────────────────────────────────────
+// TAB 5 — OBJETIVOS
+// ─────────────────────────────────────────────
+function renderGoals() {
+  const curVal=state.positions.reduce((s,p)=>s+toEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares,p.currency),0);
+  const goal=parseFloat((document.getElementById("g-goal")||{}).value||100000);
+  const pg=parseFloat((document.getElementById("g-pg")||{}).value||7);
+  const dg=parseFloat((document.getElementById("g-dg")||{}).value||3);
+  const contrib=parseFloat((document.getElementById("g-contrib")||{}).value||5000);
+  const yrs=parseInt((document.getElementById("g-yrs")||{}).value||10);
+  const dy=parseFloat((document.getElementById("g-dy")||{}).value||4);
+  const reinvest=(document.getElementById("g-reinvest")||{checked:true}).checked;
+  const pct=goal>0?Math.min(curVal/goal*100,100):0;
+  const bc=pct>=100?"#16a34a":pct>=50?"#f59e0b":"#3b82f6";
+  const projTable=state._projData?`<div style="overflow-x:auto"><table style="min-width:500px">
+    <thead><tr>${["Año","Valor total","Capital aportado","Divid. acumulados","Objetivo"].map(h=>`<th style="text-align:right">${h}</th>`).join("")}</tr></thead>
+    <tbody>${state._projData.map((r,i)=>`<tr>
+      <td style="text-align:right;color:#64748b">${r.y===0?"Hoy":"Año "+r.y}</td>
+      <td style="text-align:right;font-weight:700;color:${r.total>=r.goal?"#16a34a":"#1e293b"}">${fmtEUR(r.total)}</td>
+      <td style="text-align:right;color:#64748b">${fmtEUR(r.aport)}</td>
+      <td style="text-align:right;color:#b45309">${fmtEUR(r.divAcc)}</td>
+      <td style="text-align:right;color:#ef4444">${fmtEUR(r.goal)}</td>
+    </tr>`).join("")}</tbody>
+  </table></div>`:`<div style="text-align:center;color:#94a3b8;padding:24px;font-size:13px">Configura los parámetros y haz clic en Calcular</div>`;
+
+  return `<div style="padding:14px;display:flex;flex-direction:column;gap:14px">
+    <div style="display:grid;grid-template-columns:minmax(280px,300px) 1fr;gap:12px">
+      <div class="card">
+        <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">🎯 Objetivo de cartera</h4>
+        <div class="field"><label>Objetivo (€)</label><input id="g-goal" type="number" class="inp" value="${goal}" min="0" step="1000" oninput="renderActiveTab()"></div>
+        <div style="font-size:11px;color:#64748b;margin-top:8px">${pct<100?`Faltan ${fmtEUR(Math.max(goal-curVal,0))} para el objetivo`:"✅ ¡Objetivo alcanzado!"}</div>
+      </div>
+      <div class="card" style="display:flex;flex-direction:column;justify-content:center">
+        <div style="font-size:12px;font-weight:600;color:#334155;margin-bottom:10px">Valor actual: ${fmtEUR(curVal)}  ·  Objetivo: ${fmtEUR(goal)}  ·  Progreso: ${pct.toFixed(2)}%</div>
+        <div class="progress-bar-wrap"><div class="progress-bar-fill" style="background:${bc};width:${pct.toFixed(1)}%"></div><div class="progress-bar-label">${pct.toFixed(1)}%</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">📈 Proyección de cartera</h4>
+      <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:14px;align-items:flex-end">
+        ${[["Crec. div. (%/año)","g-dg",dg,0,30],["Revalor. (%/año)","g-pg",pg,0,30],["Aport. anual (€)","g-contrib",contrib,0,500000],["Años","g-yrs",yrs,1,50],["Yield div. (%)","g-dy",dy,0,30]].map(([lbl,id,val,mn,mx])=>`
+          <div><div style="font-size:11px;color:#475569;font-weight:600;margin-bottom:4px">${lbl}</div>
+          <input type="number" id="${id}" class="inp-sm" value="${val}" min="${mn}" max="${mx}" style="width:100px"></div>`).join("")}
+        <label style="font-size:11px;color:#475569;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="g-reinvest" ${reinvest?"checked":""} style="width:13px;height:13px"> Reinvertir dividendos
+        </label>
+        <button class="btn" onclick="calcProjection()">📊 Calcular</button>
+      </div>
+      ${projTable}
+    </div>
+  </div>`;
+}
+
+function calcProjection() {
+  const goal=parseFloat(document.getElementById("g-goal")?.value||100000);
+  const pg=parseFloat(document.getElementById("g-pg")?.value||7)/100;
+  const dg=parseFloat(document.getElementById("g-dg")?.value||3)/100;
+  const contrib=parseFloat(document.getElementById("g-contrib")?.value||5000);
+  const yrs=parseInt(document.getElementById("g-yrs")?.value||10);
+  const dy=parseFloat(document.getElementById("g-dy")?.value||4)/100;
+  const reinvest=document.getElementById("g-reinvest")?.checked!==false;
+  const curVal=state.positions.reduce((s,p)=>s+toEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares,p.currency),0);
+  let v=curVal,da=0,rows=[{y:0,total:v,aport:v,divAcc:0,goal}];
+  for(let y=1;y<=yrs;y++){
+    const ann=v*dy; da+=ann*(1+dg*y);
+    v=reinvest?v*(1+pg)+(ann*(1+dg*y)):v*(1+pg);
+    v+=contrib;
+    rows.push({y,total:v,aport:curVal+contrib*y,divAcc:da,goal});
+  }
+  state._projData=rows; renderActiveTab();
+}
+
+// ─────────────────────────────────────────────
+// TAB 6 — VALORACIÓN IA
+// ─────────────────────────────────────────────
+function renderValuation() {
+  const ticker=state._valTicker||"";
+  const result=state._valResult;
+  const loading=state._valLoading;
+  const error=state._valError||"";
+  const methodLabels={ddm:"DDM — Dividendos",epv:"EPV — Beneficios actuales",pe:"P/E Múltiplos",ev_ebitda:"EV/EBITDA",pb:"Price/Book",ev_revenue:"EV/Revenue",dcf_quality:"Calidad DCF",weiss:"Geraldine Weiss"};
+
+  let resultHtml="";
+  if(result){
+    const scores=Object.values(result.scores||{});
+    const overall=scores.length?Math.round(scores.reduce((a,b)=>a+b,0)/scores.length):0;
+    const oc=overall>=70?"#16a34a":overall>=40?"#f59e0b":"#ef4444";
+    const scoreBars=Object.entries(result.scores||{}).map(([k,v])=>{
+      const c=v>=70?"#16a34a":v>=40?"#f59e0b":"#ef4444";
+      return `<div style="margin-bottom:9px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:3px;font-size:12px">
+          <span style="color:#475569">${methodLabels[k]||k}</span><span style="color:${c};font-weight:700">${v}/100</span>
+        </div>
+        <div style="background:#e2e8f0;border-radius:6px;height:8px"><div style="background:${c};border-radius:6px;height:8px;width:${v}%"></div></div>
+      </div>`;
+    }).join("");
+    const metricRows=Object.entries(result.metrics||{}).map(([k,v])=>
+      `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:12px">
+        <span style="color:#64748b">${k.replace(/_/g," ")}</span><span style="font-weight:600">${v!==null&&v!==undefined?v:"—"}</span>
+      </div>`
+    ).join("");
+    resultHtml=`
+      <div style="background:#f0f7ff;border-radius:14px;border:1px solid #bfdbfe;padding:16px;margin-bottom:12px">
+        <div style="font-size:17px;font-weight:700;color:#1d4ed8">${esc(result.name)}</div>
+        <div style="font-size:12px;color:#475569;margin:2px 0 6px">${esc(result.ticker)} · ${esc(result.sector)}</div>
+        <div style="font-size:12px;color:#64748b">${esc(result.description)}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-bottom:12px">
+        <div class="card"><h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">📊 Puntuaciones por método</h4>${scoreBars}</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div class="card">
+            <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">🏆 Puntuación global</h4>
+            <div style="display:flex;align-items:center;gap:12px">
+              <span style="font-size:42px;font-weight:900;color:${oc};line-height:1">${overall}</span>
+              <span style="font-size:14px;color:#94a3b8">/100</span>
+              <span class="badge" style="background:${result.rec_color||"#2563eb"}22;color:${result.rec_color||"#2563eb"}">${esc(result.recommendation)}</span>
+            </div>
+          </div>
+          <div class="card"><h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">📋 Métricas clave</h4>${metricRows}</div>
+        </div>
+      </div>
+      <div style="background:#f0fdf4;border-radius:14px;border:2px solid ${result.weiss_color||"#16a34a"}55;padding:16px">
+        <h4 style="font-size:13px;font-weight:700;color:${result.weiss_color||"#16a34a"};margin-bottom:6px">📘 Valoración Geraldine Weiss — Blue Chip Dividend Value</h4>
+        <div style="color:${result.weiss_color||"#16a34a"};font-weight:600;font-size:12px">${esc(result.weiss_verdict)}</div>
+      </div>`;
+  }
+
+  return `<div style="padding:14px">
+    <div style="background:#f0f7ff;border-radius:12px;border:1px solid #bfdbfe;padding:16px;margin-bottom:16px">
+      <h4 style="font-size:14px;font-weight:700;color:#1d4ed8;margin-bottom:10px">📐 Análisis de Valoración (IA)</h4>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <div class="ac-wrap" style="flex:1;max-width:340px">
+          <input id="val-ticker" class="inp-sm" placeholder="Escribe empresa o ticker: Iberdrola, KO, MSFT..." style="width:100%;background:#fff" value="${esc(ticker)}" onkeydown="if(event.key==='Enter')analyzeValuation()">
+        </div>
+        <button class="btn" onclick="analyzeValuation()" ${loading?"disabled":""} style="padding:6px 16px">${loading?`<span class="spinner"></span> Analizando...`:"🔍 Analizar"}</button>
+      </div>
+      ${error?`<div style="color:#dc2626;margin-top:10px;font-size:12px">⚠️ ${esc(error)}</div>`:""}
+      <div style="margin-top:8px;font-size:11px;color:#64748b">Escribe el nombre o ticker. Autocompletado activo con Yahoo Finance. Requiere conexión a internet.</div>
+    </div>
+    ${resultHtml}
+  </div>`;
+}
+
+async function analyzeValuation() {
+  const input = document.getElementById("val-ticker");
+  const ticker = (input?.value||"").trim().toUpperCase().split(" ")[0];
+  if (!ticker) return;
+  state._valTicker = ticker;
+  state._valLoading = true;
+  state._valResult = null;
+  state._valError = "";
+  renderActiveTab();
+
+  // Intentar obtener precio real del ticker analizado
+  const livePrice = await fetchWithProxy(PROXIES, ticker);
+
+  try {
+    const priceContext = livePrice ? `El precio actual de mercado es ${livePrice}.` : "";
+    const res = await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        model:"claude-sonnet-4-6", max_tokens:1200,
+        messages:[{role:"user",content:`Eres analista financiero experto en value investing y dividendos. Para el ticker "${ticker}" ${priceContext} devuelve SOLO JSON válido sin texto adicional ni bloques de código:\n{"name":"nombre empresa","ticker":"${ticker}","sector":"sector","description":"descripción breve en español 2 frases","scores":{"ddm":65,"epv":70,"pe":55,"ev_ebitda":60,"pb":45,"ev_revenue":50,"dcf_quality":65,"weiss":70},"metrics":{"PER":15.2,"PER_fwd":13.8,"P_Book":2.1,"Yield_pct":4.5,"Payout_pct":65,"Beta":0.8,"ROE_pct":12.5,"Deuda_Patrimonio":45},"weiss_verdict":"texto veredicto Geraldine Weiss en español","weiss_color":"#16a34a","recommendation":"COMPRAR","rec_color":"#16a34a"}`}]
+      })
+    });
+    const d = await res.json();
+    const txt = d.content?.map(c=>c.text||"").join("").replace(/```json|```/g,"").trim();
+    state._valResult = JSON.parse(txt);
+    state._valError = "";
+  } catch(e) {
+    state._valError = "No se pudo conectar con el análisis IA. Comprueba tu conexión a internet.";
+  }
+  state._valLoading = false;
+
+  // Registrar precio en cache si obtuvimos uno
+  if (livePrice) state.priceCache[ticker] = livePrice;
+
+  renderActiveTab();
+
+  // Configurar autocompletado para futuras búsquedas
+  setTimeout(() => {
+    setupAutocomplete("val-ticker", r => {
+      state._valTicker = r.ticker;
+      const inp = document.getElementById("val-ticker");
+      if(inp) inp.value = r.ticker;
+    });
+  }, 100);
+}
+
+// ─────────────────────────────────────────────
+// MODALES
+// ─────────────────────────────────────────────
+function openModal(html) {
+  document.getElementById("modal-box").innerHTML = html;
+  document.getElementById("modal-overlay").style.display = "flex";
+}
+function closeModal() {
+  document.getElementById("modal-overlay").style.display = "none";
+}
+
+function openAddPos() {
+  openModal(`
+    <h3>＋ Nueva posición</h3>
+    <div class="field"><label>Ticker / Empresa</label>
+      <div class="ac-wrap"><input id="m-ticker" class="inp" placeholder="Escribe empresa o ticker: Iberdrola, Apple, SAN..."></div>
+    </div>
+    <div class="field"><label>Nombre empresa</label><input id="m-name" class="inp" placeholder="Se rellena automáticamente..."></div>
+    <div class="grid2">
+      <div class="field"><label>Nº acciones</label><input id="m-shares" type="number" class="inp" value="0" min="0" step="1"></div>
+      <div class="field"><label>Coste medio</label><input id="m-cost" type="number" step="0.0001" class="inp" value="0" min="0"></div>
+      <div class="field"><label>Divisa</label><select id="m-cur" class="inp">${CURRENCIES.map(c=>`<option>${c}</option>`).join("")}</select></div>
+      <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">— Sector —</option>${SECTORS.map(s=>`<option>${s}</option>`).join("")}</select></div>
+    </div>
+    <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div id="m-price-preview" style="display:none;padding:8px 12px;background:#f0fdf4;border-radius:8px;font-size:12px;color:#065f46;font-weight:600;margin-bottom:10px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
+      <button class="btn" onclick="saveNewPos()">💾 Guardar</button>
+    </div>`);
+
+  setupAutocomplete("m-ticker", async r => {
+    document.getElementById("m-name").value = r.name||r.ticker;
+    // Autodetectar divisa según exchange
+    const exchCur = {"MCE":"EUR","MAD":"EUR","NYQ":"USD","NMS":"USD","NGM":"USD","ASE":"USD","LSE":"GBP","FRA":"EUR","PAR":"EUR","AMS":"EUR","MIL":"EUR","TSX":"CAD","ASX":"AUD","TYO":"JPY","HKG":"HKD"}[r.exchange]||"USD";
+    const sel = document.getElementById("m-cur");
+    if (sel && CURRENCIES.includes(exchCur)) sel.value = exchCur;
+    // Buscar precio actual
+    const preview = document.getElementById("m-price-preview");
+    if (preview) { preview.style.display="block"; preview.textContent="⏳ Buscando precio actual..."; }
+    const price = await fetchWithProxy(PROXIES, r.ticker);
+    if (price && preview) {
+      preview.textContent = `✅ Precio actual en Yahoo Finance: ${price} ${exchCur}`;
+      const costInp = document.getElementById("m-cost");
+      if (costInp && (+costInp.value===0||costInp.value==="0")) costInp.value = price;
+    } else if (preview) { preview.style.display="none"; }
+  });
+}
+
+function saveNewPos() {
+  const ticker=(document.getElementById("m-ticker").value||"").trim().toUpperCase().split(" ")[0];
+  const shares=+document.getElementById("m-shares").value;
+  const cost=+document.getElementById("m-cost").value;
+  if(!ticker||shares<=0){alert("Ticker y acciones son obligatorios");return;}
+  const pos={ticker,name:document.getElementById("m-name").value||ticker,shares,avg_cost:cost,currency:document.getElementById("m-cur").value,sector:document.getElementById("m-sector").value,date:document.getElementById("m-date").value};
+  const idx=state.positions.findIndex(p=>p.ticker===ticker);
+  if(idx>=0) state.positions[idx]=pos; else state.positions.push(pos);
+  state.transactions.unshift({id:uid(),ticker,type:"BUY",shares,price:cost,date:pos.date,notes:"Posición inicial"});
+  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
+}
+
+function openEditPos(ticker) {
+  const tk=ticker||state.selectedTicker;
+  const pos=tk?state.positions.find(p=>p.ticker===tk):null;
+  if(!pos){alert("Selecciona una posición primero");return;}
+  openModal(`
+    <h3>✏ Editar posición — ${esc(pos.ticker)}</h3>
+    <div class="field"><label>Ticker</label><input class="inp" value="${esc(pos.ticker)}" readonly style="background:#f1f5f9;color:#64748b"></div>
+    <div class="field"><label>Nombre empresa</label><input id="m-name" class="inp" value="${esc(pos.name||"")}"></div>
+    <div class="grid2">
+      <div class="field"><label>Nº acciones</label><input id="m-shares" type="number" class="inp" value="${pos.shares}"></div>
+      <div class="field"><label>Coste medio</label><input id="m-cost" type="number" step="0.0001" class="inp" value="${pos.avg_cost}"></div>
+      <div class="field"><label>Divisa</label><select id="m-cur" class="inp">${CURRENCIES.map(c=>`<option ${c===pos.currency?"selected":""}>${c}</option>`).join("")}</select></div>
+      <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">— Sector —</option>${SECTORS.map(s=>`<option ${s===pos.sector?"selected":""}>${s}</option>`).join("")}</select></div>
+    </div>
+    <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${pos.date||""}"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
+      <button class="btn" onclick="saveEditPos('${esc(pos.ticker)}')">💾 Guardar</button>
+    </div>`);
+}
+
+function saveEditPos(ticker) {
+  const idx=state.positions.findIndex(p=>p.ticker===ticker);
+  if(idx<0)return;
+  state.positions[idx]={...state.positions[idx],name:document.getElementById("m-name").value,shares:+document.getElementById("m-shares").value,avg_cost:+document.getElementById("m-cost").value,currency:document.getElementById("m-cur").value,sector:document.getElementById("m-sector").value,date:document.getElementById("m-date").value};
+  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
+}
+
+function deletePosition(ticker) {
+  const tk=ticker||state.selectedTicker;
+  if(!tk){alert("Selecciona una posición primero");return;}
+  if(!confirm(`¿Eliminar ${tk} de la cartera?`))return;
+  state.positions=state.positions.filter(p=>p.ticker!==tk);
+  state.selectedTicker=null;
+  buildDivInfo(); save(); renderHeader(); renderActiveTab();
+}
+
+function openAddAlert(defaultTicker) {
+  const tickers=state.positions.map(p=>`<option ${p.ticker===(defaultTicker||state.selectedTicker)?"selected":""}>${esc(p.ticker)} — ${esc(p.name)}</option>`).join("");
+  openModal(`
+    <h3>🔔 Nueva alerta de precio</h3>
+    <div class="field"><label>Ticker</label><select id="m-a-ticker" class="inp">${tickers}</select></div>
+    <div class="field"><label>Condición</label>
+      <select id="m-a-dir" class="inp"><option value="ABOVE">↑ Sube por encima de</option><option value="BELOW">↓ Baja por debajo de</option></select>
+    </div>
+    <div class="field"><label>Precio objetivo (€)</label><input id="m-a-price" type="number" step="0.01" class="inp" value="0"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
+      <button class="btn" onclick="saveAlertModal()">💾 Guardar</button>
+    </div>`);
+}
+
+function saveAlertModal() {
+  const ticker=(document.getElementById("m-a-ticker").value||"").split(" ")[0];
+  const direction=document.getElementById("m-a-dir").value;
+  const price=+document.getElementById("m-a-price").value;
+  if(!ticker||price<=0){alert("Completa todos los campos");return;}
+  state.alerts.push({id:uid(),ticker,direction,price,active:true,triggered:false,created_at:new Date().toISOString()});
+  save(); closeModal(); renderActiveTab(); renderHeader();
+}
+
+function openAddDividend() {
+  const opts=state.positions.map(p=>`<option value="${esc(p.ticker)}">${esc(p.ticker)} — ${esc(p.name)}</option>`).join("");
+  openModal(`
+    <h3>💰 Registrar dividendo cobrado</h3>
+    <div class="field"><label>Ticker</label><select id="m-d-ticker" class="inp" onchange="updateDivShares()">${opts}</select></div>
+    <div id="div-shares-info" style="font-size:11px;color:#64748b;margin-bottom:8px"></div>
+    <div class="grid2">
+      <div class="field"><label>Importe por acción</label><input id="m-d-amount" type="number" step="0.0001" class="inp" value="0" oninput="updateDivTotal()"></div>
+      <div class="field"><label>Nº acciones</label><input id="m-d-shares" type="number" class="inp" value="${state.positions[0]?.shares||0}" oninput="updateDivTotal()"></div>
+    </div>
+    <div class="field"><label>Notas</label><input id="m-d-notes" class="inp" placeholder="Opcional..."></div>
+    <div id="div-total-preview" style="margin-top:8px;padding:10px;background:#fef9c3;border-radius:8px;font-size:12px;color:#b45309;font-weight:600">Total cobrado: —</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
+      <button class="btn" onclick="saveDividendModal()">💾 Guardar</button>
+    </div>`);
+  updateDivShares();
+}
+
+function updateDivShares() {
+  const tk=(document.getElementById("m-d-ticker")?.value||"").split(" ")[0];
+  const pos=state.positions.find(p=>p.ticker===tk);
+  if(pos){document.getElementById("m-d-shares").value=Math.round(pos.shares);document.getElementById("div-shares-info").textContent=`Acciones en cartera: ${Math.round(pos.shares)}`;}
+  updateDivTotal();
+}
+function updateDivTotal() {
+  const a=+document.getElementById("m-d-amount")?.value||0;
+  const s=+document.getElementById("m-d-shares")?.value||0;
+  const el=document.getElementById("div-total-preview");
+  if(el) el.textContent="Total cobrado: "+fmtEUR(a*s);
+}
+
+function saveDividendModal() {
+  const ticker=(document.getElementById("m-d-ticker").value||"").split(" ")[0];
+  const amount=+document.getElementById("m-d-amount").value;
+  const shares=+document.getElementById("m-d-shares").value;
+  const notes=document.getElementById("m-d-notes").value;
+  if(!ticker||amount<=0||shares<=0){alert("Completa todos los campos");return;}
+  state.dividends.unshift({id:uid(),ticker,amount,shares,notes,date:new Date().toISOString()});
+  save(); closeModal(); renderActiveTab();
+}
+
+// ─────────────────────────────────────────────
+// DISCLAIMER & INIT
+// ─────────────────────────────────────────────
+function acceptDisclaimer() {
+  ls.set("km_disclaimer",true);
+  document.getElementById("disclaimer-overlay").style.display="none";
+}
+
+function init() {
+  if(ls.get("km_disclaimer",false)) document.getElementById("disclaimer-overlay").style.display="none";
+  buildDivInfo();
+  renderTabs();
+  renderHeader();
+  renderActiveTab();
+
+  // Configurar autocompletado en pestaña valoración al cambiar a ella
+  document.getElementById("tabs-bar").addEventListener("click", () => {
+    setTimeout(() => {
+      if(state.activeTab===6) {
+        setupAutocomplete("val-ticker", r => {
+          state._valTicker = r.ticker;
+          const inp = document.getElementById("val-ticker");
+          if(inp) inp.value = r.ticker;
+        });
+      }
+    }, 150);
+  });
+
+  // Arrancar actualización de precios en background
+  refreshPrices();
+  startCountdown();
+}
+
+init();
+</script>
+</body>
+</html>
