@@ -181,13 +181,14 @@ const SUPABASE_URL = 'https://qoezxfuxzrtzexzzplfz.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_e99iPLwtmEpykURcsz63Xg_cEvzX5yR';
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const TABS = ['Cartera','Alertas','Dividendos','Transacciones','Gráficos','Objetivos','Valoración IA'];
 
-const API = {
-  valuation: '/.netlify/functions/valuation',
-  search: '/.netlify/functions/search',
-  quote: '/.netlify/functions/quote'
-};
+//const TABS = ['Cartera','Alertas','Dividendos','Transacciones','Gráficos','Objetivos','Valoración IA'];
+
+//const API = {
+  //valuation: '/.netlify/functions/valuation',
+  //search: '/.netlify/functions/search',
+ // quote: '/.netlify/functions/quote'
+//};
   // ─────────────────────────────────────────────
 // DATA
 // ─────────────────────────────────────────────
@@ -224,7 +225,11 @@ const PIE_COLORS = ["#4ade80","#60a5fa","#f59e0b","#f87171","#a78bfa","#34d399",
 const TABS = ["📋 Cartera","🔔 Alertas","💰 Dividendos","📝 Transacciones","📊 Gráficos","🎯 Objetivos","📐 Valoración"];
 const CURRENCIES = ["EUR","USD","GBP","CHF","CAD","AUD","JPY"];
 const SECTORS = ["Tecnología","Servicios Financieros","Salud","Consumo Cíclico","Consumo Defensivo","Energía","Materiales Básicos","Industria","Utilities","Inmobiliario","Comunicaciones"];
-
+const API = {
+  valuation: '/.netlify/functions/valuation',
+  search: '/.netlify/functions/search',
+  quote: '/.netlify/functions/quote'
+};
 // CORS proxies — se prueban en orden hasta que uno funcione
 const PROXIES = [
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
