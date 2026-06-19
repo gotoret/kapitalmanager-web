@@ -109,8 +109,86 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
   <div id="modal-box" class="modal"></div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-// ─────────────────────────────────────────────
+  async function doRegister() {
+  const email = document.getElementById('login-user')?.value.trim().toLowerCase();
+  const password = document.getElementById('login-pass')?.value;
+
+  if (!email || !password) {
+    alert('Introduce email y contraseña');
+    return;
+  }
+
+  const { error } = await supabaseClient.auth.signUp({
+    email,
+    password
+  });
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  alert('Usuario creado correctamente');
+}
+
+async function doLogin() {
+  const email = document.getElementById('login-user')?.value.trim().toLowerCase();
+  const password = document.getElementById('login-pass')?.value;
+
+  if (!email || !password) {
+    alert('Introduce email y contraseña');
+    return;
+  }
+
+  const { data, error } = await supabaseClient.auth.signInWithPassword({
+    email,
+    password
+  });
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  state.authUser = data.user?.email || null;
+  updateLoginStatus();
+  renderHeader?.();
+  renderTabs?.();
+  renderActiveTab?.();
+}
+
+async function doLogout() {
+  await supabaseClient.auth.signOut();
+  state.authUser = null;
+  if (state.positions) state.positions = [];
+  if (state.priceCache) state.priceCache = {};
+  state.selectedTicker = null;
+  updateLoginStatus();
+  renderHeader?.();
+  renderTabs?.();
+  renderActiveTab?.();
+}
+
+async function loadMe() {
+  const { data } = await supabaseClient.auth.getUser();
+  const user = data?.user || null;
+  state.authUser = user?.email || null;
+  updateLoginStatus();
+}
+const SUPABASE_URL = 'https://qoezxfuxzrtzexzzplfz.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_e99iPLwtmEpykURcsz63Xg_cEvzX5yR';
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const TABS = ['Cartera','Alertas','Dividendos','Transacciones','Gráficos','Objetivos','Valoración IA'];
+
+const API = {
+  valuation: '/.netlify/functions/valuation',
+  search: '/.netlify/functions/search',
+  quote: '/.netlify/functions/quote'
+};
+  // ─────────────────────────────────────────────
 // DATA
 // ─────────────────────────────────────────────
 const DEFAULT_PORTFOLIO = [
