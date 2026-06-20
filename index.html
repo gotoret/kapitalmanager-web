@@ -248,7 +248,7 @@ async function saveCloud() {
       dividends: state.dividends,
       transactions: state.transactions,
       updated_at: new Date().toISOString()
-    });
+    }, { onConflict: 'user_id' });   // 👈 esto es lo que faltaba
     if (error) console.error('Error guardando cartera en la nube:', error);
   } catch(e) { console.error('Error guardando cartera en la nube:', e); }
 }
