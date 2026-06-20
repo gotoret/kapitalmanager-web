@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>💹 Kapital Manager v0.91</title>
+<link rel="icon" type="image/x-icon" href="favicon.ico"/>
+<title>Kapital Manager v0.91</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:'Segoe UI',Arial,sans-serif;background:#f8fafc;min-height:100vh;font-size:13px;}
@@ -76,7 +77,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 <div id="app">
   <div id="header">
     <div id="header-top">
-      <span style="font-size:22px;font-weight:700;color:#1d4ed8;letter-spacing:1px">💹 Kapital Manager</span>
+      <img src="logo.png" alt="Kapital Manager" style="height:30px;display:block"/>
       <span style="font-size:11px;color:#94a3b8">v0.91</span>
       <span id="price-mode-tag" class="price-tag price-sim">⚡ Precios simulados</span>
       <div style="flex:1"></div>
@@ -94,7 +95,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 
 <div id="login-overlay" class="overlay" style="z-index:2100">
   <div class="modal" style="width:380px">
-    <div style="text-align:center;font-size:34px;margin-bottom:6px">💹</div>
+    <div style="text-align:center;margin-bottom:6px"><img src="logo.png" alt="Kapital Manager" style="height:48px"/></div>
     <h2 style="text-align:center;color:#1d4ed8;font-size:16px;font-weight:700;margin-bottom:18px">Kapital Manager</h2>
     <div class="field">
       <label>Correo electrónico</label>
@@ -1114,30 +1115,38 @@ async function analyzeValuation() {
   state._valError = "";
   renderActiveTab();
 
-  // Intentar obtener precio real del ticker analizado
-  const livePrice = await fetchWithProxy(PROXIES, ticker);
+  // Datos reales primero: precio y dividendo (mismo mecanismo que ya usa el resto de la app)
+  const [livePrice, divData] = await Promise.all([
+    fetchWithProxy(PROXIES, ticker),
+    fetchDividendData(ticker)
+  ]);
 
   try {
-    const priceContext = livePrice ? `El precio actual de mercado es ${livePrice}.` : "";
-    const res = await fetch("https://api.anthropic.com/v1/messages",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        model:"claude-sonnet-4-6", max_tokens:1200,
-        messages:[{role:"user",content:`Eres analista financiero experto en value investing y dividendos. Para el ticker "${ticker}" ${priceContext} devuelve SOLO JSON válido sin texto adicional ni bloques de código:\n{"name":"nombre empresa","ticker":"${ticker}","sector":"sector","description":"descripción breve en español 2 frases","scores":{"ddm":65,"epv":70,"pe":55,"ev_ebitda":60,"pb":45,"ev_revenue":50,"dcf_quality":65,"weiss":70},"metrics":{"PER":15.2,"PER_fwd":13.8,"P_Book":2.1,"Yield_pct":4.5,"Payout_pct":65,"Beta":0.8,"ROE_pct":12.5,"Deuda_Patrimonio":45},"weiss_verdict":"texto veredicto Geraldine Weiss en español","weiss_color":"#16a34a","recommendation":"COMPRAR","rec_color":"#16a34a"}`}]
-      })
+    const { data, error } = await supabaseClient.functions.invoke('valuation', {
+      body: {
+        ticker,
+        price: livePrice || null,
+        realYieldPct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null
+      }
     });
-    const d = await res.json();
-    const txt = d.content?.map(c=>c.text||"").join("").replace(/```json|```/g,"").trim();
-    state._valResult = JSON.parse(txt);
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+
+    // El dato de yield/dividendo real (ya calculado en la app) manda sobre lo que estime la IA
+    if (divData?.yield != null && data?.metrics) {
+      data.metrics.Yield_pct = +(divData.yield*100).toFixed(2);
+    }
+    state._valResult = data;
     state._valError = "";
   } catch(e) {
+    console.error('Error análisis IA:', e);
     state._valError = "No se pudo conectar con el análisis IA. Comprueba tu conexión a internet.";
   }
   state._valLoading = false;
 
-  // Registrar precio en cache si obtuvimos uno
+  // Registrar precio y yield en cache si los obtuvimos
   if (livePrice) state.priceCache[ticker] = livePrice;
+  if (divData) state.yieldCache[ticker] = divData;
 
   renderActiveTab();
 
