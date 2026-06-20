@@ -248,7 +248,7 @@ async function saveCloud() {
       dividends: state.dividends,
       transactions: state.transactions,
       updated_at: new Date().toISOString()
-    }, { onConflict: 'user_id' });   // 👈 esto es lo que faltaba
+    }, { onConflict: 'user_id' });
     if (error) console.error('Error guardando cartera en la nube:', error);
   } catch(e) { console.error('Error guardando cartera en la nube:', e); }
 }
@@ -314,6 +314,12 @@ const SEARCH_PROXIES = [
   q => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
 ];
 
+// Proxies para el dato real de dividendos (yield, importe/acción, ex-date)
+const YIELD_PROXIES = [
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=summaryDetail`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=summaryDetail`)}`,
+];
+
 // ─────────────────────────────────────────────
 // STATE
 // ─────────────────────────────────────────────
@@ -331,6 +337,7 @@ let state = {
   transactions: ls.get("km_transactions", []),
   priceCache: {},       // ticker -> precio en divisa original
   fxCache: {},          // "EURUSD=X" -> tasa
+  yieldCache: {},        // ticker -> {yield, rate, exDate} reales de Yahoo Finance
   divInfo: [],
   activeTab: 0,
   sortCol: null,
@@ -364,14 +371,57 @@ const pnlColor = v => v>=0?"#16a34a":"#dc2626";
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
 function buildDivInfo() {
-  state.divInfo = state.positions.map(p => ({
-    ticker:p.ticker, name:p.name, shares:p.shares, currency:p.currency,
-    div_rate: +(p.avg_cost*0.045).toFixed(4),
-    div_yield: 0.045,
-    annual_income: +(p.avg_cost*p.shares*0.045).toFixed(2),
-    ex_date: new Date(Date.now()+30*864e5).toISOString().slice(0,10),
-    freq: "Trimestral"
+  state.divInfo = state.positions.map(p => {
+    const cached = state.yieldCache[p.ticker];
+    const yld = cached?.yield ?? 0.045; // respaldo: 4.5% estimado si aún no hay dato real
+    const rate = cached?.rate ?? +(p.avg_cost*yld).toFixed(4);
+    return {
+      ticker:p.ticker, name:p.name, shares:p.shares, currency:p.currency,
+      div_rate: rate,
+      div_yield: yld,
+      annual_income: +(rate*p.shares).toFixed(2),
+      ex_date: cached?.exDate || new Date(Date.now()+30*864e5).toISOString().slice(0,10),
+      freq: "Trimestral",
+      _estimated: !cached
+    };
+  });
+}
+
+async function fetchDividendData(ticker) {
+  for (const proxyFn of YIELD_PROXIES) {
+    try {
+      const url = proxyFn(ticker);
+      const res = await fetch(url, {signal: AbortSignal.timeout(6000)});
+      if (!res.ok) continue;
+      const data = await res.json();
+      const sd = data?.quoteSummary?.result?.[0]?.summaryDetail;
+      if (!sd) continue;
+      const yieldVal = sd.dividendYield?.raw;
+      const rateVal = sd.dividendRate?.raw;
+      const exTs = sd.exDividendDate?.raw;
+      // Si el valor existe (aunque sea 0, p.ej. empresas que no reparten dividendo) lo damos por bueno
+      if (typeof yieldVal === "number" || typeof rateVal === "number") {
+        return {
+          yield: typeof yieldVal === "number" ? yieldVal : 0,
+          rate: typeof rateVal === "number" ? rateVal : 0,
+          exDate: exTs ? new Date(exTs*1000).toISOString().slice(0,10) : null
+        };
+      }
+    } catch(e) { /* probar el siguiente proxy */ }
+  }
+  return null;
+}
+
+async function refreshDividendYields() {
+  const tickers = [...new Set(state.positions.map(p=>p.ticker))];
+  const pending = tickers.filter(t => !state.yieldCache[t]);
+  if (!pending.length) return;
+  await Promise.all(pending.map(async t => {
+    const d = await fetchDividendData(t);
+    if (d) state.yieldCache[t] = d;
   }));
+  buildDivInfo();
+  if (state.activeTab === 2) renderActiveTab(); // 2 = pestaña Dividendos
 }
 
 // ─────────────────────────────────────────────
@@ -772,7 +822,7 @@ function renderDividends() {
       <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.name)}</td>
       <td>${Math.round(d.shares||0)}</td>
       <td style="font-weight:600">${d.div_rate?d.div_rate.toFixed(4)+" "+d.currency:"—"}</td>
-      <td style="color:${yc};font-weight:600">${yp?yp.toFixed(2)+"%":"—"}</td>
+      <td style="color:${yc};font-weight:600">${yp?(d._estimated?"≈"+yp.toFixed(2)+"%":yp.toFixed(2)+"%"):"—"}</td>
       <td style="color:#64748b">${d.ex_date||"—"}</td>
       <td><span class="badge" style="background:#b4530922;color:#b45309">${d.freq||"—"}</span></td>
       <td style="font-weight:600;color:#b45309">${fmtEUR(toEUR(d.annual_income||0,d.currency||"EUR"))}</td>
@@ -1148,6 +1198,7 @@ function saveNewPos() {
   if(idx>=0) state.positions[idx]=pos; else state.positions.push(pos);
   state.transactions.unshift({id:uid(),ticker,type:"BUY",shares,price:cost,date:pos.date,notes:"Posición inicial"});
   buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
+  refreshDividendYields();
 }
 
 function openEditPos(ticker) {
@@ -1318,8 +1369,9 @@ async function startAppIfNeeded() {
     }, 150);
   });
 
-  // Arrancar actualización de precios en background
+  // Arrancar actualización de precios y dividendos reales en background
   refreshPrices();
+  refreshDividendYields();
   startCountdown();
 }
 
