@@ -314,10 +314,11 @@ const SEARCH_PROXIES = [
   q => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
 ];
 
-// Proxies para el dato real de dividendos (yield, importe/acción, ex-date)
+// Proxies para el histórico real de dividendos pagados (mismo endpoint que ya funciona para precios)
 const YIELD_PROXIES = [
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=summaryDetail`)}`,
-  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=summaryDetail`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
 ];
 
 // ─────────────────────────────────────────────
@@ -394,19 +395,30 @@ async function fetchDividendData(ticker) {
       const res = await fetch(url, {signal: AbortSignal.timeout(6000)});
       if (!res.ok) continue;
       const data = await res.json();
-      const sd = data?.quoteSummary?.result?.[0]?.summaryDetail;
-      if (!sd) continue;
-      const yieldVal = sd.dividendYield?.raw;
-      const rateVal = sd.dividendRate?.raw;
-      const exTs = sd.exDividendDate?.raw;
-      // Si el valor existe (aunque sea 0, p.ej. empresas que no reparten dividendo) lo damos por bueno
-      if (typeof yieldVal === "number" || typeof rateVal === "number") {
-        return {
-          yield: typeof yieldVal === "number" ? yieldVal : 0,
-          rate: typeof rateVal === "number" ? rateVal : 0,
-          exDate: exTs ? new Date(exTs*1000).toISOString().slice(0,10) : null
-        };
+      const result = data?.chart?.result?.[0];
+      if (!result) continue;
+
+      const price = result.meta?.regularMarketPrice;
+      const divEvents = result.events?.dividends;
+
+      if (!divEvents || !Object.keys(divEvents).length) {
+        // Sin pagos en los últimos 2 años -> asumimos que no reparte dividendo
+        return { yield: 0, rate: 0, exDate: null };
       }
+
+      const list = Object.values(divEvents); // [{amount, date(unix seg)}, ...]
+      const oneYearAgo = Date.now()/1000 - 365*86400;
+      const lastYear = list.filter(d => d.date >= oneYearAgo);
+      // Si en el último año no hubo pagos (p.ej. frecuencia anual/irregular), usamos los 4 últimos pagos conocidos
+      const sample = lastYear.length ? lastYear : list.slice(-4);
+      const annualDividend = sample.reduce((s,d)=>s+(d.amount||0),0) * (lastYear.length ? 1 : 4/sample.length);
+      const lastExTs = Math.max(...list.map(d=>d.date));
+
+      return {
+        yield: price ? +(annualDividend/price).toFixed(4) : null,
+        rate: +annualDividend.toFixed(4),
+        exDate: lastExTs ? new Date(lastExTs*1000).toISOString().slice(0,10) : null
+      };
     } catch(e) { /* probar el siguiente proxy */ }
   }
   return null;
