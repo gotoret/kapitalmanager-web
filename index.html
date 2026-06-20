@@ -82,6 +82,8 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
       <div style="flex:1"></div>
       <span id="last-update-label" style="font-size:11px;color:#94a3b8">Sin actualizar | Próx: 60s</span>
       <button class="btn" style="padding:5px 12px;font-size:12px" onclick="refreshPrices()">↻ Actualizar</button>
+      <span id="user-email-label" style="font-size:11px;color:#475569;font-weight:600;margin-left:6px"></span>
+      <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="doLogout()">🚪 Salir</button>
     </div>
     <div id="metrics-grid"></div>
     <div id="alert-banner"></div>
@@ -90,7 +92,24 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
   <div id="content"></div>
 </div>
 
-<div id="disclaimer-overlay" class="overlay" style="z-index:2000">
+<div id="login-overlay" class="overlay" style="z-index:2100">
+  <div class="modal" style="width:380px">
+    <div style="text-align:center;font-size:34px;margin-bottom:6px">💹</div>
+    <h2 style="text-align:center;color:#1d4ed8;font-size:16px;font-weight:700;margin-bottom:18px">Kapital Manager</h2>
+    <div class="field">
+      <label>Correo electrónico</label>
+      <input type="email" id="login-user" class="inp" placeholder="tucorreo@ejemplo.com" autocomplete="username"/>
+    </div>
+    <div class="field" style="margin-bottom:18px">
+      <label>Contraseña</label>
+      <input type="password" id="login-pass" class="inp" placeholder="••••••••" autocomplete="current-password"/>
+    </div>
+    <button class="btn" style="width:100%;padding:11px;font-size:13px;margin-bottom:8px" onclick="doLogin()">Iniciar sesión</button>
+    <button class="btn-gray" style="width:100%;padding:11px;font-size:13px" onclick="doRegister()">Crear cuenta nueva</button>
+  </div>
+</div>
+
+<div id="disclaimer-overlay" class="overlay" style="z-index:2000;display:none">
   <div class="modal" style="width:560px">
     <div style="text-align:center;font-size:40px;margin-bottom:8px">⚠️</div>
     <h2 style="text-align:center;color:#dc2626;font-size:14px;font-weight:700;margin-bottom:16px;line-height:1.4">AVISO IMPORTANTE — NO ES RECOMENDACIÓN DE INVERSIÓN</h2>
@@ -111,7 +130,11 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-  async function doRegister() {
+const SUPABASE_URL = 'https://qoezxfuxzrtzexzzplfz.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_e99iPLwtmEpykURcsz63Xg_cEvzX5yR';
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+async function doRegister() {
   const email = document.getElementById('login-user')?.value.trim().toLowerCase();
   const password = document.getElementById('login-pass')?.value;
 
@@ -119,18 +142,26 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
     alert('Introduce email y contraseña');
     return;
   }
+  if (password.length < 6) {
+    alert('La contraseña debe tener al menos 6 caracteres');
+    return;
+  }
 
-  const { error } = await supabaseClient.auth.signUp({
-    email,
-    password
-  });
+  const { data, error } = await supabaseClient.auth.signUp({ email, password });
 
   if (error) {
     alert(error.message);
     return;
   }
 
-  alert('Usuario creado correctamente');
+  if (data.session) {
+    // Confirmación de email desactivada en Supabase: entra directamente
+    state.authUser = data.user?.email || null;
+    state.authUserId = data.user?.id || null;
+    updateLoginStatus();
+  } else {
+    alert('Cuenta creada. Revisa tu correo electrónico para confirmar la cuenta y luego inicia sesión.');
+  }
 }
 
 async function doLogin() {
@@ -142,10 +173,7 @@ async function doLogin() {
     return;
   }
 
-  const { data, error } = await supabaseClient.auth.signInWithPassword({
-    email,
-    password
-  });
+  const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
 
   if (error) {
     alert(error.message);
@@ -153,33 +181,77 @@ async function doLogin() {
   }
 
   state.authUser = data.user?.email || null;
+  state.authUserId = data.user?.id || null;
   updateLoginStatus();
-  renderHeader?.();
-  renderTabs?.();
-  renderActiveTab?.();
 }
 
 async function doLogout() {
   await supabaseClient.auth.signOut();
   state.authUser = null;
-  if (state.positions) state.positions = [];
-  if (state.priceCache) state.priceCache = {};
+  state.authUserId = null;
+  state._appStarted = false;
+  state.positions = [];
+  state.alerts = [];
+  state.dividends = [];
+  state.transactions = [];
+  state.priceCache = {};
   state.selectedTicker = null;
   updateLoginStatus();
-  renderHeader?.();
-  renderTabs?.();
-  renderActiveTab?.();
 }
 
 async function loadMe() {
   const { data } = await supabaseClient.auth.getUser();
   const user = data?.user || null;
   state.authUser = user?.email || null;
+  state.authUserId = user?.id || null;
   updateLoginStatus();
 }
-const SUPABASE_URL = 'https://qoezxfuxzrtzexzzplfz.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_e99iPLwtmEpykURcsz63Xg_cEvzX5yR';
-const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ─────────────────────────────────────────────
+// SINCRONIZACIÓN DE CARTERA CON SUPABASE (por usuario)
+// ─────────────────────────────────────────────
+async function loadCloudData() {
+  if (!state.authUserId) return;
+  try {
+    const { data, error } = await supabaseClient
+      .from('portfolios')
+      .select('*')
+      .eq('user_id', state.authUserId)
+      .maybeSingle();
+
+    if (error) { console.error('Error cargando cartera:', error); return; }
+
+    if (data) {
+      state.positions = data.positions || [];
+      state.alerts = data.alerts || [];
+      state.dividends = data.dividends || [];
+      state.transactions = data.transactions || [];
+    } else {
+      // Primera vez que este usuario entra: le damos una cartera de ejemplo y la guardamos
+      state.positions = DEFAULT_PORTFOLIO;
+      state.alerts = [];
+      state.dividends = [];
+      state.transactions = [];
+      await saveCloud();
+    }
+    save(); // refresca la caché local con lo que viene de la nube
+  } catch(e) { console.error('Error cargando cartera:', e); }
+}
+
+async function saveCloud() {
+  if (!state.authUserId) return;
+  try {
+    const { error } = await supabaseClient.from('portfolios').upsert({
+      user_id: state.authUserId,
+      positions: state.positions,
+      alerts: state.alerts,
+      dividends: state.dividends,
+      transactions: state.transactions,
+      updated_at: new Date().toISOString()
+    });
+    if (error) console.error('Error guardando cartera en la nube:', error);
+  } catch(e) { console.error('Error guardando cartera en la nube:', e); }
+}
 
 
 //const TABS = ['Cartera','Alertas','Dividendos','Transacciones','Gráficos','Objetivos','Valoración IA'];
@@ -267,6 +339,9 @@ let state = {
   countdown: 60,
   lastUpdate: null,
   livePrices: false,    // true si al menos un precio real fue obtenido
+  authUser: null,        // email del usuario logueado
+  authUserId: null,      // id de Supabase del usuario logueado
+  _appStarted: false,    // evita reiniciar precios/contador en cada login
 };
 
 const save = () => {
@@ -274,6 +349,7 @@ const save = () => {
   ls.set("km_alerts", state.alerts);
   ls.set("km_dividends", state.dividends);
   ls.set("km_transactions", state.transactions);
+  if (state.authUserId) saveCloud();
 };
 
 // ─────────────────────────────────────────────
@@ -1185,8 +1261,45 @@ function acceptDisclaimer() {
   document.getElementById("disclaimer-overlay").style.display="none";
 }
 
-function init() {
-  if(ls.get("km_disclaimer",false)) document.getElementById("disclaimer-overlay").style.display="none";
+// ─────────────────────────────────────────────
+// LOGIN / ARRANQUE DE LA APP
+// ─────────────────────────────────────────────
+function updateLoginStatus() {
+  const loginOverlay = document.getElementById("login-overlay");
+  const emailLabel = document.getElementById("user-email-label");
+
+  if (state.authUser) {
+    loginOverlay.style.display = "none";
+    if (emailLabel) emailLabel.textContent = state.authUser;
+    startAppIfNeeded();
+  } else {
+    loginOverlay.style.display = "flex";
+    document.getElementById("disclaimer-overlay").style.display = "none";
+    if (emailLabel) emailLabel.textContent = "";
+    const passInp = document.getElementById("login-pass");
+    if (passInp) passInp.value = "";
+  }
+}
+
+async function startAppIfNeeded() {
+  if (state._appStarted) {
+    // Ya estaba todo en marcha (p.ej. sesión restaurada): solo refrescamos vistas
+    buildDivInfo();
+    renderTabs();
+    renderHeader();
+    renderActiveTab();
+    return;
+  }
+  state._appStarted = true;
+
+  await loadCloudData();
+
+  if (ls.get("km_disclaimer", false)) {
+    document.getElementById("disclaimer-overlay").style.display = "none";
+  } else {
+    document.getElementById("disclaimer-overlay").style.display = "flex";
+  }
+
   buildDivInfo();
   renderTabs();
   renderHeader();
@@ -1208,6 +1321,12 @@ function init() {
   // Arrancar actualización de precios en background
   refreshPrices();
   startCountdown();
+}
+
+async function init() {
+  document.getElementById("disclaimer-overlay").style.display = "none";
+  document.getElementById("login-overlay").style.display = "flex";
+  await loadMe(); // si ya hay sesión guardada en el navegador, entra directo
 }
 
 init();
