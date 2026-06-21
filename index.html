@@ -779,6 +779,7 @@ function renderPortfolio() {
           <button class="btn-green" onclick="openAddAlert()">🔔 Alerta</button>
           <div style="flex:1"></div>
           <input id="port-filter" class="inp-sm" placeholder="🔍 Filtrar..." style="width:190px" value="${esc(filter)}" oninput="renderActiveTab()">
+          <button class="btn-danger" style="margin-left:8px" onclick="deleteCartera()" title="Elimina todas las posiciones de la cartera">🗑️ Eliminar cartera</button>
         </div>
         <div style="flex:1;overflow:auto">
           <table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>
@@ -1275,6 +1276,14 @@ function deletePosition(ticker) {
   if(!confirm(`¿Eliminar ${tk} de la cartera?`))return;
   state.positions=state.positions.filter(p=>p.ticker!==tk);
   state.selectedTicker=null;
+  buildDivInfo(); save(); renderHeader(); renderActiveTab();
+}
+
+function deleteCartera() {
+  if (!state.positions.length) { alert("La cartera ya está vacía."); return; }
+  if (!confirm(`⚠️ ¿Seguro que quieres ELIMINAR TODA LA CARTERA?\n\nSe borrarán las ${state.positions.length} posiciones que tienes actualmente. Esta acción no se puede deshacer.`)) return;
+  state.positions = [];
+  state.selectedTicker = null;
   buildDivInfo(); save(); renderHeader(); renderActiveTab();
 }
 
