@@ -1037,12 +1037,28 @@ function calcProjection() {
 // ─────────────────────────────────────────────
 // TAB 6 — VALORACIÓN IA
 // ─────────────────────────────────────────────
+function toggleMethodInfo(key) {
+  const el = document.getElementById('method-info-'+key);
+  if (!el) return;
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
 function renderValuation() {
   const ticker=state._valTicker||"";
   const result=state._valResult;
   const loading=state._valLoading;
   const error=state._valError||"";
   const methodLabels={ddm:"DDM — Dividendos",epv:"EPV — Beneficios actuales",pe:"P/E Múltiplos",ev_ebitda:"EV/EBITDA",pb:"Price/Book",ev_revenue:"EV/Revenue",dcf_quality:"Calidad DCF",weiss:"Geraldine Weiss"};
+  const methodExplanations={
+    ddm:"Descuenta a valor presente los dividendos futuros esperados. Premia a empresas con dividendo estable y creciente en el tiempo.",
+    epv:"Earnings Power Value: valora la empresa según su capacidad actual de generar beneficios, sin asumir ningún crecimiento futuro — un enfoque conservador.",
+    pe:"Compara el PER (precio/beneficio) actual de la empresa con su media histórica y la de su sector, para ver si cotiza cara o barata.",
+    ev_ebitda:"Compara el valor total de la empresa (incluida la deuda) frente a su EBITDA. Útil para comparar empresas con distinta estructura financiera.",
+    pb:"Price/Book: compara el precio de la acción con el valor contable de sus activos netos.",
+    ev_revenue:"Compara el valor de la empresa con sus ingresos totales. Útil en sectores de bajo margen o alto crecimiento donde el beneficio aún no es representativo.",
+    dcf_quality:"Evalúa la calidad y previsibilidad de los flujos de caja futuros de la empresa, la base de cualquier descuento de flujos (DCF).",
+    weiss:"Método de Geraldine Weiss: compara el yield (rentabilidad por dividendo) actual con su rango histórico propio para detectar si la acción cotiza barata o cara según su dividendo."
+  };
 
   let resultHtml="";
   if(result){
@@ -1051,11 +1067,14 @@ function renderValuation() {
     const oc=overall>=70?"#16a34a":overall>=40?"#f59e0b":"#ef4444";
     const scoreBars=Object.entries(result.scores||{}).map(([k,v])=>{
       const c=v>=70?"#16a34a":v>=40?"#f59e0b":"#ef4444";
+      const expl=methodExplanations[k]||"";
       return `<div style="margin-bottom:9px">
-        <div style="display:flex;justify-content:space-between;margin-bottom:3px;font-size:12px">
-          <span style="color:#475569">${methodLabels[k]||k}</span><span style="color:${c};font-weight:700">${v}/100</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;font-size:12px">
+          <span style="color:#475569;display:flex;align-items:center;gap:5px">${methodLabels[k]||k}<span onclick="toggleMethodInfo('${k}')" title="Cómo se calcula" style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:700;cursor:pointer;flex-shrink:0">?</span></span>
+          <span style="color:${c};font-weight:700">${v}/100</span>
         </div>
         <div style="background:#e2e8f0;border-radius:6px;height:8px"><div style="background:${c};border-radius:6px;height:8px;width:${v}%"></div></div>
+        <div id="method-info-${k}" style="display:none;font-size:11px;color:#64748b;background:#f8fafc;border-radius:6px;padding:7px 9px;margin-top:5px;line-height:1.45">${esc(expl)}</div>
       </div>`;
     }).join("");
     const metricRows=Object.entries(result.metrics||{}).map(([k,v])=>
