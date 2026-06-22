@@ -59,11 +59,12 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 .progress-bar-fill{height:36px;border-radius:18px;transition:width 0.5s;}
 .progress-bar-label{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;}
 /* Ticker scrolling de dividendos */
-#div-ticker-wrap{overflow:hidden;background:#0f172a;border-top:1px solid #1e293b;height:28px;display:none;position:relative;}
-#div-ticker-inner{display:flex;align-items:center;height:28px;white-space:nowrap;will-change:transform;}
-#div-ticker-inner span{color:#94a3b8;font-size:11px;font-weight:600;padding:0 24px;}
-#div-ticker-inner span b{color:#4ade80;}
-#div-ticker-inner span em{color:#fde68a;font-style:normal;}
+#div-ticker-wrap{overflow:hidden;background:#fff;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;height:26px;display:none;position:relative;}
+#div-ticker-inner{display:flex;align-items:center;height:26px;white-space:nowrap;will-change:transform;}
+#div-ticker-inner span{color:#475569;font-size:11px;font-weight:600;padding:0 20px;}
+#div-ticker-inner span b{color:#1d4ed8;}
+#div-ticker-inner span em{color:#059669;font-style:normal;}
+#div-ticker-inner span s{color:#94a3b8;text-decoration:none;font-weight:400;}
 @keyframes ticker-slide{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
 .ac-wrap{position:relative;}
 .ac-list{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.12);z-index:500;max-height:220px;overflow-y:auto;margin-top:2px;}
@@ -402,31 +403,49 @@ function updateDivTicker() {
   const inner = document.getElementById("div-ticker-inner");
   if (!wrap || !inner) return;
 
-  // Solo mostrar posiciones con dividendo real o estimado > 0
-  const items = state.divInfo.filter(d => d.annual_income > 0).sort((a,b)=>a.ex_date.localeCompare(b.ex_date));
+  const items = state.divInfo.filter(d => d.annual_income > 0);
   if (!items.length) { wrap.style.display="none"; return; }
 
   const today = new Date().toISOString().slice(0,10);
-  const upcoming = items.filter(d => d.ex_date >= today);
-  const list = upcoming.length ? upcoming : items; // si no hay futuros, muestra todos
 
-  // Construir los items del ticker
+  // Calcular la PRÓXIMA fecha ex-div estimada a partir de la última conocida
+  function nextExDate(lastExDateStr, annualRate, priceRef) {
+    if (!lastExDateStr) return null;
+    const last = new Date(lastExDateStr);
+    // Estimar frecuencia: si yield < 3% => probable anual (360 días), else trimestral (90 días)
+    // Usamos el ratio rate/price para intentar deducir la frecuencia
+    // Por defecto asumimos trimestral (90 días) que es lo más habitual en acciones europeas y USA
+    const freqDays = 90; // trimestral por defecto
+    let next = new Date(last);
+    // Avanzar tantos periodos como haga falta hasta estar en el futuro
+    while (next.toISOString().slice(0,10) <= today) {
+      next = new Date(next.getTime() + freqDays * 864e5);
+    }
+    return next.toISOString().slice(0,10);
+  }
+
+  const withNext = items.map(d => ({
+    ...d,
+    next_ex: nextExDate(d.ex_date, d.div_rate, d.avg_cost) || d.ex_date
+  })).sort((a,b) => a.next_ex.localeCompare(b.next_ex));
+
   const makeItem = d => {
-    const dateStr = new Date(d.ex_date).toLocaleDateString("es-ES",{day:"2-digit",month:"short"});
+    const dateStr = new Date(d.next_ex).toLocaleDateString("es-ES",{day:"2-digit",month:"short"});
     const income = (d.div_rate * d.shares).toFixed(2);
-    const est = d._estimated ? "<em>~</em>" : "";
-    return `<span>💰 <b>${d.ticker}</b> · ${d.name} · ${est}${income}€ · Ex-div: ${dateStr}</span>`;
+    const est = d._estimated ? "~" : "";
+    return `<span>💰 <b>${d.ticker}</b> · ${d.name} · <em>${est}${income}€</em> · <s>próx. ex-div ${dateStr}</s></span>`;
   };
 
-  // Duplicamos el contenido para que el loop sea continuo
-  const html = list.map(makeItem).join("") + "　　·　　" + list.map(makeItem).join("");
+  const html = withNext.map(makeItem).join("  ·  ") + "　　" +
+               withNext.map(makeItem).join("  ·  ") + "　　";
   inner.innerHTML = html;
 
-  // Calcular duración: ~80px/s
-  const totalW = inner.scrollWidth / 2;
-  const dur = Math.max(20, totalW / 80);
+  // Forzar repintado para medir bien el ancho
   inner.style.animation = "none";
-  inner.offsetWidth; // reflow
+  inner.offsetWidth;
+
+  const totalW = inner.scrollWidth / 2;
+  const dur = Math.max(10, totalW / 180); // 180px/s → doble de rápido
   inner.style.animation = `ticker-slide ${dur}s linear infinite`;
 
   wrap.style.display = "block";
