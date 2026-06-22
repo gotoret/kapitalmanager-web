@@ -58,7 +58,14 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 .progress-bar-wrap{background:#e2e8f0;border-radius:18px;height:36px;position:relative;overflow:hidden;}
 .progress-bar-fill{height:36px;border-radius:18px;transition:width 0.5s;}
 .progress-bar-label{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;}
-/* Autocomplete */
+/* Ticker scrolling de dividendos */
+#div-ticker-wrap{overflow:hidden;background:#0f172a;border-top:1px solid #1e293b;height:28px;display:none;position:relative;}
+#div-ticker-inner{display:flex;align-items:center;height:28px;white-space:nowrap;will-change:transform;}
+#div-ticker-inner span{color:#94a3b8;font-size:11px;font-weight:600;padding:0 24px;}
+#div-ticker-inner span b{color:#4ade80;}
+#div-ticker-inner span em{color:#fde68a;font-style:normal;}
+@keyframes ticker-slide{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+</style>
 .ac-wrap{position:relative;}
 .ac-list{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.12);z-index:500;max-height:220px;overflow-y:auto;margin-top:2px;}
 .ac-item{padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid #f1f5f9;}
@@ -89,6 +96,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
     <div id="metrics-grid"></div>
     <div id="alert-banner"></div>
   </div>
+  <div id="div-ticker-wrap"><div id="div-ticker-inner"></div></div>
   <div id="tabs-bar"></div>
   <div id="content"></div>
 </div>
@@ -375,7 +383,7 @@ const sleep = ms => new Promise(r=>setTimeout(r,ms));
 function buildDivInfo() {
   state.divInfo = state.positions.map(p => {
     const cached = state.yieldCache[p.ticker];
-    const yld = cached?.yield ?? 0.045; // respaldo: 4.5% estimado si aún no hay dato real
+    const yld = cached?.yield ?? 0.045;
     const rate = cached?.rate ?? +(p.avg_cost*yld).toFixed(4);
     return {
       ticker:p.ticker, name:p.name, shares:p.shares, currency:p.currency,
@@ -387,6 +395,42 @@ function buildDivInfo() {
       _estimated: !cached
     };
   });
+  updateDivTicker();
+}
+
+function updateDivTicker() {
+  const wrap = document.getElementById("div-ticker-wrap");
+  const inner = document.getElementById("div-ticker-inner");
+  if (!wrap || !inner) return;
+
+  // Solo mostrar posiciones con dividendo real o estimado > 0
+  const items = state.divInfo.filter(d => d.annual_income > 0).sort((a,b)=>a.ex_date.localeCompare(b.ex_date));
+  if (!items.length) { wrap.style.display="none"; return; }
+
+  const today = new Date().toISOString().slice(0,10);
+  const upcoming = items.filter(d => d.ex_date >= today);
+  const list = upcoming.length ? upcoming : items; // si no hay futuros, muestra todos
+
+  // Construir los items del ticker
+  const makeItem = d => {
+    const dateStr = new Date(d.ex_date).toLocaleDateString("es-ES",{day:"2-digit",month:"short"});
+    const income = (d.div_rate * d.shares).toFixed(2);
+    const est = d._estimated ? "<em>~</em>" : "";
+    return `<span>💰 <b>${d.ticker}</b> · ${d.name} · ${est}${income}€ · Ex-div: ${dateStr}</span>`;
+  };
+
+  // Duplicamos el contenido para que el loop sea continuo
+  const html = list.map(makeItem).join("") + "　　·　　" + list.map(makeItem).join("");
+  inner.innerHTML = html;
+
+  // Calcular duración: ~80px/s
+  const totalW = inner.scrollWidth / 2;
+  const dur = Math.max(20, totalW / 80);
+  inner.style.animation = "none";
+  inner.offsetWidth; // reflow
+  inner.style.animation = `ticker-slide ${dur}s linear infinite`;
+
+  wrap.style.display = "block";
 }
 
 async function fetchDividendData(ticker) {
@@ -1044,6 +1088,41 @@ function toggleMethodInfo(key) {
   el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
+function createValAlert(ticker, name, perFwd, yieldPct) {
+  // Precio óptimo: basado en el PER_fwd y precio actual disponible, con descuento del 10%.
+  // Si no hay precio actual, pedimos al usuario que lo confirme.
+  const livePrice = state.priceCache[ticker];
+  let suggestedPrice = null;
+
+  if (livePrice) {
+    // Precio óptimo = precio actual con descuento del 10% como margen de seguridad
+    suggestedPrice = +(livePrice * 0.90).toFixed(2);
+  }
+
+  const priceTxt = suggestedPrice ? `${suggestedPrice}` : "";
+  const infoTxt = suggestedPrice
+    ? `Precio actual: ${livePrice?.toFixed(2)}€ · Óptimo sugerido (−10% margen seguridad): ${suggestedPrice}€`
+    : `No hay precio en tiempo real para ${ticker}. Introduce el precio de alerta manualmente.`;
+
+  openModal(`
+    <h3>🔔 Alerta de compra óptima — ${esc(ticker)}</h3>
+    <div style="background:#f0fdf4;border-radius:8px;padding:10px;font-size:11px;color:#166534;margin-bottom:14px">${infoTxt}</div>
+    <div class="field"><label>Ticker</label><input class="inp" id="va-ticker" value="${esc(ticker)}" readonly style="background:#f8fafc"/></div>
+    <div class="field"><label>Precio de alerta (€) — avisar cuando BAJE a este precio</label><input class="inp" id="va-price" type="number" step="0.01" value="${priceTxt}" placeholder="Ej: 42.50"/></div>
+    <button class="btn" style="width:100%;margin-top:6px;background:#059669" onclick="saveValAlert()">🔔 Crear alerta</button>
+  `);
+}
+
+function saveValAlert() {
+  const ticker = (document.getElementById("va-ticker")?.value||"").trim().toUpperCase();
+  const price = parseFloat(document.getElementById("va-price")?.value);
+  if (!ticker || isNaN(price) || price <= 0) { alert("Introduce un precio válido."); return; }
+  state.alerts.push({id:uid(), ticker, direction:"BELOW", price, active:true, triggered:false, created_at:new Date().toISOString()});
+  save();
+  closeModal();
+  alert(`✅ Alerta creada: aviso cuando ${ticker} baje a ${price.toFixed(2)}€`);
+}
+
 function renderValuation() {
   const ticker=state._valTicker||"";
   const result=state._valResult;
@@ -1106,6 +1185,9 @@ function renderValuation() {
       <div style="background:#f0fdf4;border-radius:14px;border:2px solid ${result.weiss_color||"#16a34a"}55;padding:16px">
         <h4 style="font-size:13px;font-weight:700;color:${result.weiss_color||"#16a34a"};margin-bottom:6px">📘 Valoración Geraldine Weiss — Blue Chip Dividend Value</h4>
         <div style="color:${result.weiss_color||"#16a34a"};font-weight:600;font-size:12px">${esc(result.weiss_verdict)}</div>
+      </div>
+      <div style="margin-top:12px;text-align:right">
+        <button class="btn" style="background:#059669;font-size:12px;padding:7px 16px" onclick="createValAlert('${esc(result.ticker||"")}','${esc(result.name||"")}',${result.metrics?.PER_fwd||0},${result.metrics?.Yield_pct||0})">🔔 Crear alerta de compra óptima</button>
       </div>`;
   }
 
