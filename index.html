@@ -391,6 +391,159 @@ const fmtPct = v => (v>=0?"+":"")+((v||0).toFixed(2))+"%";
 const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 const pnlColor = v => v>=0?"#16a34a":"#dc2626";
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
+function parseNum(v) {
+  if (v === null || v === undefined) return 0;
+  return parseFloat(
+    String(v)
+      .trim()
+      .replace(/\./g, "")
+      .replace(",", ".")
+      .replace(/[^\d.-]/g, "")
+  ) || 0;
+}
+
+function normalizeText(s) {
+  return String(s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeHeader(s) {
+  return normalizeText(s)
+    .replace(/\s+/g, "_")
+    .replace(/[^\w]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+}
+
+function excelDateToISO(v) {
+  if (!v && v !== 0) return "";
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+      const [d, m, y] = s.split("/");
+      return `${y}-${m}-${d}`;
+    }
+    if (/^\d{2}-\d{2}-\d{4}$/.test(s)) {
+      const [d, m, y] = s.split("-");
+      return `${y}-${m}-${d}`;
+    }
+    const dt = new Date(s);
+    if (!isNaN(dt)) return dt.toISOString().slice(0, 10);
+    return "";
+  }
+  if (typeof v === "number") {
+    const utcDays = Math.floor(v - 25569);
+    const utcValue = utcDays * 86400;
+    const dateInfo = new Date(utcValue * 1000);
+    return isNaN(dateInfo) ? "" : dateInfo.toISOString().slice(0, 10);
+  }
+  return "";
+}
+
+function detectCurrencyFromTicker(ticker) {
+  const t = String(ticker || "").toUpperCase();
+  if (t.endsWith(".MC")) return "EUR";
+  if (t.endsWith(".L")) return "GBP";
+  return "USD";
+}
+
+function guessSectorFromNameOrTicker(ticker, name) {
+  const t = String(ticker || "").toUpperCase();
+  const n = String(name || "").toUpperCase();
+
+  if (["IBE.MC", "ENG.MC", "RED.MC", "ELE.MC", "NWN"].includes(t) || n.includes("IBERDROLA") || n.includes("ENAGAS") || n.includes("UTILITY")) return "Utilities";
+  if (["REP.MC", "XOM", "CVX", "KNOP"].includes(t) || n.includes("REPSOL") || n.includes("ENERGY") || n.includes("PETROLEUM")) return "Energía";
+  if (["TEF.MC", "VZ", "T"].includes(t) || n.includes("TELEFON") || n.includes("VERIZON") || n.includes("COMMUNICATION")) return "Comunicaciones";
+  if (["MAP.MC", "BKT.MC", "SAN.MC", "BBVA.MC", "CABK.MC", "BEN", "TROW"].includes(t) || n.includes("BANK") || n.includes("FINANCIAL") || n.includes("INSURANCE")) return "Servicios Financieros";
+  if (["PFE", "CVS"].includes(t) || n.includes("PFIZER") || n.includes("HEALTH") || n.includes("PHARMA")) return "Salud";
+  if (["INTC", "MSFT", "AAPL", "NVDA"].includes(t) || n.includes("INTEL") || n.includes("MICROSOFT") || n.includes("APPLE")) return "Tecnología";
+  if (["ACX.MC"].includes(t) || n.includes("STEEL") || n.includes("MINING")) return "Materiales Básicos";
+  if (["ACS.MC", "LOG.MC", "MCM.MC", "MMM"].includes(t) || n.includes("INDUSTR") || n.includes("LOGISTA")) return "Industria";
+  if (["WPC"].includes(t) || n.includes("REALTY") || n.includes("PROPERTY") || n.includes("REIT")) return "Inmobiliario";
+  if (["BTI", "MO", "UVV", "KO", "KHC", "EBRO.MC"].includes(t) || n.includes("TOBACCO") || n.includes("ALTRIA") || n.includes("COCA") || n.includes("KRAFT")) return "Consumo Defensivo";
+
+  return "";
+}
+
+function normalizeQuotedPrice(price, ticker, currency) {
+  const p = parseNum(price);
+  if (!p) return 0;
+  if (String(ticker || "").toUpperCase().endsWith(".L") && currency === "GBP") {
+    return +(p / 100).toFixed(4);
+  }
+  return p;
+}
+
+function csvToRows(text) {
+  const lines = text.replace(/\r/g, "").split("\n").filter(Boolean);
+  if (!lines.length) return [];
+  const delim = (lines[0].match(/;/g) || []).length > (lines[0].match(/,/g) || []).length ? ";" : ",";
+
+  const parseLine = (line) => {
+    const out = [];
+    let cur = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (ch === delim && !inQuotes) {
+        out.push(cur);
+        cur = "";
+      } else {
+        cur += ch;
+      }
+    }
+    out.push(cur);
+    return out.map(x => x.trim());
+  };
+
+  return lines.map(parseLine);
+}
+
+function autoMapImportColumns(headers) {
+  const h = headers.map(normalizeHeader);
+  const find = (...alts) => {
+    const norm = alts.map(normalizeHeader);
+    const idx = h.findIndex(x => norm.includes(x));
+    return idx >= 0 ? headers[idx] : "";
+  };
+
+  return {
+    date: find("date", "fecha", "trade_date", "date_time", "datetime", "fecha_hora"),
+    ticker: find("symbol", "ticker", "codigo", "instrument", "producto", "underlying_symbol"),
+    name: find("description", "company", "name", "nombre", "instrument_description"),
+    type: find("type", "action", "transaction_type", "buy_sell", "side", "tipo"),
+    shares: find("quantity", "qty", "shares", "units", "cantidad", "position"),
+    price: find("price", "t_price", "trade_price", "fill_price", "precio"),
+    commission: find("commission", "comm_fee", "fee", "fees", "comision", "broker_fee"),
+    currency: find("currency", "divisa", "curr"),
+    total: find("proceeds", "amount", "net_amount", "gross_amount", "importe", "total")
+  };
+}
+
+function rowToObject(headers, row) {
+  const obj = {};
+  headers.forEach((h, i) => obj[h] = row[i]);
+  return obj;
+}
+
+function normalizeImportType(v) {
+  const s = normalizeText(v);
+  if (["buy", "compra", "bought", "purchase"].includes(s)) return "BUY";
+  if (["sell", "venta", "sold"].includes(s)) return "SELL";
+  if (["dividend", "dividendo"].includes(s)) return "DIVIDEND";
+  return "";
+}
 
 function buildDivInfo() {
   state.divInfo = state.positions.map(p => {
