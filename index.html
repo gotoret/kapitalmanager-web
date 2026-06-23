@@ -235,6 +235,7 @@ async function loadCloudData() {
       state.alerts = data.alerts || [];
       state.dividends = data.dividends || [];
       state.transactions = data.transactions || [];
+      normalizeStateData();
     } else {
       // Primera vez que este usuario entra: le damos una cartera de ejemplo y la guardamos
       state.positions = DEFAULT_PORTFOLIO;
@@ -274,31 +275,31 @@ async function saveCloud() {
 // DATA
 // ─────────────────────────────────────────────
 const DEFAULT_PORTFOLIO = [
-  {date:"2021-03-30",ticker:"ACX.MC",name:"ACERINOX",shares:197,avg_cost:10.18,currency:"EUR",sector:"Materiales Básicos"},
-  {date:"2021-04-06",ticker:"TEF.MC",name:"TELEFONICA",shares:295,avg_cost:3.80,currency:"EUR",sector:"Comunicaciones"},
-  {date:"2021-04-09",ticker:"REP.MC",name:"REPSOL",shares:95,avg_cost:10.18,currency:"EUR",sector:"Energía"},
-  {date:"2021-05-03",ticker:"ENG.MC",name:"ENAGAS",shares:54,avg_cost:18.24,currency:"EUR",sector:"Utilities"},
-  {date:"2021-06-02",ticker:"MAP.MC",name:"MAPFRE",shares:534,avg_cost:1.87,currency:"EUR",sector:"Servicios Financieros"},
-  {date:"2021-06-28",ticker:"ACS.MC",name:"ACS",shares:50,avg_cost:22.69,currency:"EUR",sector:"Industria"},
-  {date:"2021-08-03",ticker:"EBRO.MC",name:"EBRO FOODS",shares:58,avg_cost:16.98,currency:"EUR",sector:"Consumo Defensivo"},
-  {date:"2021-09-24",ticker:"IBE.MC",name:"IBERDROLA",shares:122,avg_cost:9.26,currency:"EUR",sector:"Utilities"},
-  {date:"2021-11-09",ticker:"LOG.MC",name:"LOGISTA",shares:57,avg_cost:17.48,currency:"EUR",sector:"Industria"},
-  {date:"2022-02-15",ticker:"MCM.MC",name:"MIQUEL Y COSTAS",shares:80,avg_cost:12.38,currency:"EUR",sector:"Industria"},
-  {date:"2022-06-15",ticker:"TROW",name:"T. ROWE PRICE",shares:14,avg_cost:109.20,currency:"USD",sector:"Servicios Financieros"},
-  {date:"2022-12-06",ticker:"KNOP",name:"KNOT Offshore Partners",shares:102,avg_cost:9.80,currency:"USD",sector:"Energía"},
-  {date:"2023-01-12",ticker:"INTC",name:"INTEL CORPORATION",shares:35,avg_cost:25.39,currency:"USD",sector:"Tecnología"},
-  {date:"2023-01-25",ticker:"MMM",name:"3M",shares:20,avg_cost:107.75,currency:"USD",sector:"Industria"},
-  {date:"2023-04-04",ticker:"VZ",name:"VERIZON",shares:28,avg_cost:39.21,currency:"USD",sector:"Comunicaciones"},
-  {date:"2023-05-16",ticker:"WPC",name:"W.P. CAREY",shares:26,avg_cost:70.10,currency:"USD",sector:"Inmobiliario"},
-  {date:"2023-06-14",ticker:"CVS",name:"CVS Health Corp",shares:16,avg_cost:68.22,currency:"USD",sector:"Salud"},
-  {date:"2023-09-07",ticker:"BTI",name:"BRITISH AMERICAN TOBACCO",shares:32,avg_cost:25.85,currency:"USD",sector:"Consumo Defensivo"},
-  {date:"2023-10-02",ticker:"KHC",name:"KRAFT HEINZ",shares:16,avg_cost:33.15,currency:"USD",sector:"Consumo Defensivo"},
-  {date:"2023-10-06",ticker:"KO",name:"COCA COLA",shares:10,avg_cost:52.00,currency:"USD",sector:"Consumo Defensivo"},
-  {date:"2023-12-15",ticker:"PFE",name:"PFIZER",shares:40,avg_cost:26.72,currency:"USD",sector:"Salud"},
-  {date:"2024-01-24",ticker:"MO",name:"ALTRIA",shares:14,avg_cost:40.20,currency:"USD",sector:"Consumo Defensivo"},
-  {date:"2024-01-31",ticker:"NWN",name:"Northwest Natural",shares:15,avg_cost:34.43,currency:"USD",sector:"Utilities"},
-  {date:"2024-02-14",ticker:"UVV",name:"Universal Corporation",shares:10,avg_cost:49.75,currency:"USD",sector:"Consumo Defensivo"},
-  {date:"2024-04-29",ticker:"BEN",name:"Franklin Resources",shares:31,avg_cost:23.45,currency:"USD",sector:"Servicios Financieros"},
+  {date:"2021-03-30",ticker:"ACX.MC",name:"ACERINOX",shares:197,avg_cost:10.18,currency:"EUR",fx_rate:1,sector:"Materiales Básicos"},
+  {date:"2021-04-06",ticker:"TEF.MC",name:"TELEFONICA",shares:295,avg_cost:3.80,currency:"EUR",fx_rate:1,sector:"Comunicaciones"},
+  {date:"2021-04-09",ticker:"REP.MC",name:"REPSOL",shares:95,avg_cost:10.18,currency:"EUR",fx_rate:1,sector:"Energía"},
+  {date:"2021-05-03",ticker:"ENG.MC",name:"ENAGAS",shares:54,avg_cost:18.24,currency:"EUR",fx_rate:1,sector:"Utilities"},
+  {date:"2021-06-02",ticker:"MAP.MC",name:"MAPFRE",shares:534,avg_cost:1.87,currency:"EUR",fx_rate:1,sector:"Servicios Financieros"},
+  {date:"2021-06-28",ticker:"ACS.MC",name:"ACS",shares:50,avg_cost:22.69,currency:"EUR",fx_rate:1,sector:"Industria"},
+  {date:"2021-08-03",ticker:"EBRO.MC",name:"EBRO FOODS",shares:58,avg_cost:16.98,currency:"EUR",fx_rate:1,sector:"Consumo Defensivo"},
+  {date:"2021-09-24",ticker:"IBE.MC",name:"IBERDROLA",shares:122,avg_cost:9.26,currency:"EUR",fx_rate:1,sector:"Utilities"},
+  {date:"2021-11-09",ticker:"LOG.MC",name:"LOGISTA",shares:57,avg_cost:17.48,currency:"EUR",fx_rate:1,sector:"Industria"},
+  {date:"2022-02-15",ticker:"MCM.MC",name:"MIQUEL Y COSTAS",shares:80,avg_cost:12.38,currency:"EUR",fx_rate:1,sector:"Industria"},
+  {date:"2022-06-15",ticker:"TROW",name:"T. ROWE PRICE",shares:14,avg_cost:109.20,currency:"USD",fx_rate:0.92,sector:"Servicios Financieros"},
+  {date:"2022-12-06",ticker:"KNOP",name:"KNOT Offshore Partners",shares:102,avg_cost:9.80,currency:"USD",fx_rate:0.92,sector:"Energía"},
+  {date:"2023-01-12",ticker:"INTC",name:"INTEL CORPORATION",shares:35,avg_cost:25.39,currency:"USD",fx_rate:0.92,sector:"Tecnología"},
+  {date:"2023-01-25",ticker:"MMM",name:"3M",shares:20,avg_cost:107.75,currency:"USD",fx_rate:0.92,sector:"Industria"},
+  {date:"2023-04-04",ticker:"VZ",name:"VERIZON",shares:28,avg_cost:39.21,currency:"USD",fx_rate:0.92,sector:"Comunicaciones"},
+  {date:"2023-05-16",ticker:"WPC",name:"W.P. CAREY",shares:26,avg_cost:70.10,currency:"USD",fx_rate:0.92,sector:"Inmobiliario"},
+  {date:"2023-06-14",ticker:"CVS",name:"CVS Health Corp",shares:16,avg_cost:68.22,currency:"USD",fx_rate:0.92,sector:"Salud"},
+  {date:"2023-09-07",ticker:"BTI",name:"BRITISH AMERICAN TOBACCO",shares:32,avg_cost:25.85,currency:"USD",fx_rate:0.92,sector:"Consumo Defensivo"},
+  {date:"2023-10-02",ticker:"KHC",name:"KRAFT HEINZ",shares:16,avg_cost:33.15,currency:"USD",fx_rate:0.92,sector:"Consumo Defensivo"},
+  {date:"2023-10-06",ticker:"KO",name:"COCA COLA",shares:10,avg_cost:52.00,currency:"USD",fx_rate:0.92,sector:"Consumo Defensivo"},
+  {date:"2023-12-15",ticker:"PFE",name:"PFIZER",shares:40,avg_cost:26.72,currency:"USD",fx_rate:0.92,sector:"Salud"},
+  {date:"2024-01-24",ticker:"MO",name:"ALTRIA",shares:14,avg_cost:40.20,currency:"USD",fx_rate:0.92,sector:"Consumo Defensivo"},
+  {date:"2024-01-31",ticker:"NWN",name:"Northwest Natural",shares:15,avg_cost:34.43,currency:"USD",fx_rate:0.92,sector:"Utilities"},
+  {date:"2024-02-14",ticker:"UVV",name:"Universal Corporation",shares:10,avg_cost:49.75,currency:"USD",fx_rate:0.92,sector:"Consumo Defensivo"},
+  {date:"2024-04-29",ticker:"BEN",name:"Franklin Resources",shares:31,avg_cost:23.45,currency:"USD",fx_rate:0.92,sector:"Servicios Financieros"},
 ];
 
 const FX_FALLBACK = {USD:0.92,GBP:1.17,JPY:0.0062,CHF:1.02,CAD:0.68,AUD:0.60,EUR:1.0};
@@ -379,7 +380,43 @@ const fmtPct = v => (v>=0?"+":"")+((v||0).toFixed(2))+"%";
 const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 const pnlColor = v => v>=0?"#16a34a":"#dc2626";
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
+const getHistoricFX = (obj) => {
+  const cur = obj?.currency || "EUR";
+  const fx = +(obj?.fx_rate || 0);
+  if (cur === "EUR") return 1;
+  return fx > 0 ? fx : getFX(cur);
+};
 
+const toEURHistoric = (value, obj) => (value || 0) * getHistoricFX(obj);
+
+function normalizePosition(p) {
+  const currency = p?.currency || "EUR";
+  return {
+    ...p,
+    avg_cost: +(p?.avg_cost || 0),
+    shares: +(p?.shares || 0),
+    currency,
+    fx_rate: +(p?.fx_rate || (currency === "EUR" ? 1 : (FX_FALLBACK[currency] || 1)))
+  };
+}
+
+function normalizeTransaction(t) {
+  const currency = t?.currency || "EUR";
+  const fxRate = +(t?.fx_rate || (currency === "EUR" ? 1 : (FX_FALLBACK[currency] || 1)));
+  return {
+    ...t,
+    currency,
+    fx_rate: fxRate,
+    price: +(t?.price || 0),
+    shares: +(t?.shares || 0),
+    total_eur: +(((t?.shares || 0) * (t?.price || 0) * fxRate) || 0).toFixed(2)
+  };
+}
+
+function normalizeStateData() {
+  state.positions = (state.positions || []).map(normalizePosition);
+  state.transactions = (state.transactions || []).map(normalizeTransaction);
+}
 function buildDivInfo() {
   state.divInfo = state.positions.map(p => {
     const cached = state.yieldCache[p.ticker];
@@ -701,7 +738,7 @@ function closeAcList(inputId) {
 // ─────────────────────────────────────────────
 function renderHeader() {
   const totals = state.positions.reduce((acc,p)=>{
-    const inv = toEUR(p.shares*p.avg_cost, p.currency);
+    const inv = toEURHistoric(p.shares * p.avg_cost, p);
     const cur = state.priceCache[p.ticker] ? toEUR(p.shares*state.priceCache[p.ticker], p.currency) : inv;
     acc.inv+=inv; acc.cur+=cur; return acc;
   },{inv:0,cur:0});
@@ -768,11 +805,22 @@ function renderPortfolio() {
 
   const getV = (p,col) => {
     const cp=state.priceCache[p.ticker],cur=p.currency;
-    const inv=toEUR(p.shares*p.avg_cost,cur);
+    const inv=toEURHistoric(p.shares * p.avg_cost, p);
     const curV=cp?toEUR(p.shares*cp,cur):null;
     const pnl=curV!==null?curV-inv:null;
     const di=state.divInfo.find(d=>d.ticker===p.ticker);
-    return {ticker:p.ticker,empresa:p.name||"",acciones:p.shares,coste:toEUR(p.avg_cost,cur),precio:cp?toEUR(cp,cur):0,valor:curV||inv,pnl:pnl||0,pct:pnl&&inv?pnl/inv*100:0,yield:(di?.div_yield||0)*100,sector:p.sector||""}[col]||0;
+    return {
+  ticker:p.ticker,
+  empresa:p.name||"",
+  acciones:p.shares,
+  coste:toEURHistoric(p.avg_cost, p),
+  precio:cp?toEUR(cp,cur):0,
+  valor:curV||inv,
+  pnl:pnl||0,
+  pct:pnl&&inv?pnl/inv*100:0,
+  yield:(di?.div_yield||0)*100,
+  sector:p.sector||""
+}[col]||0;
   };
 
   if (state.sortCol) rows = [...rows].sort((a,b)=>state.sortDir*(getV(a,state.sortCol)<getV(b,state.sortCol)?-1:1));
@@ -805,7 +853,7 @@ function renderPortfolio() {
       <td style="color:#1d4ed8;font-weight:700">${esc(pos.ticker)}</td>
       <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pos.name)}</td>
       <td style="text-align:center">${Math.round(pos.shares)}</td>
-      <td style="text-align:right">${fmtEUR(toEUR(pos.avg_cost,cur))}</td>
+      <td style="text-align:right">${fmtEUR(toEURHistoric(pos.avg_cost, pos))}</td>
       <td style="text-align:right">${cpE?fmtEUR(cpE):'<span style="color:#94a3b8">…</span>'}</td>
       <td style="text-align:right;font-weight:600">${fmtEUR(curE||inv)}</td>
       <td style="text-align:right;color:${pc};font-weight:600">${pnl!==null?(pnl>=0?"+":"")+fmtEUR(Math.abs(pnl)):"…"}</td>
@@ -820,10 +868,16 @@ function renderPortfolio() {
     <div style="width:260px;border-left:1px solid #e2e8f0;padding:14px;background:#f8fafc;overflow-y:auto;flex-shrink:0">
       <div style="font-weight:700;font-size:15px;color:#1d4ed8;margin-bottom:2px">${esc(selPos.ticker)}</div>
       <div style="color:#64748b;font-size:12px;margin-bottom:12px">${esc(selPos.name)}</div>
-      ${[["Acciones",Math.round(selPos.shares)],["Coste medio",fmtEUR(toEUR(selPos.avg_cost,selPos.currency))],
-        ["Precio actual",state.priceCache[selPos.ticker]?fmtEUR(toEUR(state.priceCache[selPos.ticker],selPos.currency)):"Sin datos"],
-        ["Valor total",fmtEUR(toEUR((state.priceCache[selPos.ticker]||selPos.avg_cost)*selPos.shares,selPos.currency))],
-        ["Sector",selPos.sector||"—"],["Divisa",selPos.currency],["Fecha",selPos.date||"—"]
+    ${[
+  ["Acciones", Math.round(selPos.shares)],
+  ["Coste medio (€ hist.)", fmtEUR(toEURHistoric(selPos.avg_cost, selPos))],
+  ["FX compra", selPos.currency === "EUR" ? "1.000000" : getHistoricFX(selPos).toFixed(6)],
+  ["Precio actual", state.priceCache[selPos.ticker] ? fmtEUR(toEUR(state.priceCache[selPos.ticker], selPos.currency)) : "Sin datos"],
+  ["Valor total", fmtEUR(toEUR((state.priceCache[selPos.ticker] || selPos.avg_cost) * selPos.shares, selPos.currency))],
+  ["Coste total EUR", fmtEUR(toEURHistoric(selPos.avg_cost * selPos.shares, selPos))],
+  ["Sector", selPos.sector || "—"],
+  ["Divisa", selPos.currency],
+  ["Fecha", selPos.date || "—"]
       ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #e2e8f0;font-size:12px"><span style="color:#64748b">${k}</span><span style="font-weight:600">${v}</span></div>`).join("")}
       <div style="margin-top:12px;display:flex;flex-direction:column;gap:6px">
         <button class="btn" style="font-size:12px;padding:6px 10px" onclick="openEditPos('${esc(selPos.ticker)}')">✏ Editar posición</button>
@@ -937,19 +991,27 @@ function deleteDividend(id){ state.dividends=state.dividends.filter(d=>d.id!==id
 // TAB 3 — TRANSACCIONES
 // ─────────────────────────────────────────────
 function renderTransactions() {
-  const rows = state.transactions.map(t=>`<tr>
-    <td style="color:#94a3b8">${t.id}</td>
-    <td style="color:#64748b">${(t.date||"").slice(0,16)}</td>
-    <td style="color:#1d4ed8;font-weight:700">${esc(t.ticker)}</td>
-    <td><span class="badge" style="background:${t.type==="BUY"?"#2563eb":"#dc2626"}22;color:${t.type==="BUY"?"#2563eb":"#dc2626"}">${t.type}</span></td>
-    <td>${t.shares}</td><td>${fmtEUR(t.price)}</td>
-    <td style="font-weight:600">${fmtEUR(t.shares*t.price)}</td>
-    <td style="color:#64748b">${esc(t.notes||"—")}</td>
-    <td><button class="btn-danger-sm" onclick="deleteTransaction(${t.id})">✕</button></td>
-  </tr>`).join("");
+  const rows = state.transactions.map(t => {
+    const tt = normalizeTransaction(t);
+    return `<tr>
+      <td style="color:#94a3b8">${tt.id}</td>
+      <td style="color:#64748b">${(tt.date || "").slice(0,16)}</td>
+      <td style="color:#1d4ed8;font-weight:700">${esc(tt.ticker)}</td>
+      <td><span class="badge" style="background:${tt.type==="BUY"?"#2563eb":"#dc2626"}22;color:${tt.type==="BUY"?"#2563eb":"#dc2626"}">${tt.type}</span></td>
+      <td>${tt.shares}</td>
+      <td>${tt.price.toFixed(4)} ${tt.currency}</td>
+      <td>${tt.currency === "EUR" ? "1.000000" : (+tt.fx_rate).toFixed(6)}</td>
+      <td style="font-weight:600">${fmtEUR(tt.total_eur)}</td>
+      <td style="color:#64748b">${esc(tt.notes || "—")}</td>
+      <td><button class="btn-danger-sm" onclick="deleteTransaction(${tt.id})">✕</button></td>
+    </tr>`;
+  }).join("");
+
   return `<div style="padding:14px;overflow-x:auto">
-    <table style="min-width:650px"><thead><tr>${["ID","Fecha","Ticker","Tipo","Acciones","Precio","Total","Notas",""].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
-    <tbody>${rows||`<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:28px">Sin transacciones registradas</td></tr>`}</tbody></table>
+    <table style="min-width:900px">
+      <thead><tr>${["ID","Fecha","Ticker","Tipo","Acciones","Precio","FX compra","Total EUR","Notas",""].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+      <tbody>${rows || `<tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:28px">Sin transacciones registradas</td></tr>`}</tbody>
+    </table>
   </div>`;
 }
 function deleteTransaction(id){ if(!confirm("¿Eliminar esta transacción?")) return; state.transactions=state.transactions.filter(t=>t.id!==id); save(); renderActiveTab(); }
@@ -1302,8 +1364,18 @@ function openAddPos() {
     <div class="grid2">
       <div class="field"><label>Nº acciones</label><input id="m-shares" type="number" class="inp" value="0" min="0" step="1"></div>
       <div class="field"><label>Coste medio</label><input id="m-cost" type="number" step="0.0001" class="inp" value="0" min="0"></div>
-      <div class="field"><label>Divisa</label><select id="m-cur" class="inp">${CURRENCIES.map(c=>`<option>${c}</option>`).join("")}</select></div>
+      <div class="field"><label>Divisa</label><select id="m-cur" class="inp" onchange="updateFxRateField()">${CURRENCIES.map(c=>`<option>${c}</option>`).join("")}</select></div>
       <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">— Sector —</option>${SECTORS.map(s=>`<option>${s}</option>`).join("")}</select></div>
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label>Tipo cambio compra (EUR por 1 unidad)</label>
+        <input id="m-fx-rate" type="number" step="0.000001" class="inp" value="1">
+      </div>
+      <div class="field">
+        <label>Coste fiscal EUR/acc</label>
+        <input id="m-cost-eur" class="inp" value="€0,00" readonly style="background:#f8fafc;color:#475569">
+      </div>
     </div>
     <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${new Date().toISOString().slice(0,10)}"></div>
     <div id="m-price-preview" style="display:none;padding:8px 12px;background:#f0fdf4;border-radius:8px;font-size:12px;color:#065f46;font-weight:600;margin-bottom:10px"></div>
@@ -1312,63 +1384,165 @@ function openAddPos() {
       <button class="btn" onclick="saveNewPos()">💾 Guardar</button>
     </div>`);
 
+  const bindCostListeners = () => {
+    document.getElementById("m-cost")?.addEventListener("input", updateFxCostPreview);
+    document.getElementById("m-fx-rate")?.addEventListener("input", updateFxCostPreview);
+  };
+  bindCostListeners();
+  updateFxRateField();
+  updateFxCostPreview();
+
   setupAutocomplete("m-ticker", async r => {
-    document.getElementById("m-name").value = r.name||r.ticker;
-    // Autodetectar divisa según exchange
-    const exchCur = {"MCE":"EUR","MAD":"EUR","NYQ":"USD","NMS":"USD","NGM":"USD","ASE":"USD","LSE":"GBP","FRA":"EUR","PAR":"EUR","AMS":"EUR","MIL":"EUR","TSX":"CAD","ASX":"AUD","TYO":"JPY","HKG":"HKD"}[r.exchange]||"USD";
+    document.getElementById("m-name").value = r.name || r.ticker;
+    const exchCur = {"MCE":"EUR","MAD":"EUR","NYQ":"USD","NMS":"USD","NGM":"USD","ASE":"USD","LSE":"GBP","FRA":"EUR","PAR":"EUR","AMS":"EUR","MIL":"EUR","TSX":"CAD","ASX":"AUD","TYO":"JPY","HKG":"HKD"}[r.exchange] || "USD";
     const sel = document.getElementById("m-cur");
     if (sel && CURRENCIES.includes(exchCur)) sel.value = exchCur;
-    // Buscar precio actual
+    updateFxRateField();
+
     const preview = document.getElementById("m-price-preview");
-    if (preview) { preview.style.display="block"; preview.textContent="⏳ Buscando precio actual..."; }
+    if (preview) { preview.style.display = "block"; preview.textContent = "⏳ Buscando precio actual..."; }
     const price = await fetchWithProxy(PROXIES, r.ticker);
     if (price && preview) {
       preview.textContent = `✅ Precio actual en Yahoo Finance: ${price} ${exchCur}`;
       const costInp = document.getElementById("m-cost");
-      if (costInp && (+costInp.value===0||costInp.value==="0")) costInp.value = price;
-    } else if (preview) { preview.style.display="none"; }
+      if (costInp && (+costInp.value === 0 || costInp.value === "0")) costInp.value = price;
+      updateFxCostPreview();
+    } else if (preview) {
+      preview.style.display = "none";
+    }
   });
 }
-
-function saveNewPos() {
-  const ticker=(document.getElementById("m-ticker").value||"").trim().toUpperCase().split(" ")[0];
-  const shares=+document.getElementById("m-shares").value;
-  const cost=+document.getElementById("m-cost").value;
-  if(!ticker||shares<=0){alert("Ticker y acciones son obligatorios");return;}
-  const pos={ticker,name:document.getElementById("m-name").value||ticker,shares,avg_cost:cost,currency:document.getElementById("m-cur").value,sector:document.getElementById("m-sector").value,date:document.getElementById("m-date").value};
-  const idx=state.positions.findIndex(p=>p.ticker===ticker);
-  if(idx>=0) state.positions[idx]=pos; else state.positions.push(pos);
-  state.transactions.unshift({id:uid(),ticker,type:"BUY",shares,price:cost,date:pos.date,notes:"Posición inicial"});
-  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
-  refreshDividendYields();
+function updateFxRateField() {
+  const cur = document.getElementById("m-cur")?.value || "EUR";
+  const fxInp = document.getElementById("m-fx-rate");
+  if (!fxInp) return;
+  if (cur === "EUR") {
+    fxInp.value = "1";
+    fxInp.disabled = true;
+    fxInp.style.background = "#f1f5f9";
+    fxInp.style.color = "#64748b";
+  } else {
+    if (!+fxInp.value || +fxInp.value === 1) fxInp.value = (getFX(cur) || 1).toFixed(6);
+    fxInp.disabled = false;
+    fxInp.style.background = "#fff";
+    fxInp.style.color = "#0f172a";
+  }
+  updateFxCostPreview();
 }
 
+function updateFxCostPreview() {
+  const cost = +(document.getElementById("m-cost")?.value || 0);
+  const fx = +(document.getElementById("m-fx-rate")?.value || 1);
+  const out = document.getElementById("m-cost-eur");
+  if (out) out.value = fmtEUR(cost * fx);
+}
+function saveNewPos() {
+  const ticker = (document.getElementById("m-ticker").value || "").trim().toUpperCase().split(" ")[0];
+  const shares = +document.getElementById("m-shares").value;
+  const cost = +document.getElementById("m-cost").value;
+  const currency = document.getElementById("m-cur").value;
+  const fxRate = currency === "EUR" ? 1 : +(document.getElementById("m-fx-rate").value || 0);
+
+  if (!ticker || shares <= 0) { alert("Ticker y acciones son obligatorios"); return; }
+  if (cost <= 0) { alert("Introduce un coste medio válido"); return; }
+  if (fxRate <= 0) { alert("Introduce un tipo de cambio válido"); return; }
+
+  const pos = normalizePosition({
+    ticker,
+    name: document.getElementById("m-name").value || ticker,
+    shares,
+    avg_cost: cost,
+    currency,
+    fx_rate: fxRate,
+    sector: document.getElementById("m-sector").value,
+    date: document.getElementById("m-date").value
+  });
+
+  const idx = state.positions.findIndex(p => p.ticker === ticker);
+  if (idx >= 0) state.positions[idx] = pos;
+  else state.positions.push(pos);
+
+  state.transactions.unshift(normalizeTransaction({
+    id: uid(),
+    ticker,
+    type: "BUY",
+    shares,
+    price: cost,
+    currency,
+    fx_rate: fxRate,
+    date: pos.date,
+    notes: "Posición inicial"
+  }));
+
+  buildDivInfo();
+  save();
+  closeModal();
+  renderHeader();
+  renderActiveTab();
+  refreshDividendYields();
+}
 function openEditPos(ticker) {
-  const tk=ticker||state.selectedTicker;
-  const pos=tk?state.positions.find(p=>p.ticker===tk):null;
-  if(!pos){alert("Selecciona una posición primero");return;}
+  const tk = ticker || state.selectedTicker;
+  const pos = tk ? state.positions.find(p => p.ticker === tk) : null;
+  if (!pos) { alert("Selecciona una posición primero"); return; }
+
   openModal(`
     <h3>✏ Editar posición — ${esc(pos.ticker)}</h3>
     <div class="field"><label>Ticker</label><input class="inp" value="${esc(pos.ticker)}" readonly style="background:#f1f5f9;color:#64748b"></div>
-    <div class="field"><label>Nombre empresa</label><input id="m-name" class="inp" value="${esc(pos.name||"")}"></div>
+    <div class="field"><label>Nombre empresa</label><input id="m-name" class="inp" value="${esc(pos.name || "")}"></div>
     <div class="grid2">
       <div class="field"><label>Nº acciones</label><input id="m-shares" type="number" class="inp" value="${pos.shares}"></div>
       <div class="field"><label>Coste medio</label><input id="m-cost" type="number" step="0.0001" class="inp" value="${pos.avg_cost}"></div>
-      <div class="field"><label>Divisa</label><select id="m-cur" class="inp">${CURRENCIES.map(c=>`<option ${c===pos.currency?"selected":""}>${c}</option>`).join("")}</select></div>
+      <div class="field"><label>Divisa</label><select id="m-cur" class="inp" onchange="updateFxRateField()">${CURRENCIES.map(c=>`<option ${c===pos.currency?"selected":""}>${c}</option>`).join("")}</select></div>
       <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">— Sector —</option>${SECTORS.map(s=>`<option ${s===pos.sector?"selected":""}>${s}</option>`).join("")}</select></div>
     </div>
-    <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${pos.date||""}"></div>
+    <div class="grid2">
+      <div class="field">
+        <label>Tipo cambio compra (EUR por 1 unidad)</label>
+        <input id="m-fx-rate" type="number" step="0.000001" class="inp" value="${getHistoricFX(pos)}">
+      </div>
+      <div class="field">
+        <label>Coste fiscal EUR/acc</label>
+        <input id="m-cost-eur" class="inp" value="${fmtEUR(pos.avg_cost * getHistoricFX(pos))}" readonly style="background:#f8fafc;color:#475569">
+      </div>
+    </div>
+    <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${pos.date || ""}"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
       <button class="btn-gray" onclick="closeModal()">Cancelar</button>
       <button class="btn" onclick="saveEditPos('${esc(pos.ticker)}')">💾 Guardar</button>
     </div>`);
+
+  document.getElementById("m-cost")?.addEventListener("input", updateFxCostPreview);
+  document.getElementById("m-fx-rate")?.addEventListener("input", updateFxCostPreview);
+  updateFxRateField();
+  updateFxCostPreview();
 }
 
 function saveEditPos(ticker) {
-  const idx=state.positions.findIndex(p=>p.ticker===ticker);
-  if(idx<0)return;
-  state.positions[idx]={...state.positions[idx],name:document.getElementById("m-name").value,shares:+document.getElementById("m-shares").value,avg_cost:+document.getElementById("m-cost").value,currency:document.getElementById("m-cur").value,sector:document.getElementById("m-sector").value,date:document.getElementById("m-date").value};
-  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
+  const idx = state.positions.findIndex(p => p.ticker === ticker);
+  if (idx < 0) return;
+
+  const currency = document.getElementById("m-cur").value;
+  const fxRate = currency === "EUR" ? 1 : +(document.getElementById("m-fx-rate").value || 0);
+
+  if (fxRate <= 0) { alert("Introduce un tipo de cambio válido"); return; }
+
+  state.positions[idx] = normalizePosition({
+    ...state.positions[idx],
+    name: document.getElementById("m-name").value,
+    shares: +document.getElementById("m-shares").value,
+    avg_cost: +document.getElementById("m-cost").value,
+    currency,
+    fx_rate: fxRate,
+    sector: document.getElementById("m-sector").value,
+    date: document.getElementById("m-date").value
+  });
+
+  buildDivInfo();
+  save();
+  closeModal();
+  renderHeader();
+  renderActiveTab();
 }
 
 function deletePosition(ticker) {
@@ -1521,11 +1695,13 @@ function renderRenta() {
   const pvRows = ventasEjercicio.map(t => {
     const pos = state.positions.find(p=>p.ticker===t.ticker);
     const currency = pos?.currency || "EUR";
-    const coste = pos?.avg_cost || 0;
-    const precioVenta = t.price;
-    const acciones = t.shares;
-    const costeTotal = +(toEUR(coste * acciones, currency)).toFixed(2);
-    const ingresoTotal = +(toEUR(precioVenta * acciones, currency)).toFixed(2);
+   const coste = pos?.avg_cost || 0;
+const precioVenta = t.price;
+const acciones = t.shares;
+const fxCompra = getHistoricFX(pos || t);
+const fxVenta = +(t.fx_rate || getFX(currency) || 1);
+const costeTotal = +(coste * acciones * fxCompra).toFixed(2);
+const ingresoTotal = +(precioVenta * acciones * fxVenta).toFixed(2);
     const resultado = +(ingresoTotal - costeTotal).toFixed(2);
     // Antigüedad > 1 año? No afecta al tipo en España (todas van a la base del ahorro)
     const fechaCompra = pos?.date ? new Date(pos.date) : null;
@@ -1797,6 +1973,7 @@ async function startAppIfNeeded() {
   state._appStarted = true;
 
   await loadCloudData();
+  normalizeStateData();
 
   if (ls.get("km_disclaimer", false)) {
     document.getElementById("disclaimer-overlay").style.display = "none";
@@ -1831,6 +2008,7 @@ async function startAppIfNeeded() {
 async function init() {
   document.getElementById("disclaimer-overlay").style.display = "none";
   document.getElementById("login-overlay").style.display = "flex";
+  normalizeStateData();
   await loadMe(); // si ya hay sesión guardada en el navegador, entra directo
 }
 
