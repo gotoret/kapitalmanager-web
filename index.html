@@ -1196,12 +1196,13 @@ function applyImportedTransactionsToPortfolio(transactions, replaceMode = false)
 
 function dedupeImportedTransactions(txs) {
   const existingKeys = new Set(
-    state.transactions.map(t => [
+    (state.transactions || []).map(t => [
       String(t.date || "").slice(0, 10),
       String(t.ticker || "").toUpperCase(),
       String(t.type || "").toUpperCase(),
-      Number(t.shares || 0).toFixed(6),
-      Number(t.price || 0).toFixed(6)
+      Math.round(Number(t.shares || 0) * 10000) / 10000,
+      Math.round(Number(t.price || 0) * 10000) / 10000,
+      String(t.currency || "").toUpperCase()
     ].join("|"))
   );
 
@@ -1210,13 +1211,12 @@ function dedupeImportedTransactions(txs) {
       String(t.date || "").slice(0, 10),
       String(t.ticker || "").toUpperCase(),
       String(t.type || "").toUpperCase(),
-      Number(t.shares || 0).toFixed(6),
-      Number(t.price || 0).toFixed(6)
+      Math.round(Number(t.shares || 0) * 10000) / 10000,
+      Math.round(Number(t.price || 0) * 10000) / 10000,
+      String(t.currency || "").toUpperCase()
     ].join("|");
 
-    if (existingKeys.has(key)) return false;
-    existingKeys.add(key);
-    return true;
+    return !existingKeys.has(key);
   });
 }
 
@@ -1231,8 +1231,9 @@ function confirmImportBroker() {
     let txs = dedupeImportedTransactions(state.importPreview);
 
     if (!txs.length) {
-      alert("No hay transacciones nuevas para importar");
-      return;
+      const force = confirm("Todas las filas parecen duplicadas. ¿Quieres importarlas igualmente?");
+      if (!force) return;
+      txs = [...state.importPreview];
     }
 
     if (mode === "replace") {
@@ -1247,7 +1248,7 @@ function confirmImportBroker() {
     renderActiveTab();
     closeModal();
 
-    alert(`Importación completada: ${txs.length} transacciones nuevas`);
+    alert(`Importación completada: ${txs.length} transacciones`);
   } catch (e) {
     console.error("Error confirmando importación:", e);
     alert("No se pudo completar la importación");
