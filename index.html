@@ -133,8 +133,8 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
   </div>
 </div>
 
-<div id="modal-overlay" class="overlay" style="display:none">
-  <div id="modal-box" class="modal" onclick="event.stopPropagation()"></div>
+<div id="modal-overlay" class="overlay" style="display:none" onclick="if(event.target===this)closeModal()">
+  <div id="modal-box" class="modal"></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -235,7 +235,6 @@ async function loadCloudData() {
       state.alerts = data.alerts || [];
       state.dividends = data.dividends || [];
       state.transactions = data.transactions || [];
-      normalizeStateData();
     } else {
       // Primera vez que este usuario entra: le damos una cartera de ejemplo y la guardamos
       state.positions = DEFAULT_PORTFOLIO;
@@ -275,36 +274,36 @@ async function saveCloud() {
 // DATA
 // ─────────────────────────────────────────────
 const DEFAULT_PORTFOLIO = [
-  {date:"2021-03-30",ticker:"ACX.MC",name:"ACERINOX",shares:197,avg_cost:10.18,currency:"EUR",fx_rate:1,sector:"Materiales Básicos"},
-  {date:"2021-04-06",ticker:"TEF.MC",name:"TELEFONICA",shares:295,avg_cost:3.80,currency:"EUR",fx_rate:1,sector:"Comunicaciones"},
-  {date:"2021-04-09",ticker:"REP.MC",name:"REPSOL",shares:95,avg_cost:10.18,currency:"EUR",fx_rate:1,sector:"Energía"},
-  {date:"2021-05-03",ticker:"ENG.MC",name:"ENAGAS",shares:54,avg_cost:18.24,currency:"EUR",fx_rate:1,sector:"Utilities"},
-  {date:"2021-06-02",ticker:"MAP.MC",name:"MAPFRE",shares:534,avg_cost:1.87,currency:"EUR",fx_rate:1,sector:"Servicios Financieros"},
-  {date:"2021-06-28",ticker:"ACS.MC",name:"ACS",shares:50,avg_cost:22.69,currency:"EUR",fx_rate:1,sector:"Industria"},
-  {date:"2021-08-03",ticker:"EBRO.MC",name:"EBRO FOODS",shares:58,avg_cost:16.98,currency:"EUR",fx_rate:1,sector:"Consumo Defensivo"},
-  {date:"2021-09-24",ticker:"IBE.MC",name:"IBERDROLA",shares:122,avg_cost:9.26,currency:"EUR",fx_rate:1,sector:"Utilities"},
-  {date:"2021-11-09",ticker:"LOG.MC",name:"LOGISTA",shares:57,avg_cost:17.48,currency:"EUR",fx_rate:1,sector:"Industria"},
-  {date:"2022-02-15",ticker:"MCM.MC",name:"MIQUEL Y COSTAS",shares:80,avg_cost:12.38,currency:"EUR",fx_rate:1,sector:"Industria"},
-  {date:"2022-06-15",ticker:"TROW",name:"T. ROWE PRICE",shares:14,avg_cost:109.20,currency:"USD",fx_rate:0.92,sector:"Servicios Financieros"},
-  {date:"2022-12-06",ticker:"KNOP",name:"KNOT Offshore Partners",shares:102,avg_cost:9.80,currency:"USD",fx_rate:0.92,sector:"Energía"},
-  {date:"2023-01-12",ticker:"INTC",name:"INTEL CORPORATION",shares:35,avg_cost:25.39,currency:"USD",fx_rate:0.92,sector:"Tecnología"},
-  {date:"2023-01-25",ticker:"MMM",name:"3M",shares:20,avg_cost:107.75,currency:"USD",fx_rate:0.92,sector:"Industria"},
-  {date:"2023-04-04",ticker:"VZ",name:"VERIZON",shares:28,avg_cost:39.21,currency:"USD",fx_rate:0.92,sector:"Comunicaciones"},
-  {date:"2023-05-16",ticker:"WPC",name:"W.P. CAREY",shares:26,avg_cost:70.10,currency:"USD",fx_rate:0.92,sector:"Inmobiliario"},
-  {date:"2023-06-14",ticker:"CVS",name:"CVS Health Corp",shares:16,avg_cost:68.22,currency:"USD",fx_rate:0.92,sector:"Salud"},
-  {date:"2023-09-07",ticker:"BTI",name:"BRITISH AMERICAN TOBACCO",shares:32,avg_cost:25.85,currency:"USD",fx_rate:0.92,sector:"Consumo Defensivo"},
-  {date:"2023-10-02",ticker:"KHC",name:"KRAFT HEINZ",shares:16,avg_cost:33.15,currency:"USD",fx_rate:0.92,sector:"Consumo Defensivo"},
-  {date:"2023-10-06",ticker:"KO",name:"COCA COLA",shares:10,avg_cost:52.00,currency:"USD",fx_rate:0.92,sector:"Consumo Defensivo"},
-  {date:"2023-12-15",ticker:"PFE",name:"PFIZER",shares:40,avg_cost:26.72,currency:"USD",fx_rate:0.92,sector:"Salud"},
-  {date:"2024-01-24",ticker:"MO",name:"ALTRIA",shares:14,avg_cost:40.20,currency:"USD",fx_rate:0.92,sector:"Consumo Defensivo"},
-  {date:"2024-01-31",ticker:"NWN",name:"Northwest Natural",shares:15,avg_cost:34.43,currency:"USD",fx_rate:0.92,sector:"Utilities"},
-  {date:"2024-02-14",ticker:"UVV",name:"Universal Corporation",shares:10,avg_cost:49.75,currency:"USD",fx_rate:0.92,sector:"Consumo Defensivo"},
-  {date:"2024-04-29",ticker:"BEN",name:"Franklin Resources",shares:31,avg_cost:23.45,currency:"USD",fx_rate:0.92,sector:"Servicios Financieros"},
+  {date:"2021-03-30",ticker:"ACX.MC",name:"ACERINOX",shares:197,avg_cost:10.18,currency:"EUR",sector:"Materiales Básicos"},
+  {date:"2021-04-06",ticker:"TEF.MC",name:"TELEFONICA",shares:295,avg_cost:3.80,currency:"EUR",sector:"Comunicaciones"},
+  {date:"2021-04-09",ticker:"REP.MC",name:"REPSOL",shares:95,avg_cost:10.18,currency:"EUR",sector:"Energía"},
+  {date:"2021-05-03",ticker:"ENG.MC",name:"ENAGAS",shares:54,avg_cost:18.24,currency:"EUR",sector:"Utilities"},
+  {date:"2021-06-02",ticker:"MAP.MC",name:"MAPFRE",shares:534,avg_cost:1.87,currency:"EUR",sector:"Servicios Financieros"},
+  {date:"2021-06-28",ticker:"ACS.MC",name:"ACS",shares:50,avg_cost:22.69,currency:"EUR",sector:"Industria"},
+  {date:"2021-08-03",ticker:"EBRO.MC",name:"EBRO FOODS",shares:58,avg_cost:16.98,currency:"EUR",sector:"Consumo Defensivo"},
+  {date:"2021-09-24",ticker:"IBE.MC",name:"IBERDROLA",shares:122,avg_cost:9.26,currency:"EUR",sector:"Utilities"},
+  {date:"2021-11-09",ticker:"LOG.MC",name:"LOGISTA",shares:57,avg_cost:17.48,currency:"EUR",sector:"Industria"},
+  {date:"2022-02-15",ticker:"MCM.MC",name:"MIQUEL Y COSTAS",shares:80,avg_cost:12.38,currency:"EUR",sector:"Industria"},
+  {date:"2022-06-15",ticker:"TROW",name:"T. ROWE PRICE",shares:14,avg_cost:109.20,currency:"USD",sector:"Servicios Financieros"},
+  {date:"2022-12-06",ticker:"KNOP",name:"KNOT Offshore Partners",shares:102,avg_cost:9.80,currency:"USD",sector:"Energía"},
+  {date:"2023-01-12",ticker:"INTC",name:"INTEL CORPORATION",shares:35,avg_cost:25.39,currency:"USD",sector:"Tecnología"},
+  {date:"2023-01-25",ticker:"MMM",name:"3M",shares:20,avg_cost:107.75,currency:"USD",sector:"Industria"},
+  {date:"2023-04-04",ticker:"VZ",name:"VERIZON",shares:28,avg_cost:39.21,currency:"USD",sector:"Comunicaciones"},
+  {date:"2023-05-16",ticker:"WPC",name:"W.P. CAREY",shares:26,avg_cost:70.10,currency:"USD",sector:"Inmobiliario"},
+  {date:"2023-06-14",ticker:"CVS",name:"CVS Health Corp",shares:16,avg_cost:68.22,currency:"USD",sector:"Salud"},
+  {date:"2023-09-07",ticker:"BTI",name:"BRITISH AMERICAN TOBACCO",shares:32,avg_cost:25.85,currency:"USD",sector:"Consumo Defensivo"},
+  {date:"2023-10-02",ticker:"KHC",name:"KRAFT HEINZ",shares:16,avg_cost:33.15,currency:"USD",sector:"Consumo Defensivo"},
+  {date:"2023-10-06",ticker:"KO",name:"COCA COLA",shares:10,avg_cost:52.00,currency:"USD",sector:"Consumo Defensivo"},
+  {date:"2023-12-15",ticker:"PFE",name:"PFIZER",shares:40,avg_cost:26.72,currency:"USD",sector:"Salud"},
+  {date:"2024-01-24",ticker:"MO",name:"ALTRIA",shares:14,avg_cost:40.20,currency:"USD",sector:"Consumo Defensivo"},
+  {date:"2024-01-31",ticker:"NWN",name:"Northwest Natural",shares:15,avg_cost:34.43,currency:"USD",sector:"Utilities"},
+  {date:"2024-02-14",ticker:"UVV",name:"Universal Corporation",shares:10,avg_cost:49.75,currency:"USD",sector:"Consumo Defensivo"},
+  {date:"2024-04-29",ticker:"BEN",name:"Franklin Resources",shares:31,avg_cost:23.45,currency:"USD",sector:"Servicios Financieros"},
 ];
 
 const FX_FALLBACK = {USD:0.92,GBP:1.17,JPY:0.0062,CHF:1.02,CAD:0.68,AUD:0.60,EUR:1.0};
 const PIE_COLORS = ["#4ade80","#60a5fa","#f59e0b","#f87171","#a78bfa","#34d399","#fb923c","#38bdf8","#e879f9","#94a3b8","#fbbf24","#6366f1"];
-const TABS = ["📋 Cartera","🔔 Alertas","💰 Dividendos","📝 Transacciones","📊 Gráficos","🎯 Objetivos","📐 Valoración","🧾 Renta"];
+const TABS = ["📋 Cartera","🔔 Alertas","💰 Dividendos","📝 Transacciones","📊 Gráficos","🎯 Objetivos","📐 Valoración"];
 const CURRENCIES = ["EUR","USD","GBP","CHF","CAD","AUD","JPY"];
 const SECTORS = ["Tecnología","Servicios Financieros","Salud","Consumo Cíclico","Consumo Defensivo","Energía","Materiales Básicos","Industria","Utilities","Inmobiliario","Comunicaciones"];
 const API = {
@@ -381,61 +380,6 @@ const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replac
 const pnlColor = v => v>=0?"#16a34a":"#dc2626";
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
-
-
-function parseNum(v) {
-  if (v === null || v === undefined) return 0;
-  return parseFloat(String(v).trim().replace(/\s/g, "").replace(",", ".")) || 0;
-}
-
- const getHistoricFX = (obj) => {
-  const cur = obj?.currency || "EUR";
-  const fx = +(obj?.fx_rate || 0);
-  if (cur === "EUR") return 1;
-  return fx > 0 ? fx : getFX(cur);
-};
-function normalizeQuotedPrice(price, ticker, currency) {
-  const p = parseNum(price);
-  if (!p) return 0;
-
-  // Yahoo en Londres suele devolver peniques (GBX) para tickers .L
-  if (ticker && ticker.endsWith(".L") && currency === "GBP") {
-    return +(p / 100).toFixed(4);
-  }
-
-  return p;
-}
-
-const toEURHistoric = (value, obj) => (value || 0) * getHistoricFX(obj);
-
-function normalizePosition(p) {
-  const currency = p?.currency || "EUR";
-  return {
-    ...p,
-    avg_cost: +(p?.avg_cost || 0),
-    shares: +(p?.shares || 0),
-    currency,
-    fx_rate: +(p?.fx_rate || (currency === "EUR" ? 1 : (FX_FALLBACK[currency] || 1)))
-  };
-}
-
-function normalizeTransaction(t) {
-  const currency = t?.currency || "EUR";
-  const fxRate = +(t?.fx_rate || (currency === "EUR" ? 1 : (FX_FALLBACK[currency] || 1)));
-  return {
-    ...t,
-    currency,
-    fx_rate: fxRate,
-    price: +(t?.price || 0),
-    shares: +(t?.shares || 0),
-    total_eur: +(((t?.shares || 0) * (t?.price || 0) * fxRate) || 0).toFixed(2)
-  };
-}
-
-function normalizeStateData() {
-  state.positions = (state.positions || []).map(normalizePosition);
-  state.transactions = (state.transactions || []).map(normalizeTransaction);
-}
 function buildDivInfo() {
   state.divInfo = state.positions.map(p => {
     const cached = state.yieldCache[p.ticker];
@@ -705,19 +649,7 @@ function setupAutocomplete(inputId, onSelect) {
     else if (e.key==="Escape") closeAcList(inputId);
   });
 
-  document.addEventListener("click", e => { if (!window.__acOutsideHandlers) window.__acOutsideHandlers = {};
-
-if (window.__acOutsideHandlers[inputId]) {
-  document.removeEventListener("click", window.__acOutsideHandlers[inputId]);
-}
-
-window.__acOutsideHandlers[inputId] = function(e) {
-  if (!wrap.contains(e.target)) closeAcList(inputId);
-};
-
-setTimeout(() => {
-  document.addEventListener("click", window.__acOutsideHandlers[inputId]);
-}, 0); }, {once:false});
+  document.addEventListener("click", e => { if (!wrap.contains(e.target)) closeAcList(inputId); }, {once:false});
 }
 
 async function doSearch(q, inputId, onSelect) {
@@ -769,7 +701,7 @@ function closeAcList(inputId) {
 // ─────────────────────────────────────────────
 function renderHeader() {
   const totals = state.positions.reduce((acc,p)=>{
-    const inv = toEURHistoric(p.shares * p.avg_cost, p);
+    const inv = toEUR(p.shares*p.avg_cost, p.currency);
     const cur = state.priceCache[p.ticker] ? toEUR(p.shares*state.priceCache[p.ticker], p.currency) : inv;
     acc.inv+=inv; acc.cur+=cur; return acc;
   },{inv:0,cur:0});
@@ -819,7 +751,6 @@ function renderActiveTab() {
     case 4: el.innerHTML = renderCharts(); break;
     case 5: el.innerHTML = renderGoals(); break;
     case 6: el.innerHTML = renderValuation(); break;
-    case 7: el.innerHTML = renderRenta(); break;
   }
 }
 
@@ -836,22 +767,11 @@ function renderPortfolio() {
 
   const getV = (p,col) => {
     const cp=state.priceCache[p.ticker],cur=p.currency;
-    const inv=toEURHistoric(p.shares * p.avg_cost, p);
+    const inv=toEUR(p.shares*p.avg_cost,cur);
     const curV=cp?toEUR(p.shares*cp,cur):null;
     const pnl=curV!==null?curV-inv:null;
     const di=state.divInfo.find(d=>d.ticker===p.ticker);
-    return {
-  ticker:p.ticker,
-  empresa:p.name||"",
-  acciones:p.shares,
-  coste:toEURHistoric(p.avg_cost, p),
-  precio:cp?toEUR(cp,cur):0,
-  valor:curV||inv,
-  pnl:pnl||0,
-  pct:pnl&&inv?pnl/inv*100:0,
-  yield:(di?.div_yield||0)*100,
-  sector:p.sector||""
-}[col]||0;
+    return {ticker:p.ticker,empresa:p.name||"",acciones:p.shares,coste:toEUR(p.avg_cost,cur),precio:cp?toEUR(cp,cur):0,valor:curV||inv,pnl:pnl||0,pct:pnl&&inv?pnl/inv*100:0,yield:(di?.div_yield||0)*100,sector:p.sector||""}[col]||0;
   };
 
   if (state.sortCol) rows = [...rows].sort((a,b)=>state.sortDir*(getV(a,state.sortCol)<getV(b,state.sortCol)?-1:1));
@@ -884,7 +804,7 @@ function renderPortfolio() {
       <td style="color:#1d4ed8;font-weight:700">${esc(pos.ticker)}</td>
       <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pos.name)}</td>
       <td style="text-align:center">${Math.round(pos.shares)}</td>
-      <td style="text-align:right">${fmtEUR(toEURHistoric(pos.avg_cost, pos))}</td>
+      <td style="text-align:right">${fmtEUR(toEUR(pos.avg_cost,cur))}</td>
       <td style="text-align:right">${cpE?fmtEUR(cpE):'<span style="color:#94a3b8">…</span>'}</td>
       <td style="text-align:right;font-weight:600">${fmtEUR(curE||inv)}</td>
       <td style="text-align:right;color:${pc};font-weight:600">${pnl!==null?(pnl>=0?"+":"")+fmtEUR(Math.abs(pnl)):"…"}</td>
@@ -899,16 +819,10 @@ function renderPortfolio() {
     <div style="width:260px;border-left:1px solid #e2e8f0;padding:14px;background:#f8fafc;overflow-y:auto;flex-shrink:0">
       <div style="font-weight:700;font-size:15px;color:#1d4ed8;margin-bottom:2px">${esc(selPos.ticker)}</div>
       <div style="color:#64748b;font-size:12px;margin-bottom:12px">${esc(selPos.name)}</div>
-    ${[
-  ["Acciones", Math.round(selPos.shares)],
-  ["Coste medio (€ hist.)", fmtEUR(toEURHistoric(selPos.avg_cost, selPos))],
-  ["FX compra", selPos.currency === "EUR" ? "1.000000" : getHistoricFX(selPos).toFixed(6)],
-  ["Precio actual", state.priceCache[selPos.ticker] ? fmtEUR(toEUR(state.priceCache[selPos.ticker], selPos.currency)) : "Sin datos"],
-  ["Valor total", fmtEUR(toEUR((state.priceCache[selPos.ticker] || selPos.avg_cost) * selPos.shares, selPos.currency))],
-  ["Coste total EUR", fmtEUR(toEURHistoric(selPos.avg_cost * selPos.shares, selPos))],
-  ["Sector", selPos.sector || "—"],
-  ["Divisa", selPos.currency],
-  ["Fecha", selPos.date || "—"]
+      ${[["Acciones",Math.round(selPos.shares)],["Coste medio",fmtEUR(toEUR(selPos.avg_cost,selPos.currency))],
+        ["Precio actual",state.priceCache[selPos.ticker]?fmtEUR(toEUR(state.priceCache[selPos.ticker],selPos.currency)):"Sin datos"],
+        ["Valor total",fmtEUR(toEUR((state.priceCache[selPos.ticker]||selPos.avg_cost)*selPos.shares,selPos.currency))],
+        ["Sector",selPos.sector||"—"],["Divisa",selPos.currency],["Fecha",selPos.date||"—"]
       ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #e2e8f0;font-size:12px"><span style="color:#64748b">${k}</span><span style="font-weight:600">${v}</span></div>`).join("")}
       <div style="margin-top:12px;display:flex;flex-direction:column;gap:6px">
         <button class="btn" style="font-size:12px;padding:6px 10px" onclick="openEditPos('${esc(selPos.ticker)}')">✏ Editar posición</button>
@@ -1022,27 +936,19 @@ function deleteDividend(id){ state.dividends=state.dividends.filter(d=>d.id!==id
 // TAB 3 — TRANSACCIONES
 // ─────────────────────────────────────────────
 function renderTransactions() {
-  const rows = state.transactions.map(t => {
-    const tt = normalizeTransaction(t);
-    return `<tr>
-      <td style="color:#94a3b8">${tt.id}</td>
-      <td style="color:#64748b">${(tt.date || "").slice(0,16)}</td>
-      <td style="color:#1d4ed8;font-weight:700">${esc(tt.ticker)}</td>
-      <td><span class="badge" style="background:${tt.type==="BUY"?"#2563eb":"#dc2626"}22;color:${tt.type==="BUY"?"#2563eb":"#dc2626"}">${tt.type}</span></td>
-      <td>${tt.shares}</td>
-      <td>${tt.price.toFixed(4)} ${tt.currency}</td>
-      <td>${tt.currency === "EUR" ? "1.000000" : (+tt.fx_rate).toFixed(6)}</td>
-      <td style="font-weight:600">${fmtEUR(tt.total_eur)}</td>
-      <td style="color:#64748b">${esc(tt.notes || "—")}</td>
-      <td><button class="btn-danger-sm" onclick="deleteTransaction(${tt.id})">✕</button></td>
-    </tr>`;
-  }).join("");
-
+  const rows = state.transactions.map(t=>`<tr>
+    <td style="color:#94a3b8">${t.id}</td>
+    <td style="color:#64748b">${(t.date||"").slice(0,16)}</td>
+    <td style="color:#1d4ed8;font-weight:700">${esc(t.ticker)}</td>
+    <td><span class="badge" style="background:${t.type==="BUY"?"#2563eb":"#dc2626"}22;color:${t.type==="BUY"?"#2563eb":"#dc2626"}">${t.type}</span></td>
+    <td>${t.shares}</td><td>${fmtEUR(t.price)}</td>
+    <td style="font-weight:600">${fmtEUR(t.shares*t.price)}</td>
+    <td style="color:#64748b">${esc(t.notes||"—")}</td>
+    <td><button class="btn-danger-sm" onclick="deleteTransaction(${t.id})">✕</button></td>
+  </tr>`).join("");
   return `<div style="padding:14px;overflow-x:auto">
-    <table style="min-width:900px">
-      <thead><tr>${["ID","Fecha","Ticker","Tipo","Acciones","Precio","FX compra","Total EUR","Notas",""].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
-      <tbody>${rows || `<tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:28px">Sin transacciones registradas</td></tr>`}</tbody>
-    </table>
+    <table style="min-width:650px"><thead><tr>${["ID","Fecha","Ticker","Tipo","Acciones","Precio","Total","Notas",""].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+    <tbody>${rows||`<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:28px">Sin transacciones registradas</td></tr>`}</tbody></table>
   </div>`;
 }
 function deleteTransaction(id){ if(!confirm("¿Eliminar esta transacción?")) return; state.transactions=state.transactions.filter(t=>t.id!==id); save(); renderActiveTab(); }
@@ -1379,15 +1285,10 @@ async function analyzeValuation() {
 // ─────────────────────────────────────────────
 function openModal(html) {
   document.getElementById("modal-box").innerHTML = html;
-  document.getElementById("modal-overlay")?.addEventListener("click", function(e) {
-  if (e.target === this) closeModal();
-});
+  document.getElementById("modal-overlay").style.display = "flex";
 }
 function closeModal() {
-  const overlay = document.getElementById("modal-overlay");
-  const box = document.getElementById("modal-box");
-  if (box) box.innerHTML = "";
-  if (overlay) overlay.style.display = "none";
+  document.getElementById("modal-overlay").style.display = "none";
 }
 
 function openAddPos() {
@@ -1400,19 +1301,8 @@ function openAddPos() {
     <div class="grid2">
       <div class="field"><label>Nº acciones</label><input id="m-shares" type="number" class="inp" value="0" min="0" step="1"></div>
       <div class="field"><label>Coste medio</label><input id="m-cost" type="number" step="0.0001" class="inp" value="0" min="0"></div>
-      <div class="field"><label>Divisa</label><select id="m-cur" class="inp" onchange="updateFxRateField()">${CURRENCIES.map(c=>`<option>${c}</option>`).join("")}</select></div>
+      <div class="field"><label>Divisa</label><select id="m-cur" class="inp">${CURRENCIES.map(c=>`<option>${c}</option>`).join("")}</select></div>
       <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">— Sector —</option>${SECTORS.map(s=>`<option>${s}</option>`).join("")}</select></div>
-    </div>
-    <div class="grid2">
-      <div class="field">
-        <label>Tipo cambio compra (EUR por 1 unidad)</label>
-        <input id="m-fx-rate" type="number" step="0.000001" class="inp" value="1">
-      </div>
-      <div class="field">
-        <label>Coste fiscal EUR/acc</label>
-        <input id="m-cost-eur" type="text" class="inp" value="0.0000" readonly style="background:#f8fafc;color:#475569">
-<div id="m-cost-eur-label" style="font-size:11px;color:#64748b;margin-top:4px"></div>
-      </div>
     </div>
     <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${new Date().toISOString().slice(0,10)}"></div>
     <div id="m-price-preview" style="display:none;padding:8px 12px;background:#f0fdf4;border-radius:8px;font-size:12px;color:#065f46;font-weight:600;margin-bottom:10px"></div>
@@ -1421,230 +1311,63 @@ function openAddPos() {
       <button class="btn" onclick="saveNewPos()">💾 Guardar</button>
     </div>`);
 
-  const bindCostListeners = () => {
-    document.getElementById("m-cost")?.addEventListener("input", updateFxCostPreview);
-    document.getElementById("m-fx-rate")?.addEventListener("input", updateFxCostPreview);
-  };
-  bindCostListeners();
-  updateFxRateField();
-  updateFxCostPreview();
-
-setupAutocomplete("m-ticker", async (r) => {
-  try {
-    const tickerEl = document.getElementById("m-ticker");
-    const nameEl = document.getElementById("m-name");
-    const curEl = document.getElementById("m-cur");
-    const sectorEl = document.getElementById("m-sector");
-    const costEl = document.getElementById("m-cost");
-    const previewEl = document.getElementById("m-price-preview");
-
-    if (!tickerEl || !nameEl || !curEl || !sectorEl || !costEl) return;
-
-    tickerEl.value = (r?.ticker || "").trim().toUpperCase();
-    nameEl.value = (r?.name || r?.ticker || "").trim();
-
-    const exch = String(r?.exchange || "").toUpperCase();
-
-    let exchCur = "USD";
-    if (tickerEl.value.endsWith(".MC")) exchCur = "EUR";
-    else if (tickerEl.value.endsWith(".L")) exchCur = "GBP";
-    else if (exch.includes("MADRID")) exchCur = "EUR";
-    else if (exch.includes("LONDON")) exchCur = "GBP";
-    else if (exch.includes("SWISS")) exchCur = "CHF";
-    else if (exch.includes("TORONTO")) exchCur = "CAD";
-    else if (exch.includes("ASX")) exchCur = "AUD";
-    else if (exch.includes("TOKYO")) exchCur = "JPY";
-
-    curEl.value = exchCur;
-
-    const autoSector = guessSectorFromNameOrTicker(tickerEl.value, nameEl.value);
-    if (autoSector) sectorEl.value = autoSector;
-
-    updateFxRateField();
-
-    if (previewEl) {
-      previewEl.innerHTML = `<span class="spinner"></span> Consultando precio en Yahoo Finance...`;
-    }
-
-    const rawPrice = await fetchWithProxy(PROXIES, tickerEl.value);
-    const normalizedPrice = normalizeQuotedPrice(rawPrice, tickerEl.value, exchCur);
-
-    if (normalizedPrice > 0) {
-      costEl.value = normalizedPrice.toFixed(4).replace(/\.?0+$/, "").replace(".", ",");
-    }
-
-    updateFxCostPreview();
-
-    if (previewEl) {
-      const unitLabel = (tickerEl.value.endsWith(".L") && exchCur === "GBP")
-        ? "GBP (convertido desde GBX)"
-        : exchCur;
-
-      previewEl.textContent = normalizedPrice > 0
-        ? `✅ Precio actual en Yahoo Finance: ${normalizedPrice} ${unitLabel}`
-        : `⚠️ No se pudo obtener precio en Yahoo Finance`;
-    }
-  } catch (e) {
-    console.error("Error al seleccionar ticker:", e);
-    const previewEl = document.getElementById("m-price-preview");
-    if (previewEl) previewEl.textContent = "⚠️ Error al cargar datos del ticker";
-  }
-});
-
-function updateFxRateField() {
-  const cur = document.getElementById("m-cur")?.value || "EUR";
-  const fxInp = document.getElementById("m-fx-rate");
-  if (!fxInp) return;
-
-  if (cur === "EUR") {
-    fxInp.value = "1";
-    fxInp.disabled = true;
-    fxInp.style.background = "#f1f5f9";
-    fxInp.style.color = "#64748b";
-  } else {
-    if (!parseNum(fxInp.value) || parseNum(fxInp.value) === 1) {
-      fxInp.value = (getFX(cur) || 1).toFixed(6);
-    }
-    fxInp.disabled = false;
-    fxInp.style.background = "#fff";
-    fxInp.style.color = "#0f172a";
-  }
-
-  updateFxCostPreview();
+  setupAutocomplete("m-ticker", async r => {
+    document.getElementById("m-name").value = r.name||r.ticker;
+    // Autodetectar divisa según exchange
+    const exchCur = {"MCE":"EUR","MAD":"EUR","NYQ":"USD","NMS":"USD","NGM":"USD","ASE":"USD","LSE":"GBP","FRA":"EUR","PAR":"EUR","AMS":"EUR","MIL":"EUR","TSX":"CAD","ASX":"AUD","TYO":"JPY","HKG":"HKD"}[r.exchange]||"USD";
+    const sel = document.getElementById("m-cur");
+    if (sel && CURRENCIES.includes(exchCur)) sel.value = exchCur;
+    // Buscar precio actual
+    const preview = document.getElementById("m-price-preview");
+    if (preview) { preview.style.display="block"; preview.textContent="⏳ Buscando precio actual..."; }
+    const price = await fetchWithProxy(PROXIES, r.ticker);
+    if (price && preview) {
+      preview.textContent = `✅ Precio actual en Yahoo Finance: ${price} ${exchCur}`;
+      const costInp = document.getElementById("m-cost");
+      if (costInp && (+costInp.value===0||costInp.value==="0")) costInp.value = price;
+    } else if (preview) { preview.style.display="none"; }
+  });
 }
 
-function updateFxCostPreview() {
-  const cost = parseNum(document.getElementById("m-cost")?.value);
-  const fx = parseNum(document.getElementById("m-fx-rate")?.value) || 1;
-  const out = document.getElementById("m-cost-eur");
-  if (out) out.value = (cost * fx).toFixed(4);
-const label = document.getElementById("m-cost-eur-label");
-if (label) label.textContent = `Coste histórico: ${fmtEUR(cost * fx)} por acción`;
+function saveNewPos() {
+  const ticker=(document.getElementById("m-ticker").value||"").trim().toUpperCase().split(" ")[0];
+  const shares=+document.getElementById("m-shares").value;
+  const cost=+document.getElementById("m-cost").value;
+  if(!ticker||shares<=0){alert("Ticker y acciones son obligatorios");return;}
+  const pos={ticker,name:document.getElementById("m-name").value||ticker,shares,avg_cost:cost,currency:document.getElementById("m-cur").value,sector:document.getElementById("m-sector").value,date:document.getElementById("m-date").value};
+  const idx=state.positions.findIndex(p=>p.ticker===ticker);
+  if(idx>=0) state.positions[idx]=pos; else state.positions.push(pos);
+  state.transactions.unshift({id:uid(),ticker,type:"BUY",shares,price:cost,date:pos.date,notes:"Posición inicial"});
+  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
+  refreshDividendYields();
 }
-async function saveNewPos() {
-  try {
-    const ticker = (document.getElementById("m-ticker")?.value || "").trim().toUpperCase();
-    const name = (document.getElementById("m-name")?.value || ticker).trim();
-    const shares = parseNum(document.getElementById("m-shares")?.value);
-    const currency = document.getElementById("m-cur")?.value || "EUR";
-    const fxRate = currency === "EUR" ? 1 : parseNum(document.getElementById("m-fx-rate")?.value);
-    const sector = document.getElementById("m-sector")?.value || "";
-    const date = document.getElementById("m-date")?.value || new Date().toISOString().slice(0, 10);
 
-    let cost = parseNum(document.getElementById("m-cost")?.value);
-    cost = normalizeQuotedPrice(cost, ticker, currency);
-
-    if (!ticker) {
-      alert("Introduce un ticker válido");
-      return;
-    }
-    if (shares <= 0) {
-      alert("El número de acciones debe ser mayor que 0");
-      return;
-    }
-    if (cost <= 0) {
-      alert("El coste medio debe ser mayor que 0");
-      return;
-    }
-    if (currency !== "EUR" && fxRate <= 0) {
-      alert("El tipo de cambio debe ser mayor que 0");
-      return;
-    }
-
-    const pos = normalizePosition({
-      ticker,
-      name,
-      shares,
-      avg_cost: cost,
-      currency,
-      fx_rate: fxRate,
-      sector,
-      date
-    });
-
-    state.positions.push(pos);
-
-    state.transactions.push({
-      id: uid(),
-      date: new Date().toISOString(),
-      ticker: pos.ticker,
-      type: "BUY",
-      shares: pos.shares,
-      price: pos.avg_cost,
-      notes: "Alta manual"
-    });
-
-    save();
-    renderHeader();
-    renderActiveTab();
-    closeModal();
-  } catch (e) {
-    console.error("Error guardando nueva posición:", e);
-    alert("No se pudo guardar la posición. Revisa la consola del navegador.");
-  }
-}
 function openEditPos(ticker) {
-  const tk = ticker || state.selectedTicker;
-  const pos = tk ? state.positions.find(p => p.ticker === tk) : null;
-  if (!pos) { alert("Selecciona una posición primero"); return; }
-
+  const tk=ticker||state.selectedTicker;
+  const pos=tk?state.positions.find(p=>p.ticker===tk):null;
+  if(!pos){alert("Selecciona una posición primero");return;}
   openModal(`
     <h3>✏ Editar posición — ${esc(pos.ticker)}</h3>
     <div class="field"><label>Ticker</label><input class="inp" value="${esc(pos.ticker)}" readonly style="background:#f1f5f9;color:#64748b"></div>
-    <div class="field"><label>Nombre empresa</label><input id="m-name" class="inp" value="${esc(pos.name || "")}"></div>
+    <div class="field"><label>Nombre empresa</label><input id="m-name" class="inp" value="${esc(pos.name||"")}"></div>
     <div class="grid2">
       <div class="field"><label>Nº acciones</label><input id="m-shares" type="number" class="inp" value="${pos.shares}"></div>
       <div class="field"><label>Coste medio</label><input id="m-cost" type="number" step="0.0001" class="inp" value="${pos.avg_cost}"></div>
-      <div class="field"><label>Divisa</label><select id="m-cur" class="inp" onchange="updateFxRateField()">${CURRENCIES.map(c=>`<option ${c===pos.currency?"selected":""}>${c}</option>`).join("")}</select></div>
+      <div class="field"><label>Divisa</label><select id="m-cur" class="inp">${CURRENCIES.map(c=>`<option ${c===pos.currency?"selected":""}>${c}</option>`).join("")}</select></div>
       <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">— Sector —</option>${SECTORS.map(s=>`<option ${s===pos.sector?"selected":""}>${s}</option>`).join("")}</select></div>
     </div>
-    <div class="grid2">
-      <div class="field">
-        <label>Tipo cambio compra (EUR por 1 unidad)</label>
-        <input id="m-fx-rate" type="number" step="0.000001" class="inp" value="${getHistoricFX(pos)}">
-      </div>
-      <div class="field">
-        <label>Coste fiscal EUR/acc</label>
-        <input id="m-cost-eur" class="inp" value="${fmtEUR(pos.avg_cost * getHistoricFX(pos))}" readonly style="background:#f8fafc;color:#475569">
-      </div>
-    </div>
-    <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${pos.date || ""}"></div>
+    <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${pos.date||""}"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
       <button class="btn-gray" onclick="closeModal()">Cancelar</button>
       <button class="btn" onclick="saveEditPos('${esc(pos.ticker)}')">💾 Guardar</button>
     </div>`);
-
-  document.getElementById("m-cost")?.addEventListener("input", updateFxCostPreview);
-  document.getElementById("m-fx-rate")?.addEventListener("input", updateFxCostPreview);
-  updateFxRateField();
-  updateFxCostPreview();
 }
 
 function saveEditPos(ticker) {
-  const idx = state.positions.findIndex(p => p.ticker === ticker);
-  if (idx < 0) return;
-
-  const currency = document.getElementById("m-cur").value;
- const fxRate = currency === "EUR" ? 1 : parseNum(document.getElementById("m-fx-rate").value);
-
-  if (fxRate <= 0) { alert("Introduce un tipo de cambio válido"); return; }
-
-  state.positions[idx] = normalizePosition({
-    ...state.positions[idx],
-    name: document.getElementById("m-name").value,
-   shares: parseNum(document.getElementById("m-shares").value),
-avg_cost: normalizeQuotedPrice(parseNum(document.getElementById("m-cost").value), ticker, currency),
-    currency,
-    fx_rate: fxRate,
-    sector: document.getElementById("m-sector").value,
-    date: document.getElementById("m-date").value
-  });
-
-  buildDivInfo();
-  save();
-  closeModal();
-  renderHeader();
-  renderActiveTab();
+  const idx=state.positions.findIndex(p=>p.ticker===ticker);
+  if(idx<0)return;
+  state.positions[idx]={...state.positions[idx],name:document.getElementById("m-name").value,shares:+document.getElementById("m-shares").value,avg_cost:+document.getElementById("m-cost").value,currency:document.getElementById("m-cur").value,sector:document.getElementById("m-sector").value,date:document.getElementById("m-date").value};
+  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
 }
 
 function deletePosition(ticker) {
@@ -1731,313 +1454,8 @@ function saveDividendModal() {
 }
 
 // ─────────────────────────────────────────────
-// TAB 7 — DECLARACIÓN DE LA RENTA
+// DISCLAIMER & INIT
 // ─────────────────────────────────────────────
-function renderRenta() {
-  const now = new Date();
-  const ejercicio = now.getFullYear() - 1; // Año anterior
-  const yearStr = String(ejercicio);
-
-  // ── 1. DIVIDENDOS COBRADOS EN EL EJERCICIO ──
-  const divEjercicio = state.dividends.filter(d => (d.date||"").startsWith(yearStr));
-
-  // Agrupar por ticker
-  const divPorTicker = {};
-  divEjercicio.forEach(d => {
-    const tk = d.ticker;
-    if (!divPorTicker[tk]) {
-      const pos = state.positions.find(p=>p.ticker===tk);
-      divPorTicker[tk] = {ticker:tk, name:pos?.name||tk, currency:pos?.currency||"EUR", bruto:0, retencionOrigen:0, count:0};
-    }
-    const bruto = d.amount * d.shares;
-    divPorTicker[tk].bruto += bruto;
-    divPorTicker[tk].count++;
-  });
-
-  // Retención en origen estimada por país (basada en divisa/ticker)
-  function retencionOrigen(ticker, currency) {
-    if (ticker.endsWith(".MC") || currency==="EUR") return 0.19;  // España: no hay doble imposición
-    if (currency==="USD") return 0.15;     // USA: retención en origen 15% (convenio)
-    if (currency==="GBP") return 0.00;     // UK: sin retención en origen sobre dividendos
-    if (ticker.endsWith(".SW") || ticker.endsWith(".VX")) return 0.35; // Suiza: 35%
-    if (ticker.endsWith(".PA") || ticker.endsWith(".NX")) return 0.128; // Francia: 12.8%
-    if (ticker.endsWith(".DE") || ticker.endsWith(".F")) return 0.25;   // Alemania: 25%
-    if (ticker.endsWith(".AS")) return 0.15; // Holanda: 15%
-    if (ticker.endsWith(".MI")) return 0.26; // Italia: 26%
-    if (ticker.endsWith(".LS")) return 0.28; // Portugal: 28%
-    return 0.15; // Estimación genérica
-  }
-
-  const retencionESP = 0.19; // Retención Hacienda española sobre dividendos
-
-  const divRows = Object.values(divPorTicker).map(d => {
-    const retOr = retencionOrigen(d.ticker, d.currency);
-    const retOrImporte = +(d.bruto * retOr).toFixed(2);
-    const brutoEUR = +(toEUR(d.bruto, d.currency)).toFixed(2);
-    const retOrEUR = +(toEUR(retOrImporte, d.currency)).toFixed(2);
-    const retEsp = +(brutoEUR * retencionESP).toFixed(2);
-    // Deducible: lo ya retenido en origen (con límite del convenio, normalmente 15%)
-    const limConvenio = Math.min(retOr, 0.15);
-    const deducibleOrigen = +(brutoEUR * limConvenio).toFixed(2);
-    const retEspNeta = +(Math.max(0, retEsp - deducibleOrigen)).toFixed(2);
-    return {...d, brutoEUR, retOrPct:retOr, retOrEUR, retEspTotal:retEsp, deducibleOrigen, retEspNeta};
-  });
-
-  const totDiv = {
-    bruto: divRows.reduce((s,d)=>s+d.brutoEUR,0),
-    retOrEUR: divRows.reduce((s,d)=>s+d.retOrEUR,0),
-    retEspTotal: divRows.reduce((s,d)=>s+d.retEspTotal,0),
-    deducibleOrigen: divRows.reduce((s,d)=>s+d.deducibleOrigen,0),
-    retEspNeta: divRows.reduce((s,d)=>s+d.retEspNeta,0),
-  };
-
-  // ── 2. PLUSVALÍAS / MINUSVALÍAS (VENTAS EN EL EJERCICIO) ──
-  const ventasEjercicio = state.transactions.filter(t => t.type==="SELL" && (t.date||"").startsWith(yearStr));
-
-  const pvRows = ventasEjercicio.map(t => {
-    const pos = state.positions.find(p=>p.ticker===t.ticker);
-    const currency = pos?.currency || "EUR";
-   const coste = pos?.avg_cost || 0;
-const precioVenta = t.price;
-const acciones = t.shares;
-const fxCompra = getHistoricFX(pos || t);
-const fxVenta = +(t.fx_rate || getFX(currency) || 1);
-const costeTotal = +(coste * acciones * fxCompra).toFixed(2);
-const ingresoTotal = +(precioVenta * acciones * fxVenta).toFixed(2);
-    const resultado = +(ingresoTotal - costeTotal).toFixed(2);
-    // Antigüedad > 1 año? No afecta al tipo en España (todas van a la base del ahorro)
-    const fechaCompra = pos?.date ? new Date(pos.date) : null;
-    const fechaVenta = new Date(t.date);
-    const diasTenencia = fechaCompra ? Math.round((fechaVenta - fechaCompra)/864e5) : null;
-    return {
-      ticker: t.ticker,
-      name: pos?.name||t.ticker,
-      acciones,
-      fechaCompra: pos?.date?.slice(0,10)||"—",
-      fechaVenta: (t.date||"").slice(0,10),
-      precioCompra: coste,
-      precioVenta,
-      costeTotal,
-      ingresoTotal,
-      resultado,
-      diasTenencia,
-      currency
-    };
-  });
-
-  const totPV = {
-    coste: pvRows.reduce((s,r)=>s+r.costeTotal,0),
-    ingreso: pvRows.reduce((s,r)=>s+r.ingresoTotal,0),
-    resultado: pvRows.reduce((s,r)=>s+r.resultado,0),
-  };
-  const plusvalias = pvRows.filter(r=>r.resultado>0).reduce((s,r)=>s+r.resultado,0);
-  const minusvalias = pvRows.filter(r=>r.resultado<0).reduce((s,r)=>s+r.resultado,0);
-  const saldoNeto = +(plusvalias + minusvalias).toFixed(2);
-
-  // ── 3. BASE IMPONIBLE DEL AHORRO y TIPOS ──
-  const baseAhorro = +(totDiv.bruto + saldoNeto).toFixed(2);
-
-  function tipoMarginalAhorro(base) {
-    if (base <= 0) return "0%";
-    if (base <= 6000) return "19%";
-    if (base <= 50000) return "21%";
-    if (base <= 200000) return "23%";
-    if (base <= 300000) return "27%";
-    return "28%";
-  }
-
-  function cuotaAhorro(base) {
-    if (base <= 0) return 0;
-    let cuota = 0;
-    cuota += Math.min(base, 6000) * 0.19; base = Math.max(0, base - 6000);
-    cuota += Math.min(base, 44000) * 0.21; base = Math.max(0, base - 44000);
-    cuota += Math.min(base, 150000) * 0.23; base = Math.max(0, base - 150000);
-    cuota += Math.min(base, 100000) * 0.27; base = Math.max(0, base - 100000);
-    cuota += base * 0.28;
-    return +cuota.toFixed(2);
-  }
-
-  const cuotaBruta = cuotaAhorro(baseAhorro);
-  const cuotaNeta = +(Math.max(0, cuotaBruta - totDiv.deducibleOrigen - totDiv.retEspNeta)).toFixed(2);
-
-  // ── 4. CASILLAS IRPF ORIENTATIVAS ──
-  // (basadas en modelo IRPF vigente, orientativas, no vinculantes)
-
-  // ── RENDER ──
-  const fmtPct = v => (v*100).toFixed(1)+"%";
-  const fmtN = v => v?.toFixed(2)+"€";
-
-  const divTableRows = divRows.length ? divRows.map(d=>`
-    <tr>
-      <td style="font-weight:700;color:#1d4ed8">${esc(d.ticker)}</td>
-      <td>${esc(d.name)}</td>
-      <td style="text-align:right">${fmtEUR(d.brutoEUR)}</td>
-      <td style="text-align:center">${fmtPct(d.retOrPct)}</td>
-      <td style="text-align:right;color:#dc2626">−${fmtEUR(d.retOrEUR)}</td>
-      <td style="text-align:right;color:#dc2626">−${fmtEUR(d.retEspTotal)}</td>
-      <td style="text-align:right;color:#059669">+${fmtEUR(d.deducibleOrigen)}</td>
-      <td style="text-align:right;font-weight:700">${fmtEUR(d.brutoEUR - d.retOrEUR - d.retEspNeta)}</td>
-    </tr>`).join("") : `<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:20px">Sin dividendos registrados en ${yearStr}<br><small>Regístralos en la pestaña 💰 Dividendos</small></td></tr>`;
-
-  const pvTableRows = pvRows.length ? pvRows.map(r=>`
-    <tr>
-      <td style="font-weight:700;color:#1d4ed8">${esc(r.ticker)}</td>
-      <td>${r.acciones}</td>
-      <td style="text-align:right">${fmtEUR(r.costeTotal)}</td>
-      <td style="text-align:right">${fmtEUR(r.ingresoTotal)}</td>
-      <td style="text-align:right;font-weight:700;color:${r.resultado>=0?"#059669":"#dc2626"}">${r.resultado>=0?"+":""}${fmtEUR(r.resultado)}</td>
-      <td style="text-align:center;color:#64748b">${r.fechaCompra}</td>
-      <td style="text-align:center;color:#64748b">${r.fechaVenta}</td>
-      <td style="text-align:center">${r.diasTenencia!=null?r.diasTenencia+"d":"—"}</td>
-    </tr>`).join("") : `<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:20px">Sin ventas registradas en ${yearStr}<br><small>Regístralas en la pestaña 📝 Transacciones</small></td></tr>`;
-
-  return `<div style="padding:16px;max-width:960px;margin:0 auto">
-
-    <!-- CABECERA DEL INFORME -->
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:12px">
-      <div>
-        <h2 style="font-size:17px;font-weight:800;color:#1e293b;margin-bottom:2px">🧾 Informe fiscal — Ejercicio ${yearStr}</h2>
-        <div style="font-size:11px;color:#94a3b8">Generado el ${new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"long",year:"numeric"})} · Solo orientativo, no vinculante</div>
-      </div>
-      <button class="btn" onclick="printRenta()" style="font-size:12px;padding:8px 16px">🖨️ Imprimir / Guardar PDF</button>
-    </div>
-
-    <!-- AVISO LEGAL -->
-    <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:10px;padding:12px 14px;font-size:11px;color:#92400e;margin-bottom:20px;line-height:1.6">
-      ⚠️ <strong>Aviso:</strong> Este informe es meramente orientativo y se basa en los datos que has introducido en la app. Las retenciones en origen son estimaciones según convenios de doble imposición. Consulta siempre con un asesor fiscal o gestor antes de presentar tu declaración. Los importes pueden diferir de los datos que aparecen en tu borrador de la AEAT.
-    </div>
-
-    <!-- RESUMEN EJECUTIVO -->
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:20px">
-      ${[
-        ["Dividendos brutos",fmtEUR(totDiv.bruto),"#2563eb"],
-        ["Retenciones origen","-"+fmtEUR(totDiv.retOrEUR),"#dc2626"],
-        ["Retenciones Hacienda","-"+fmtEUR(totDiv.retEspNeta),"#dc2626"],
-        ["Plusvalías netas",fmtEUR(plusvalias),"#059669"],
-        ["Minusvalías",fmtEUR(Math.abs(minusvalias)),"#dc2626"],
-        ["Base ahorro estimada",fmtEUR(Math.max(0,baseAhorro)),"#7c3aed"],
-      ].map(([l,v,c])=>`<div class="card" style="padding:12px;text-align:center">
-        <div style="font-size:10px;color:#64748b;text-transform:uppercase;font-weight:700;margin-bottom:4px">${l}</div>
-        <div style="font-size:16px;font-weight:800;color:${c}">${v}</div>
-      </div>`).join("")}
-    </div>
-
-    <!-- SECCIÓN 1: DIVIDENDOS -->
-    <div class="card" style="margin-bottom:16px">
-      <h3 style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:12px">📊 Dividendos cobrados en ${yearStr}</h3>
-      <div style="overflow-x:auto">
-        <table style="width:100%;min-width:640px;font-size:11px">
-          <thead><tr style="background:#f8fafc">
-            ${["Ticker","Empresa","Bruto €","Ret. origen","Imp. ret. origen","Ret. Hacienda (19%)","Deducible","Neto cobrado"].map(h=>`<th style="padding:6px 8px;text-align:${["Bruto €","Imp. ret. origen","Ret. Hacienda (19%)","Deducible","Neto cobrado"].includes(h)?"right":"left"};color:#475569;font-weight:700;border-bottom:2px solid #e2e8f0">${h}</th>`).join("")}
-          </tr></thead>
-          <tbody style="font-size:11px">${divTableRows}</tbody>
-          ${divRows.length?`<tfoot><tr style="background:#f8fafc;font-weight:700">
-            <td colspan="2" style="padding:6px 8px">TOTAL</td>
-            <td style="padding:6px 8px;text-align:right">${fmtEUR(totDiv.bruto)}</td>
-            <td></td>
-            <td style="padding:6px 8px;text-align:right;color:#dc2626">−${fmtEUR(totDiv.retOrEUR)}</td>
-            <td style="padding:6px 8px;text-align:right;color:#dc2626">−${fmtEUR(totDiv.retEspTotal)}</td>
-            <td style="padding:6px 8px;text-align:right;color:#059669">+${fmtEUR(totDiv.deducibleOrigen)}</td>
-            <td style="padding:6px 8px;text-align:right">${fmtEUR(totDiv.bruto-totDiv.retOrEUR-totDiv.retEspNeta)}</td>
-          </tr></tfoot>`:""}
-        </table>
-      </div>
-
-      <!-- CASILLAS IRPF DIVIDENDOS -->
-      ${divRows.length?`<div style="margin-top:14px;background:#eff6ff;border-radius:8px;padding:12px;font-size:11px">
-        <div style="font-weight:700;color:#1d4ed8;margin-bottom:8px">📋 Casillas orientativas IRPF — Rendimientos del capital mobiliario</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px">
-          ${[
-            ["Casilla 027","Dividendos íntegros (brutos)",fmtEUR(totDiv.bruto)],
-            ["Casilla 592","Retención soportada Hacienda",fmtEUR(totDiv.retEspTotal)],
-            ["Casilla 588","Deducción doble imposición internacional",fmtEUR(totDiv.deducibleOrigen)],
-          ].map(([c,l,v])=>`<div style="background:#fff;border-radius:6px;padding:8px 10px;border:1px solid #bfdbfe">
-            <div style="color:#1d4ed8;font-weight:700;font-size:10px">${c}</div>
-            <div style="color:#475569;font-size:10px;margin-bottom:2px">${l}</div>
-            <div style="color:#1e293b;font-weight:700">${v}</div>
-          </div>`).join("")}
-        </div>
-        <div style="margin-top:8px;color:#64748b;font-size:10px">ℹ️ Los números de casilla pueden variar según el modelo de Renta de cada año. Verifica con el borrador de la AEAT.</div>
-      </div>`:""}
-    </div>
-
-    <!-- SECCIÓN 2: PLUSVALÍAS Y MINUSVALÍAS -->
-    <div class="card" style="margin-bottom:16px">
-      <h3 style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:12px">📈 Ganancias y pérdidas patrimoniales — Ventas en ${yearStr}</h3>
-      <div style="overflow-x:auto">
-        <table style="width:100%;min-width:640px;font-size:11px">
-          <thead><tr style="background:#f8fafc">
-            ${["Ticker","Acciones","Coste total","Ingreso venta","Resultado","F. compra","F. venta","Tenencia"].map(h=>`<th style="padding:6px 8px;text-align:${["Coste total","Ingreso venta","Resultado"].includes(h)?"right":"left"};color:#475569;font-weight:700;border-bottom:2px solid #e2e8f0">${h}</th>`).join("")}
-          </tr></thead>
-          <tbody>${pvTableRows}</tbody>
-          ${pvRows.length?`<tfoot><tr style="background:#f8fafc;font-weight:700">
-            <td colspan="2" style="padding:6px 8px">TOTAL</td>
-            <td style="padding:6px 8px;text-align:right">${fmtEUR(totPV.coste)}</td>
-            <td style="padding:6px 8px;text-align:right">${fmtEUR(totPV.ingreso)}</td>
-            <td style="padding:6px 8px;text-align:right;color:${saldoNeto>=0?"#059669":"#dc2626"}">${saldoNeto>=0?"+":""}${fmtEUR(saldoNeto)}</td>
-            <td colspan="3"></td>
-          </tr></tfoot>`:""}
-        </table>
-      </div>
-      ${pvRows.length?`
-      <div style="margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px">
-        ${[
-          ["✅ Plusvalías",fmtEUR(plusvalias),"#059669","#f0fdf4","#bbf7d0"],
-          ["❌ Minusvalías",fmtEUR(Math.abs(minusvalias)),"#dc2626","#fef2f2","#fecaca"],
-          ["⚖️ Saldo neto",(saldoNeto>=0?"+":"")+fmtEUR(saldoNeto),saldoNeto>=0?"#059669":"#dc2626","#f8fafc","#e2e8f0"],
-        ].map(([l,v,c,bg,border])=>`<div style="background:${bg};border:1px solid ${border};border-radius:8px;padding:10px 12px">
-          <div style="font-size:10px;color:#64748b;font-weight:700;margin-bottom:3px">${l}</div>
-          <div style="font-size:15px;font-weight:800;color:${c}">${v}</div>
-        </div>`).join("")}
-      </div>
-      <div style="margin-top:12px;background:#eff6ff;border-radius:8px;padding:12px;font-size:11px">
-        <div style="font-weight:700;color:#1d4ed8;margin-bottom:8px">📋 Casillas orientativas IRPF — Ganancias y pérdidas patrimoniales (Base del ahorro)</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px">
-          ${[
-            ["Casilla 1626","Valor de transmisión (ingresos)",fmtEUR(totPV.ingreso)],
-            ["Casilla 1627","Valor de adquisición (costes)",fmtEUR(totPV.coste)],
-            ["Casilla 1628","Ganancia / pérdida neta",(saldoNeto>=0?"+":"")+fmtEUR(saldoNeto)],
-          ].map(([c,l,v])=>`<div style="background:#fff;border-radius:6px;padding:8px 10px;border:1px solid #bfdbfe">
-            <div style="color:#1d4ed8;font-weight:700;font-size:10px">${c}</div>
-            <div style="color:#475569;font-size:10px;margin-bottom:2px">${l}</div>
-            <div style="color:#1e293b;font-weight:700">${v}</div>
-          </div>`).join("")}
-        </div>
-      </div>`:""}
-    </div>
-
-    <!-- SECCIÓN 3: RESUMEN FISCAL -->
-    <div class="card" style="margin-bottom:16px;border:2px solid #7c3aed22">
-      <h3 style="font-size:13px;font-weight:700;color:#7c3aed;margin-bottom:12px">🧮 Resumen fiscal estimado — Base del ahorro ${yearStr}</h3>
-      <div style="font-size:11px;color:#475569;line-height:2">
-        <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #e2e8f0;padding:4px 0"><span>Dividendos brutos</span><span style="font-weight:700">${fmtEUR(totDiv.bruto)}</span></div>
-        <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #e2e8f0;padding:4px 0"><span>Saldo neto plusvalías/minusvalías</span><span style="font-weight:700;color:${saldoNeto>=0?"#059669":"#dc2626"}">${saldoNeto>=0?"+":""}${fmtEUR(saldoNeto)}</span></div>
-        <div style="display:flex;justify-content:space-between;border-bottom:2px solid #7c3aed44;padding:4px 0;font-weight:700;color:#7c3aed"><span>Base imponible del ahorro</span><span>${fmtEUR(Math.max(0,baseAhorro))}</span></div>
-        <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #e2e8f0;padding:4px 0"><span>Cuota íntegra estimada</span><span>${fmtEUR(cuotaBruta)}</span></div>
-        <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #e2e8f0;padding:4px 0"><span>Retenciones Hacienda soportadas</span><span style="color:#dc2626">−${fmtEUR(totDiv.retEspNeta)}</span></div>
-        <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #e2e8f0;padding:4px 0"><span>Deducción doble imposición (retención origen)</span><span style="color:#059669">−${fmtEUR(totDiv.deducibleOrigen)}</span></div>
-        <div style="display:flex;justify-content:space-between;padding:6px 0;font-weight:800;font-size:13px;color:#1e293b"><span>Cuota diferencial estimada a ingresar</span><span style="color:${cuotaNeta>0?"#dc2626":"#059669"}">${cuotaNeta>0?"":"−"}${fmtEUR(Math.abs(cuotaNeta))}</span></div>
-      </div>
-      <div style="margin-top:8px;font-size:10px;color:#94a3b8">Tipo marginal aplicable estimado: ${tipoMarginalAhorro(baseAhorro)} · Tramos 2024 (Ley 35/2006 IRPF)</div>
-    </div>
-
-    <!-- SECCIÓN 4: NOTAS Y CONSEJO -->
-    <div style="background:#f8fafc;border-radius:10px;padding:14px;font-size:11px;color:#475569;line-height:1.7">
-      <div style="font-weight:700;color:#1e293b;margin-bottom:6px">💡 Notas importantes para tu declaración</div>
-      <ul style="margin:0;padding-left:16px">
-        <li><strong>Minusvalías:</strong> Si tienes pérdidas en ${yearStr}, puedes compensarlas con plusvalías durante los <strong>4 ejercicios siguientes</strong>.</li>
-        <li><strong>Doble imposición:</strong> La retención en origen pagada en el extranjero es deducible en España con el límite del convenio (generalmente el 15%). El exceso no es recuperable vía IRPF pero sí puede solicitarse al país de origen en algunos casos.</li>
-        <li><strong>Modelo D-6:</strong> Si tienes acciones extranjeras por valor superior a 300.000€ debes presentar el modelo D-6 en enero.</li>
-        <li><strong>Modelo 720:</strong> Si el valor de los activos en el extranjero supera 50.000€, debes declararlo con el modelo 720.</li>
-        <li><strong>Corredor fiscal:</strong> Recuerda que los dividendos de empresas españolas ya incluyen la retención del 19% aplicada por el intermediario financiero.</li>
-      </ul>
-    </div>
-  </div>`;
-}
-
-function printRenta() {
-  window.print();
-}
 function acceptDisclaimer() {
   ls.set("km_disclaimer",true);
   document.getElementById("disclaimer-overlay").style.display="none";
@@ -2075,7 +1493,6 @@ async function startAppIfNeeded() {
   state._appStarted = true;
 
   await loadCloudData();
-  normalizeStateData();
 
   if (ls.get("km_disclaimer", false)) {
     document.getElementById("disclaimer-overlay").style.display = "none";
@@ -2110,7 +1527,6 @@ async function startAppIfNeeded() {
 async function init() {
   document.getElementById("disclaimer-overlay").style.display = "none";
   document.getElementById("login-overlay").style.display = "flex";
-  normalizeStateData();
   await loadMe(); // si ya hay sesión guardada en el navegador, entra directo
 }
 
