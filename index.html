@@ -360,6 +360,10 @@ let state = {
   authUser: null,        // email del usuario logueado
   authUserId: null,      // id de Supabase del usuario logueado
   _appStarted: false,    // evita reiniciar precios/contador en cada login
+importPreview: [],
+importMap: null,
+importHeaders: [],
+importFileName: "",
 };
 
 const save = () => {
