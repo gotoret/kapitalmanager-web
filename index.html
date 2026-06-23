@@ -1005,11 +1005,12 @@ function renderPortfolio() {
   return `
     <div style="display:flex;height:100%;overflow:hidden">
       <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
-        <div class="toolbar">
-          <button class="btn" onclick="openAddPos()">＋ Añadir</button>
-          <button class="btn" style="background:#475569" onclick="openEditPos()">✏ Editar</button>
-          <button class="btn-danger" onclick="deletePosition()">✕ Eliminar</button>
-          <button class="btn-green" onclick="openAddAlert()">🔔 Alerta</button>
+<div class="toolbar">
+  <button class="btn" onclick="openAddPos()">➕ Añadir</button>
+  <button class="btn" style="background:#475569" onclick="openEditPos()">✏️ Editar</button>
+  <button class="btn-danger" onclick="deletePosition()">🗑 Eliminar</button>
+  <button class="btn-green" onclick="openAddAlert()">🔔 Alerta</button>
+  <button class="btn" style="background:#0f766e" onclick="openImportBroker()">📥 Importar extracto</button>
           <div style="flex:1"></div>
           <input id="port-filter" class="inp-sm" placeholder="🔍 Filtrar..." style="width:190px" value="${esc(filter)}" oninput="renderActiveTab()">
           <button class="btn-danger" style="margin-left:8px" onclick="deleteCartera()" title="Elimina todas las posiciones de la cartera">🗑️ Eliminar cartera</button>
