@@ -324,6 +324,33 @@ const SEARCH_PROXIES = [
   q => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
 ];
 
+// Mapa sectores Yahoo (inglés) → sectores de la app (español)
+const YAHOO_SECTOR_MAP = {
+  "Technology":"Tecnología","Financial Services":"Servicios Financieros",
+  "Healthcare":"Salud","Consumer Cyclical":"Consumo Cíclico",
+  "Consumer Defensive":"Consumo Defensivo","Energy":"Energía",
+  "Basic Materials":"Materiales Básicos","Industrials":"Industria",
+  "Utilities":"Utilities","Real Estate":"Inmobiliario",
+  "Communication Services":"Comunicaciones","Financial":"Servicios Financieros",
+};
+
+async function fetchYahooSector(ticker) {
+  const proxies = [
+    t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=assetProfile`)}`,
+    t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=assetProfile`)}`,
+  ];
+  for (const proxyFn of proxies) {
+    try {
+      const res = await fetch(proxyFn(ticker), {signal: AbortSignal.timeout(5000)});
+      if (!res.ok) continue;
+      const data = await res.json();
+      const yahoSector = data?.quoteSummary?.result?.[0]?.assetProfile?.sector || "";
+      if (yahoSector) return YAHOO_SECTOR_MAP[yahoSector] || null;
+    } catch(e) { /* try next */ }
+  }
+  return null;
+}
+
 // Proxies para el histórico real de dividendos pagados (mismo endpoint que ya funciona para precios)
 const YIELD_PROXIES = [
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
@@ -1896,7 +1923,7 @@ function openAddPos() {
           Tipo de cambio en la compra (EUR/<span id="m-fx-cur-label">USD</span>)
           <span style="background:#dbeafe;color:#1d4ed8;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600">tipo actual → editable</span>
         </label>
-        <input id="m-fx-rate" type="number" step="0.0001" class="inp" placeholder="Ej: 1.08" oninput="updateFXPreview()">
+        <input id="m-fx-rate" type="text" inputmode="decimal" class="inp" placeholder="Ej: 1.08" oninput="updateFXPreview()">
       </div>
       <div id="m-fx-preview" style="font-size:11px;color:#059669;font-weight:600;padding:4px 10px;background:#f0fdf4;border-radius:6px;margin-bottom:10px"></div>
     </div>
@@ -1912,6 +1939,21 @@ function openAddPos() {
     const exchCur = {"MCE":"EUR","MAD":"EUR","NYQ":"USD","NMS":"USD","NGM":"USD","ASE":"USD","LSE":"GBP","FRA":"EUR","PAR":"EUR","AMS":"EUR","MIL":"EUR","TSX":"CAD","ASX":"AUD","TYO":"JPY","HKG":"HKD"}[r.exchange]||"USD";
     const sel = document.getElementById("m-cur");
     if (sel && CURRENCIES.includes(exchCur)) { sel.value = exchCur; updateFXField(); }
+
+    // Obtener sector automáticamente en paralelo
+    const sectorSel = document.getElementById("m-sector");
+    if (sectorSel) {
+      sectorSel.style.borderColor = "#93c5fd"; // azul: buscando
+      fetchYahooSector(r.ticker).then(sector => {
+        if (sector && sectorSel) {
+          sectorSel.value = sector;
+          sectorSel.style.borderColor = "#86efac"; // verde: encontrado
+        } else if (sectorSel) {
+          sectorSel.style.borderColor = ""; // no encontrado: elige tú
+        }
+      });
+    }
+
     const preview = document.getElementById("m-price-preview");
     if (preview) { preview.style.display="block"; preview.textContent="⏳ Buscando precio actual..."; }
     const price = await fetchWithProxy(PROXIES, r.ticker);
@@ -1936,10 +1978,9 @@ function updateFXField() {
     row.style.display = "block";
     if (lbl) lbl.textContent = cur;
     // Rellenar con el tipo actual si está disponible
-    if (inp && (!inp.value || +inp.value === 0)) {
-      const fxKey = cur; // fxCache guarda como "USD" -> EUR/USD
-      const rate = state.fxCache[fxKey]; // EUR por 1 unidad de divisa
-      if (rate) inp.value = +(1/rate).toFixed(4); // convertir a EUR/divisa
+    if (inp && (!inp.value || parseNum(inp.value) === 0)) {
+      const rate = state.fxCache[cur];
+      if (rate) inp.value = +(1/rate).toFixed(4);
     }
     updateFXPreview();
   }
@@ -1947,8 +1988,8 @@ function updateFXField() {
 
 function updateFXPreview() {
   const cur = document.getElementById("m-cur")?.value || "EUR";
-  const cost = +document.getElementById("m-cost")?.value || 0;
-  const fx = +document.getElementById("m-fx-rate")?.value || 0;
+  const cost = parseNum(document.getElementById("m-cost")?.value);
+  const fx = parseNum(document.getElementById("m-fx-rate")?.value);
   const prev = document.getElementById("m-fx-preview");
   if (!prev || cur === "EUR" || !fx || !cost) { if(prev) prev.textContent=""; return; }
   const costEUR = (cost / fx).toFixed(4);
