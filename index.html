@@ -703,7 +703,19 @@ function setupAutocomplete(inputId, onSelect) {
     else if (e.key==="Escape") closeAcList(inputId);
   });
 
-  document.addEventListener("click", e => { if (!wrap.contains(e.target)) closeAcList(inputId); }, {once:false});
+  document.addEventListener("click", e => { if (!window.__acOutsideHandlers) window.__acOutsideHandlers = {};
+
+if (window.__acOutsideHandlers[inputId]) {
+  document.removeEventListener("click", window.__acOutsideHandlers[inputId]);
+}
+
+window.__acOutsideHandlers[inputId] = function(e) {
+  if (!wrap.contains(e.target)) closeAcList(inputId);
+};
+
+setTimeout(() => {
+  document.addEventListener("click", window.__acOutsideHandlers[inputId]);
+}, 0); }, {once:false});
 }
 
 async function doSearch(q, inputId, onSelect) {
@@ -1410,29 +1422,69 @@ function openAddPos() {
   updateFxRateField();
   updateFxCostPreview();
 
-  setupAutocomplete("m-ticker", async r => {
-    document.getElementById("m-name").value = r.name || r.ticker;
-    const exchCur = {"MCE":"EUR","MAD":"EUR","NYQ":"USD","NMS":"USD","NGM":"USD","ASE":"USD","LSE":"GBP","FRA":"EUR","PAR":"EUR","AMS":"EUR","MIL":"EUR","TSX":"CAD","ASX":"AUD","TYO":"JPY","HKG":"HKD"}[r.exchange] || "USD";
-    const sel = document.getElementById("m-cur");
-    if (sel && CURRENCIES.includes(exchCur)) sel.value = exchCur;
+  setupAutocomplete("m-ticker", async (r) => {
+  try {
+    const tickerEl = document.getElementById("m-ticker");
+    const nameEl = document.getElementById("m-name");
+    const curEl = document.getElementById("m-cur");
+    const sectorEl = document.getElementById("m-sector");
+    const preview = document.getElementById("m-price-preview");
+    const costInp = document.getElementById("m-cost");
+
+    if (!tickerEl || !nameEl || !curEl || !sectorEl) return;
+
+    tickerEl.value = r?.ticker || "";
+    nameEl.value = r?.name || r?.ticker || "";
+
+    const exch = String(r?.exchange || "").toUpperCase();
+
+    let exchCur = "USD";
+    if (r?.ticker?.endsWith(".MC")) exchCur = "EUR";
+    else if (r?.ticker?.endsWith(".L")) exchCur = "GBP";
+    else if (exch.includes("MADRID")) exchCur = "EUR";
+    else if (exch.includes("LONDON")) exchCur = "GBP";
+    else if (exch.includes("SWISS")) exchCur = "CHF";
+    else if (exch.includes("TORONTO")) exchCur = "CAD";
+    else if (exch.includes("ASX")) exchCur = "AUD";
+    else if (exch.includes("TOKYO")) exchCur = "JPY";
+
+    curEl.value = exchCur;
+
+    if (sectorEl && !sectorEl.value) {
+      sectorEl.value = "";
+    }
+
     updateFxRateField();
 
-    const preview = document.getElementById("m-price-preview");
-    if (preview) { preview.style.display = "block"; preview.textContent = "⏳ Buscando precio actual..."; }
- const rawPrice = await fetchWithProxy(PROXIES, r.ticker);
-const normalizedPrice = normalizeQuotedPrice(rawPrice, r.ticker, exchCur);
-
-if (normalizedPrice && preview) {
-  const unitLabel = (r.ticker.endsWith(".L") && exchCur === "GBP") ? "GBP (convertido desde GBX)" : exchCur;
-  preview.textContent = `✅ Precio actual en Yahoo Finance: ${normalizedPrice} ${unitLabel}`;
-  const costInp = document.getElementById("m-cost");
-  if (costInp && (parseNum(costInp.value) === 0)) costInp.value = normalizedPrice;
-  updateFxCostPreview();
-} else if (preview) {
-      preview.style.display = "none";
+    if (preview) {
+      preview.innerHTML = `<span class="spinner"></span> Consultando precio en Yahoo Finance...`;
     }
-  });
-}
+
+    const rawPrice = await fetchWithProxy(PROXIES, r.ticker);
+    const normalizedPrice = normalizeQuotedPrice(rawPrice, r.ticker, exchCur);
+
+    if (normalizedPrice && costInp && parseNum(costInp.value) === 0) {
+      costInp.value = normalizedPrice;
+    }
+
+    updateFxCostPreview();
+
+    if (preview) {
+      const unitLabel = (r.ticker?.endsWith(".L") && exchCur === "GBP")
+        ? "GBP (convertido desde GBX)"
+        : exchCur;
+
+      preview.textContent = normalizedPrice
+        ? `✅ Precio actual en Yahoo Finance: ${normalizedPrice} ${unitLabel}`
+        : `⚠️ No se pudo obtener precio en Yahoo Finance`;
+    }
+  } catch (e) {
+    console.error("Error en selección de autocompletado:", e);
+    const preview = document.getElementById("m-price-preview");
+    if (preview) preview.textContent = "⚠️ Error al cargar los datos del ticker";
+  }
+});
+
 function updateFxRateField() {
   const cur = document.getElementById("m-cur")?.value || "EUR";
   const fxInp = document.getElementById("m-fx-rate");
