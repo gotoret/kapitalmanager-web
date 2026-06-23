@@ -380,7 +380,13 @@ const fmtPct = v => (v>=0?"+":"")+((v||0).toFixed(2))+"%";
 const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 const pnlColor = v => v>=0?"#16a34a":"#dc2626";
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
-const getHistoricFX = (obj) => {
+
+function parseNum(v) {
+  if (v === null || v === undefined) return 0;
+  return parseFloat(String(v).trim().replace(/\s/g, "").replace(",", ".")) || 0;
+}
+
+ const getHistoricFX = (obj) => {
   const cur = obj?.currency || "EUR";
   const fx = +(obj?.fx_rate || 0);
   if (cur === "EUR") return 1;
@@ -1374,7 +1380,8 @@ function openAddPos() {
       </div>
       <div class="field">
         <label>Coste fiscal EUR/acc</label>
-        <input id="m-cost-eur" class="inp" value="€0,00" readonly style="background:#f8fafc;color:#475569">
+        <input id="m-cost-eur" type="text" class="inp" value="0.0000" readonly style="background:#f8fafc;color:#475569">
+<div id="m-cost-eur-label" style="font-size:11px;color:#64748b;margin-top:4px"></div>
       </div>
     </div>
     <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${new Date().toISOString().slice(0,10)}"></div>
@@ -1416,32 +1423,39 @@ function updateFxRateField() {
   const cur = document.getElementById("m-cur")?.value || "EUR";
   const fxInp = document.getElementById("m-fx-rate");
   if (!fxInp) return;
+
   if (cur === "EUR") {
     fxInp.value = "1";
     fxInp.disabled = true;
     fxInp.style.background = "#f1f5f9";
     fxInp.style.color = "#64748b";
   } else {
-    if (!+fxInp.value || +fxInp.value === 1) fxInp.value = (getFX(cur) || 1).toFixed(6);
+    if (!parseNum(fxInp.value) || parseNum(fxInp.value) === 1) {
+      fxInp.value = (getFX(cur) || 1).toFixed(6);
+    }
     fxInp.disabled = false;
     fxInp.style.background = "#fff";
     fxInp.style.color = "#0f172a";
   }
+
   updateFxCostPreview();
 }
 
 function updateFxCostPreview() {
-  const cost = +(document.getElementById("m-cost")?.value || 0);
-  const fx = +(document.getElementById("m-fx-rate")?.value || 1);
+  const cost = parseNum(document.getElementById("m-cost")?.value);
+  const fx = parseNum(document.getElementById("m-fx-rate")?.value) || 1;
   const out = document.getElementById("m-cost-eur");
-  if (out) out.value = fmtEUR(cost * fx);
+  if (out) out.value = (cost * fx).toFixed(4);
+const label = document.getElementById("m-cost-eur-label");
+if (label) label.textContent = `Coste histórico: ${fmtEUR(cost * fx)} por acción`;
 }
 function saveNewPos() {
   const ticker = (document.getElementById("m-ticker").value || "").trim().toUpperCase().split(" ")[0];
-  const shares = +document.getElementById("m-shares").value;
-  const cost = +document.getElementById("m-cost").value;
+ const shares = parseNum(document.getElementById("m-shares").value);
+const cost = parseNum(document.getElementById("m-cost").value);
+const fxRate = currency === "EUR" ? 1 : parseNum(document.getElementById("m-fx-rate").value);
   const currency = document.getElementById("m-cur").value;
-  const fxRate = currency === "EUR" ? 1 : +(document.getElementById("m-fx-rate").value || 0);
+ 
 
   if (!ticker || shares <= 0) { alert("Ticker y acciones son obligatorios"); return; }
   if (cost <= 0) { alert("Introduce un coste medio válido"); return; }
@@ -1523,15 +1537,15 @@ function saveEditPos(ticker) {
   if (idx < 0) return;
 
   const currency = document.getElementById("m-cur").value;
-  const fxRate = currency === "EUR" ? 1 : +(document.getElementById("m-fx-rate").value || 0);
+ const fxRate = currency === "EUR" ? 1 : parseNum(document.getElementById("m-fx-rate").value);
 
   if (fxRate <= 0) { alert("Introduce un tipo de cambio válido"); return; }
 
   state.positions[idx] = normalizePosition({
     ...state.positions[idx],
     name: document.getElementById("m-name").value,
-    shares: +document.getElementById("m-shares").value,
-    avg_cost: +document.getElementById("m-cost").value,
+   shares: parseNum(document.getElementById("m-shares").value),
+ avg_cost: parseNum(document.getElementById("m-cost").value),
     currency,
     fx_rate: fxRate,
     sector: document.getElementById("m-sector").value,
