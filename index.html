@@ -1501,21 +1501,40 @@ function deleteDividend(id){ state.dividends=state.dividends.filter(d=>d.id!==id
 // TAB 3 — TRANSACCIONES
 // ─────────────────────────────────────────────
 function renderTransactions() {
-  const rows = state.transactions.map(t=>`<tr>
-    <td style="color:#94a3b8">${t.id}</td>
-    <td style="color:#64748b">${(t.date||"").slice(0,16)}</td>
-    <td style="color:#1d4ed8;font-weight:700">${esc(t.ticker)}</td>
-    <td><span class="badge" style="background:${t.type==="BUY"?"#2563eb":"#dc2626"}22;color:${t.type==="BUY"?"#2563eb":"#dc2626"}">${t.type}</span></td>
-    <td>${t.shares}</td><td>${fmtEUR(t.price)}</td>
-    <td style="font-weight:600">${fmtEUR(t.shares*t.price)}</td>
-    <td style="color:#64748b">${esc(t.notes||"—")}</td>
-    <td><button class="btn-danger-sm" onclick="deleteTransaction(${t.id})">✕</button></td>
-  </tr>`).join("");
-  return `<div style="padding:14px;overflow-x:auto">
-    <table style="min-width:650px"><thead><tr>${["ID","Fecha","Ticker","Tipo","Acciones","Precio","Total","Notas",""].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
-    <tbody>${rows||`<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:28px">Sin transacciones registradas</td></tr>`}</tbody></table>
-  </div>`;
+  const rows = state.transactions.map(t => `
+    <tr>
+      <td style="color:#94a3b8">${t.id}</td>
+      <td style="color:#64748b">${String(t.date || "").slice(0,16)}</td>
+      <td style="color:#1d4ed8;font-weight:700">${esc(t.ticker)}</td>
+      <td>
+        <span class="badge" style="background:${t.type==="BUY" ? "#2563eb22" : t.type==="SELL" ? "#dc262622" : "#b4530922"};color:${t.type==="BUY" ? "#2563eb" : t.type==="SELL" ? "#dc2626" : "#b45309"}">
+          ${esc(t.type)}
+        </span>
+      </td>
+      <td>${t.shares}</td>
+      <td>${fmtEUR(t.price || 0)}</td>
+      <td>${fmtEUR(t.commission || 0)}</td>
+      <td>${esc(t.currency || "")}</td>
+      <td style="font-weight:600">${fmtEUR((t.shares || 0) * (t.price || 0) + (t.commission || 0))}</td>
+      <td style="color:#64748b">${esc(t.notes || "")}</td>
+      <td><button class="btn-danger-sm" onclick="deleteTransaction(${t.id})">✕</button></td>
+    </tr>
+  `).join("");
+
+  return `
+    <div style="padding:14px;overflow-x:auto">
+      <table style="min-width:900px">
+        <thead>
+          <tr>${["ID","Fecha","Ticker","Tipo","Acciones","Precio","Comisión","Divisa","Total","Notas",""].map(h => `<th>${h}</th>`).join("")}</tr>
+        </thead>
+        <tbody>
+          ${rows || `<tr><td colspan="11" style="text-align:center;color:#94a3b8;padding:28px">Sin transacciones registradas</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
+
 function deleteTransaction(id){ if(!confirm("¿Eliminar esta transacción?")) return; state.transactions=state.transactions.filter(t=>t.id!==id); save(); renderActiveTab(); }
 
 // ─────────────────────────────────────────────
