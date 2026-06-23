@@ -392,6 +392,17 @@ function parseNum(v) {
   if (cur === "EUR") return 1;
   return fx > 0 ? fx : getFX(cur);
 };
+function normalizeQuotedPrice(price, ticker, currency) {
+  const p = parseNum(price);
+  if (!p) return 0;
+
+  // Yahoo en Londres suele devolver peniques (GBX) para tickers .L
+  if (ticker && ticker.endsWith(".L") && currency === "GBP") {
+    return +(p / 100).toFixed(4);
+  }
+
+  return p;
+}
 
 const toEURHistoric = (value, obj) => (value || 0) * getHistoricFX(obj);
 
@@ -1408,13 +1419,16 @@ function openAddPos() {
 
     const preview = document.getElementById("m-price-preview");
     if (preview) { preview.style.display = "block"; preview.textContent = "⏳ Buscando precio actual..."; }
-    const price = await fetchWithProxy(PROXIES, r.ticker);
-    if (price && preview) {
-      preview.textContent = `✅ Precio actual en Yahoo Finance: ${price} ${exchCur}`;
-      const costInp = document.getElementById("m-cost");
-      if (costInp && (+costInp.value === 0 || costInp.value === "0")) costInp.value = price;
-      updateFxCostPreview();
-    } else if (preview) {
+ const rawPrice = await fetchWithProxy(PROXIES, r.ticker);
+const normalizedPrice = normalizeQuotedPrice(rawPrice, r.ticker, exchCur);
+
+if (normalizedPrice && preview) {
+  const unitLabel = (r.ticker.endsWith(".L") && exchCur === "GBP") ? "GBP (convertido desde GBX)" : exchCur;
+  preview.textContent = `✅ Precio actual en Yahoo Finance: ${normalizedPrice} ${unitLabel}`;
+  const costInp = document.getElementById("m-cost");
+  if (costInp && (parseNum(costInp.value) === 0)) costInp.value = normalizedPrice;
+  updateFxCostPreview();
+} else if (preview) {
       preview.style.display = "none";
     }
   });
@@ -1452,25 +1466,27 @@ if (label) label.textContent = `Coste histórico: ${fmtEUR(cost * fx)} por acci�
 function saveNewPos() {
   const ticker = (document.getElementById("m-ticker").value || "").trim().toUpperCase().split(" ")[0];
  const shares = parseNum(document.getElementById("m-shares").value);
-const cost = parseNum(document.getElementById("m-cost").value);
+const costRaw = parseNum(document.getElementById("m-cost").value);
+const cost = normalizeQuotedPrice(costRaw, ticker, currency);
 const fxRate = currency === "EUR" ? 1 : parseNum(document.getElementById("m-fx-rate").value);
   const currency = document.getElementById("m-cur").value;
  
 
-  if (!ticker || shares <= 0) { alert("Ticker y acciones son obligatorios"); return; }
+  if (!ticker) { alert("Introduce un ticker válido"); return; }
+if (shares <= 0) { alert("El número de acciones debe ser mayor que 0"); return; }
   if (cost <= 0) { alert("Introduce un coste medio válido"); return; }
   if (fxRate <= 0) { alert("Introduce un tipo de cambio válido"); return; }
 
   const pos = normalizePosition({
-    ticker,
-    name: document.getElementById("m-name").value || ticker,
-    shares,
-    avg_cost: cost,
-    currency,
-    fx_rate: fxRate,
-    sector: document.getElementById("m-sector").value,
-    date: document.getElementById("m-date").value
-  });
+  ticker,
+  name: document.getElementById("m-name").value || ticker,
+  shares,
+  avg_cost: cost,
+  currency,
+  fx_rate: fxRate,
+  sector: document.getElementById("m-sector").value,
+  date: document.getElementById("m-date").value
+});
 
   const idx = state.positions.findIndex(p => p.ticker === ticker);
   if (idx >= 0) state.positions[idx] = pos;
@@ -1545,7 +1561,7 @@ function saveEditPos(ticker) {
     ...state.positions[idx],
     name: document.getElementById("m-name").value,
    shares: parseNum(document.getElementById("m-shares").value),
- avg_cost: parseNum(document.getElementById("m-cost").value),
+avg_cost: normalizeQuotedPrice(parseNum(document.getElementById("m-cost").value), ticker, currency),
     currency,
     fx_rate: fxRate,
     sector: document.getElementById("m-sector").value,
