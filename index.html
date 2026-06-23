@@ -303,7 +303,7 @@ const DEFAULT_PORTFOLIO = [
 
 const FX_FALLBACK = {USD:0.92,GBP:1.17,JPY:0.0062,CHF:1.02,CAD:0.68,AUD:0.60,EUR:1.0};
 const PIE_COLORS = ["#4ade80","#60a5fa","#f59e0b","#f87171","#a78bfa","#34d399","#fb923c","#38bdf8","#e879f9","#94a3b8","#fbbf24","#6366f1"];
-const TABS = ["📋 Cartera","🔔 Alertas","💰 Dividendos","📝 Transacciones","📊 Gráficos","🎯 Objetivos","📐 Valoración"];
+const TABS = ["📋 Cartera","🔔 Alertas","💰 Dividendos","📝 Transacciones","📊 Gráficos","🎯 Objetivos","📐 Valoración","🧾 Renta"];
 const CURRENCIES = ["EUR","USD","GBP","CHF","CAD","AUD","JPY"];
 const SECTORS = ["Tecnología","Servicios Financieros","Salud","Consumo Cíclico","Consumo Defensivo","Energía","Materiales Básicos","Industria","Utilities","Inmobiliario","Comunicaciones"];
 const API = {
@@ -751,6 +751,7 @@ function renderActiveTab() {
     case 4: el.innerHTML = renderCharts(); break;
     case 5: el.innerHTML = renderGoals(); break;
     case 6: el.innerHTML = renderValuation(); break;
+    case 7: el.innerHTML = renderRenta(); break;
   }
 }
 
@@ -1454,8 +1455,311 @@ function saveDividendModal() {
 }
 
 // ─────────────────────────────────────────────
-// DISCLAIMER & INIT
+// TAB 7 — DECLARACIÓN DE LA RENTA
 // ─────────────────────────────────────────────
+function renderRenta() {
+  const now = new Date();
+  const ejercicio = now.getFullYear() - 1; // Año anterior
+  const yearStr = String(ejercicio);
+
+  // ── 1. DIVIDENDOS COBRADOS EN EL EJERCICIO ──
+  const divEjercicio = state.dividends.filter(d => (d.date||"").startsWith(yearStr));
+
+  // Agrupar por ticker
+  const divPorTicker = {};
+  divEjercicio.forEach(d => {
+    const tk = d.ticker;
+    if (!divPorTicker[tk]) {
+      const pos = state.positions.find(p=>p.ticker===tk);
+      divPorTicker[tk] = {ticker:tk, name:pos?.name||tk, currency:pos?.currency||"EUR", bruto:0, retencionOrigen:0, count:0};
+    }
+    const bruto = d.amount * d.shares;
+    divPorTicker[tk].bruto += bruto;
+    divPorTicker[tk].count++;
+  });
+
+  // Retención en origen estimada por país (basada en divisa/ticker)
+  function retencionOrigen(ticker, currency) {
+    if (ticker.endsWith(".MC") || currency==="EUR") return 0.19;  // España: no hay doble imposición
+    if (currency==="USD") return 0.15;     // USA: retención en origen 15% (convenio)
+    if (currency==="GBP") return 0.00;     // UK: sin retención en origen sobre dividendos
+    if (ticker.endsWith(".SW") || ticker.endsWith(".VX")) return 0.35; // Suiza: 35%
+    if (ticker.endsWith(".PA") || ticker.endsWith(".NX")) return 0.128; // Francia: 12.8%
+    if (ticker.endsWith(".DE") || ticker.endsWith(".F")) return 0.25;   // Alemania: 25%
+    if (ticker.endsWith(".AS")) return 0.15; // Holanda: 15%
+    if (ticker.endsWith(".MI")) return 0.26; // Italia: 26%
+    if (ticker.endsWith(".LS")) return 0.28; // Portugal: 28%
+    return 0.15; // Estimación genérica
+  }
+
+  const retencionESP = 0.19; // Retención Hacienda española sobre dividendos
+
+  const divRows = Object.values(divPorTicker).map(d => {
+    const retOr = retencionOrigen(d.ticker, d.currency);
+    const retOrImporte = +(d.bruto * retOr).toFixed(2);
+    const brutoEUR = +(toEUR(d.bruto, d.currency)).toFixed(2);
+    const retOrEUR = +(toEUR(retOrImporte, d.currency)).toFixed(2);
+    const retEsp = +(brutoEUR * retencionESP).toFixed(2);
+    // Deducible: lo ya retenido en origen (con límite del convenio, normalmente 15%)
+    const limConvenio = Math.min(retOr, 0.15);
+    const deducibleOrigen = +(brutoEUR * limConvenio).toFixed(2);
+    const retEspNeta = +(Math.max(0, retEsp - deducibleOrigen)).toFixed(2);
+    return {...d, brutoEUR, retOrPct:retOr, retOrEUR, retEspTotal:retEsp, deducibleOrigen, retEspNeta};
+  });
+
+  const totDiv = {
+    bruto: divRows.reduce((s,d)=>s+d.brutoEUR,0),
+    retOrEUR: divRows.reduce((s,d)=>s+d.retOrEUR,0),
+    retEspTotal: divRows.reduce((s,d)=>s+d.retEspTotal,0),
+    deducibleOrigen: divRows.reduce((s,d)=>s+d.deducibleOrigen,0),
+    retEspNeta: divRows.reduce((s,d)=>s+d.retEspNeta,0),
+  };
+
+  // ── 2. PLUSVALÍAS / MINUSVALÍAS (VENTAS EN EL EJERCICIO) ──
+  const ventasEjercicio = state.transactions.filter(t => t.type==="SELL" && (t.date||"").startsWith(yearStr));
+
+  const pvRows = ventasEjercicio.map(t => {
+    const pos = state.positions.find(p=>p.ticker===t.ticker);
+    const currency = pos?.currency || "EUR";
+    const coste = pos?.avg_cost || 0;
+    const precioVenta = t.price;
+    const acciones = t.shares;
+    const costeTotal = +(toEUR(coste * acciones, currency)).toFixed(2);
+    const ingresoTotal = +(toEUR(precioVenta * acciones, currency)).toFixed(2);
+    const resultado = +(ingresoTotal - costeTotal).toFixed(2);
+    // Antigüedad > 1 año? No afecta al tipo en España (todas van a la base del ahorro)
+    const fechaCompra = pos?.date ? new Date(pos.date) : null;
+    const fechaVenta = new Date(t.date);
+    const diasTenencia = fechaCompra ? Math.round((fechaVenta - fechaCompra)/864e5) : null;
+    return {
+      ticker: t.ticker,
+      name: pos?.name||t.ticker,
+      acciones,
+      fechaCompra: pos?.date?.slice(0,10)||"—",
+      fechaVenta: (t.date||"").slice(0,10),
+      precioCompra: coste,
+      precioVenta,
+      costeTotal,
+      ingresoTotal,
+      resultado,
+      diasTenencia,
+      currency
+    };
+  });
+
+  const totPV = {
+    coste: pvRows.reduce((s,r)=>s+r.costeTotal,0),
+    ingreso: pvRows.reduce((s,r)=>s+r.ingresoTotal,0),
+    resultado: pvRows.reduce((s,r)=>s+r.resultado,0),
+  };
+  const plusvalias = pvRows.filter(r=>r.resultado>0).reduce((s,r)=>s+r.resultado,0);
+  const minusvalias = pvRows.filter(r=>r.resultado<0).reduce((s,r)=>s+r.resultado,0);
+  const saldoNeto = +(plusvalias + minusvalias).toFixed(2);
+
+  // ── 3. BASE IMPONIBLE DEL AHORRO y TIPOS ──
+  const baseAhorro = +(totDiv.bruto + saldoNeto).toFixed(2);
+
+  function tipoMarginalAhorro(base) {
+    if (base <= 0) return "0%";
+    if (base <= 6000) return "19%";
+    if (base <= 50000) return "21%";
+    if (base <= 200000) return "23%";
+    if (base <= 300000) return "27%";
+    return "28%";
+  }
+
+  function cuotaAhorro(base) {
+    if (base <= 0) return 0;
+    let cuota = 0;
+    cuota += Math.min(base, 6000) * 0.19; base = Math.max(0, base - 6000);
+    cuota += Math.min(base, 44000) * 0.21; base = Math.max(0, base - 44000);
+    cuota += Math.min(base, 150000) * 0.23; base = Math.max(0, base - 150000);
+    cuota += Math.min(base, 100000) * 0.27; base = Math.max(0, base - 100000);
+    cuota += base * 0.28;
+    return +cuota.toFixed(2);
+  }
+
+  const cuotaBruta = cuotaAhorro(baseAhorro);
+  const cuotaNeta = +(Math.max(0, cuotaBruta - totDiv.deducibleOrigen - totDiv.retEspNeta)).toFixed(2);
+
+  // ── 4. CASILLAS IRPF ORIENTATIVAS ──
+  // (basadas en modelo IRPF vigente, orientativas, no vinculantes)
+
+  // ── RENDER ──
+  const fmtPct = v => (v*100).toFixed(1)+"%";
+  const fmtN = v => v?.toFixed(2)+"€";
+
+  const divTableRows = divRows.length ? divRows.map(d=>`
+    <tr>
+      <td style="font-weight:700;color:#1d4ed8">${esc(d.ticker)}</td>
+      <td>${esc(d.name)}</td>
+      <td style="text-align:right">${fmtEUR(d.brutoEUR)}</td>
+      <td style="text-align:center">${fmtPct(d.retOrPct)}</td>
+      <td style="text-align:right;color:#dc2626">−${fmtEUR(d.retOrEUR)}</td>
+      <td style="text-align:right;color:#dc2626">−${fmtEUR(d.retEspTotal)}</td>
+      <td style="text-align:right;color:#059669">+${fmtEUR(d.deducibleOrigen)}</td>
+      <td style="text-align:right;font-weight:700">${fmtEUR(d.brutoEUR - d.retOrEUR - d.retEspNeta)}</td>
+    </tr>`).join("") : `<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:20px">Sin dividendos registrados en ${yearStr}<br><small>Regístralos en la pestaña 💰 Dividendos</small></td></tr>`;
+
+  const pvTableRows = pvRows.length ? pvRows.map(r=>`
+    <tr>
+      <td style="font-weight:700;color:#1d4ed8">${esc(r.ticker)}</td>
+      <td>${r.acciones}</td>
+      <td style="text-align:right">${fmtEUR(r.costeTotal)}</td>
+      <td style="text-align:right">${fmtEUR(r.ingresoTotal)}</td>
+      <td style="text-align:right;font-weight:700;color:${r.resultado>=0?"#059669":"#dc2626"}">${r.resultado>=0?"+":""}${fmtEUR(r.resultado)}</td>
+      <td style="text-align:center;color:#64748b">${r.fechaCompra}</td>
+      <td style="text-align:center;color:#64748b">${r.fechaVenta}</td>
+      <td style="text-align:center">${r.diasTenencia!=null?r.diasTenencia+"d":"—"}</td>
+    </tr>`).join("") : `<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:20px">Sin ventas registradas en ${yearStr}<br><small>Regístralas en la pestaña 📝 Transacciones</small></td></tr>`;
+
+  return `<div style="padding:16px;max-width:960px;margin:0 auto">
+
+    <!-- CABECERA DEL INFORME -->
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:12px">
+      <div>
+        <h2 style="font-size:17px;font-weight:800;color:#1e293b;margin-bottom:2px">🧾 Informe fiscal — Ejercicio ${yearStr}</h2>
+        <div style="font-size:11px;color:#94a3b8">Generado el ${new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"long",year:"numeric"})} · Solo orientativo, no vinculante</div>
+      </div>
+      <button class="btn" onclick="printRenta()" style="font-size:12px;padding:8px 16px">🖨️ Imprimir / Guardar PDF</button>
+    </div>
+
+    <!-- AVISO LEGAL -->
+    <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:10px;padding:12px 14px;font-size:11px;color:#92400e;margin-bottom:20px;line-height:1.6">
+      ⚠️ <strong>Aviso:</strong> Este informe es meramente orientativo y se basa en los datos que has introducido en la app. Las retenciones en origen son estimaciones según convenios de doble imposición. Consulta siempre con un asesor fiscal o gestor antes de presentar tu declaración. Los importes pueden diferir de los datos que aparecen en tu borrador de la AEAT.
+    </div>
+
+    <!-- RESUMEN EJECUTIVO -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:20px">
+      ${[
+        ["Dividendos brutos",fmtEUR(totDiv.bruto),"#2563eb"],
+        ["Retenciones origen","-"+fmtEUR(totDiv.retOrEUR),"#dc2626"],
+        ["Retenciones Hacienda","-"+fmtEUR(totDiv.retEspNeta),"#dc2626"],
+        ["Plusvalías netas",fmtEUR(plusvalias),"#059669"],
+        ["Minusvalías",fmtEUR(Math.abs(minusvalias)),"#dc2626"],
+        ["Base ahorro estimada",fmtEUR(Math.max(0,baseAhorro)),"#7c3aed"],
+      ].map(([l,v,c])=>`<div class="card" style="padding:12px;text-align:center">
+        <div style="font-size:10px;color:#64748b;text-transform:uppercase;font-weight:700;margin-bottom:4px">${l}</div>
+        <div style="font-size:16px;font-weight:800;color:${c}">${v}</div>
+      </div>`).join("")}
+    </div>
+
+    <!-- SECCIÓN 1: DIVIDENDOS -->
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:12px">📊 Dividendos cobrados en ${yearStr}</h3>
+      <div style="overflow-x:auto">
+        <table style="width:100%;min-width:640px;font-size:11px">
+          <thead><tr style="background:#f8fafc">
+            ${["Ticker","Empresa","Bruto €","Ret. origen","Imp. ret. origen","Ret. Hacienda (19%)","Deducible","Neto cobrado"].map(h=>`<th style="padding:6px 8px;text-align:${["Bruto €","Imp. ret. origen","Ret. Hacienda (19%)","Deducible","Neto cobrado"].includes(h)?"right":"left"};color:#475569;font-weight:700;border-bottom:2px solid #e2e8f0">${h}</th>`).join("")}
+          </tr></thead>
+          <tbody style="font-size:11px">${divTableRows}</tbody>
+          ${divRows.length?`<tfoot><tr style="background:#f8fafc;font-weight:700">
+            <td colspan="2" style="padding:6px 8px">TOTAL</td>
+            <td style="padding:6px 8px;text-align:right">${fmtEUR(totDiv.bruto)}</td>
+            <td></td>
+            <td style="padding:6px 8px;text-align:right;color:#dc2626">−${fmtEUR(totDiv.retOrEUR)}</td>
+            <td style="padding:6px 8px;text-align:right;color:#dc2626">−${fmtEUR(totDiv.retEspTotal)}</td>
+            <td style="padding:6px 8px;text-align:right;color:#059669">+${fmtEUR(totDiv.deducibleOrigen)}</td>
+            <td style="padding:6px 8px;text-align:right">${fmtEUR(totDiv.bruto-totDiv.retOrEUR-totDiv.retEspNeta)}</td>
+          </tr></tfoot>`:""}
+        </table>
+      </div>
+
+      <!-- CASILLAS IRPF DIVIDENDOS -->
+      ${divRows.length?`<div style="margin-top:14px;background:#eff6ff;border-radius:8px;padding:12px;font-size:11px">
+        <div style="font-weight:700;color:#1d4ed8;margin-bottom:8px">📋 Casillas orientativas IRPF — Rendimientos del capital mobiliario</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px">
+          ${[
+            ["Casilla 027","Dividendos íntegros (brutos)",fmtEUR(totDiv.bruto)],
+            ["Casilla 592","Retención soportada Hacienda",fmtEUR(totDiv.retEspTotal)],
+            ["Casilla 588","Deducción doble imposición internacional",fmtEUR(totDiv.deducibleOrigen)],
+          ].map(([c,l,v])=>`<div style="background:#fff;border-radius:6px;padding:8px 10px;border:1px solid #bfdbfe">
+            <div style="color:#1d4ed8;font-weight:700;font-size:10px">${c}</div>
+            <div style="color:#475569;font-size:10px;margin-bottom:2px">${l}</div>
+            <div style="color:#1e293b;font-weight:700">${v}</div>
+          </div>`).join("")}
+        </div>
+        <div style="margin-top:8px;color:#64748b;font-size:10px">ℹ️ Los números de casilla pueden variar según el modelo de Renta de cada año. Verifica con el borrador de la AEAT.</div>
+      </div>`:""}
+    </div>
+
+    <!-- SECCIÓN 2: PLUSVALÍAS Y MINUSVALÍAS -->
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:12px">📈 Ganancias y pérdidas patrimoniales — Ventas en ${yearStr}</h3>
+      <div style="overflow-x:auto">
+        <table style="width:100%;min-width:640px;font-size:11px">
+          <thead><tr style="background:#f8fafc">
+            ${["Ticker","Acciones","Coste total","Ingreso venta","Resultado","F. compra","F. venta","Tenencia"].map(h=>`<th style="padding:6px 8px;text-align:${["Coste total","Ingreso venta","Resultado"].includes(h)?"right":"left"};color:#475569;font-weight:700;border-bottom:2px solid #e2e8f0">${h}</th>`).join("")}
+          </tr></thead>
+          <tbody>${pvTableRows}</tbody>
+          ${pvRows.length?`<tfoot><tr style="background:#f8fafc;font-weight:700">
+            <td colspan="2" style="padding:6px 8px">TOTAL</td>
+            <td style="padding:6px 8px;text-align:right">${fmtEUR(totPV.coste)}</td>
+            <td style="padding:6px 8px;text-align:right">${fmtEUR(totPV.ingreso)}</td>
+            <td style="padding:6px 8px;text-align:right;color:${saldoNeto>=0?"#059669":"#dc2626"}">${saldoNeto>=0?"+":""}${fmtEUR(saldoNeto)}</td>
+            <td colspan="3"></td>
+          </tr></tfoot>`:""}
+        </table>
+      </div>
+      ${pvRows.length?`
+      <div style="margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px">
+        ${[
+          ["✅ Plusvalías",fmtEUR(plusvalias),"#059669","#f0fdf4","#bbf7d0"],
+          ["❌ Minusvalías",fmtEUR(Math.abs(minusvalias)),"#dc2626","#fef2f2","#fecaca"],
+          ["⚖️ Saldo neto",(saldoNeto>=0?"+":"")+fmtEUR(saldoNeto),saldoNeto>=0?"#059669":"#dc2626","#f8fafc","#e2e8f0"],
+        ].map(([l,v,c,bg,border])=>`<div style="background:${bg};border:1px solid ${border};border-radius:8px;padding:10px 12px">
+          <div style="font-size:10px;color:#64748b;font-weight:700;margin-bottom:3px">${l}</div>
+          <div style="font-size:15px;font-weight:800;color:${c}">${v}</div>
+        </div>`).join("")}
+      </div>
+      <div style="margin-top:12px;background:#eff6ff;border-radius:8px;padding:12px;font-size:11px">
+        <div style="font-weight:700;color:#1d4ed8;margin-bottom:8px">📋 Casillas orientativas IRPF — Ganancias y pérdidas patrimoniales (Base del ahorro)</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px">
+          ${[
+            ["Casilla 1626","Valor de transmisión (ingresos)",fmtEUR(totPV.ingreso)],
+            ["Casilla 1627","Valor de adquisición (costes)",fmtEUR(totPV.coste)],
+            ["Casilla 1628","Ganancia / pérdida neta",(saldoNeto>=0?"+":"")+fmtEUR(saldoNeto)],
+          ].map(([c,l,v])=>`<div style="background:#fff;border-radius:6px;padding:8px 10px;border:1px solid #bfdbfe">
+            <div style="color:#1d4ed8;font-weight:700;font-size:10px">${c}</div>
+            <div style="color:#475569;font-size:10px;margin-bottom:2px">${l}</div>
+            <div style="color:#1e293b;font-weight:700">${v}</div>
+          </div>`).join("")}
+        </div>
+      </div>`:""}
+    </div>
+
+    <!-- SECCIÓN 3: RESUMEN FISCAL -->
+    <div class="card" style="margin-bottom:16px;border:2px solid #7c3aed22">
+      <h3 style="font-size:13px;font-weight:700;color:#7c3aed;margin-bottom:12px">🧮 Resumen fiscal estimado — Base del ahorro ${yearStr}</h3>
+      <div style="font-size:11px;color:#475569;line-height:2">
+        <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #e2e8f0;padding:4px 0"><span>Dividendos brutos</span><span style="font-weight:700">${fmtEUR(totDiv.bruto)}</span></div>
+        <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #e2e8f0;padding:4px 0"><span>Saldo neto plusvalías/minusvalías</span><span style="font-weight:700;color:${saldoNeto>=0?"#059669":"#dc2626"}">${saldoNeto>=0?"+":""}${fmtEUR(saldoNeto)}</span></div>
+        <div style="display:flex;justify-content:space-between;border-bottom:2px solid #7c3aed44;padding:4px 0;font-weight:700;color:#7c3aed"><span>Base imponible del ahorro</span><span>${fmtEUR(Math.max(0,baseAhorro))}</span></div>
+        <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #e2e8f0;padding:4px 0"><span>Cuota íntegra estimada</span><span>${fmtEUR(cuotaBruta)}</span></div>
+        <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #e2e8f0;padding:4px 0"><span>Retenciones Hacienda soportadas</span><span style="color:#dc2626">−${fmtEUR(totDiv.retEspNeta)}</span></div>
+        <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #e2e8f0;padding:4px 0"><span>Deducción doble imposición (retención origen)</span><span style="color:#059669">−${fmtEUR(totDiv.deducibleOrigen)}</span></div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;font-weight:800;font-size:13px;color:#1e293b"><span>Cuota diferencial estimada a ingresar</span><span style="color:${cuotaNeta>0?"#dc2626":"#059669"}">${cuotaNeta>0?"":"−"}${fmtEUR(Math.abs(cuotaNeta))}</span></div>
+      </div>
+      <div style="margin-top:8px;font-size:10px;color:#94a3b8">Tipo marginal aplicable estimado: ${tipoMarginalAhorro(baseAhorro)} · Tramos 2024 (Ley 35/2006 IRPF)</div>
+    </div>
+
+    <!-- SECCIÓN 4: NOTAS Y CONSEJO -->
+    <div style="background:#f8fafc;border-radius:10px;padding:14px;font-size:11px;color:#475569;line-height:1.7">
+      <div style="font-weight:700;color:#1e293b;margin-bottom:6px">💡 Notas importantes para tu declaración</div>
+      <ul style="margin:0;padding-left:16px">
+        <li><strong>Minusvalías:</strong> Si tienes pérdidas en ${yearStr}, puedes compensarlas con plusvalías durante los <strong>4 ejercicios siguientes</strong>.</li>
+        <li><strong>Doble imposición:</strong> La retención en origen pagada en el extranjero es deducible en España con el límite del convenio (generalmente el 15%). El exceso no es recuperable vía IRPF pero sí puede solicitarse al país de origen en algunos casos.</li>
+        <li><strong>Modelo D-6:</strong> Si tienes acciones extranjeras por valor superior a 300.000€ debes presentar el modelo D-6 en enero.</li>
+        <li><strong>Modelo 720:</strong> Si el valor de los activos en el extranjero supera 50.000€, debes declararlo con el modelo 720.</li>
+        <li><strong>Corredor fiscal:</strong> Recuerda que los dividendos de empresas españolas ya incluyen la retención del 19% aplicada por el intermediario financiero.</li>
+      </ul>
+    </div>
+  </div>`;
+}
+
+function printRenta() {
+  window.print();
+}
 function acceptDisclaimer() {
   ls.set("km_disclaimer",true);
   document.getElementById("disclaimer-overlay").style.display="none";
