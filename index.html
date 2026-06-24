@@ -548,16 +548,19 @@ function normalizeImportType(v) {
 function buildDivInfo() {
   state.divInfo = state.positions.map(p => {
     const cached = state.yieldCache[p.ticker];
-    const yld = cached?.yield ?? 0.045;
-    const rate = cached?.rate ?? +(p.avg_cost*yld).toFixed(4);
+    const hasCache = cached != null;
+    const yld = hasCache ? (cached.yield ?? 0) : 0.045;
+    const rate = hasCache ? (cached.rate ?? 0) : +(p.avg_cost * 0.045).toFixed(4);
+    const annual_income = +(rate * p.shares).toFixed(2);
+    const freq = cached?.freq || (hasCache ? "Anual" : "—");
     return {
-      ticker:p.ticker, name:p.name, shares:p.shares, currency:p.currency,
+      ticker: p.ticker, name: p.name, shares: p.shares, currency: p.currency,
       div_rate: rate,
       div_yield: yld,
-      annual_income: +(rate*p.shares).toFixed(2),
+      annual_income,
       ex_date: cached?.exDate || new Date(Date.now()+30*864e5).toISOString().slice(0,10),
-      freq: "Trimestral",
-      _estimated: !cached
+      freq,
+      _estimated: !hasCache
     };
   });
   updateDivTicker();
@@ -626,26 +629,38 @@ async function fetchDividendData(ticker) {
       const result = data?.chart?.result?.[0];
       if (!result) continue;
 
-      const price = result.meta?.regularMarketPrice;
-      const divEvents = result.events?.dividends;
+      const isGBp = String(ticker).toUpperCase().endsWith(".L");
+      let price = result.meta?.regularMarketPrice;
+      if (isGBp && price) price = price / 100;
 
+      const divEvents = result.events?.dividends;
       if (!divEvents || !Object.keys(divEvents).length) {
-        // Sin pagos en los últimos 2 años -> asumimos que no reparte dividendo
-        return { yield: 0, rate: 0, exDate: null };
+        return { yield: 0, rate: 0, exDate: null, freq: "—" };
       }
 
-      const list = Object.values(divEvents); // [{amount, date(unix seg)}, ...]
+      const list = Object.values(divEvents).sort((a,b) => a.date - b.date);
       const oneYearAgo = Date.now()/1000 - 365*86400;
       const lastYear = list.filter(d => d.date >= oneYearAgo);
-      // Si en el último año no hubo pagos (p.ej. frecuencia anual/irregular), usamos los 4 últimos pagos conocidos
       const sample = lastYear.length ? lastYear : list.slice(-4);
-      const annualDividend = sample.reduce((s,d)=>s+(d.amount||0),0) * (lastYear.length ? 1 : 4/sample.length);
-      const lastExTs = Math.max(...list.map(d=>d.date));
+
+      let annualDividend = sample.reduce((s,d) => s + (d.amount||0), 0) * (lastYear.length ? 1 : 4/sample.length);
+      if (isGBp) annualDividend = annualDividend / 100;
+
+      // Calcular frecuencia real por número de pagos en el último año
+      const nPagos = lastYear.length || sample.length;
+      let freq = "Anual";
+      if (nPagos >= 10)     freq = "Mensual";
+      else if (nPagos >= 3) freq = "Trimestral";
+      else if (nPagos >= 2) freq = "Semestral";
+      else                  freq = "Anual";
+
+      const lastExTs = Math.max(...list.map(d => d.date));
 
       return {
-        yield: price ? +(annualDividend/price).toFixed(4) : null,
-        rate: +annualDividend.toFixed(4),
-        exDate: lastExTs ? new Date(lastExTs*1000).toISOString().slice(0,10) : null
+        yield:  price ? +(annualDividend / price).toFixed(4) : null,
+        rate:   +annualDividend.toFixed(4),
+        exDate: lastExTs ? new Date(lastExTs*1000).toISOString().slice(0,10) : null,
+        freq
       };
     } catch(e) { /* probar el siguiente proxy */ }
   }
@@ -865,82 +880,6 @@ function closeAcList(inputId) {
   if (list) list.remove();
   acIdx = -1;
 }
-function exportCarteraExcel() {
-  const fecha = new Date().toISOString().slice(0, 10);
-
-  // ── Hoja 1: Cartera ──────────────────────────────────────────
-  const posRows = state.positions.map(p => {
-    const cp = state.priceCache[p.ticker];
-    const di = state.divInfo?.find(d => d.ticker === p.ticker);
-    const costeTotal = +(p.shares * p.avg_cost).toFixed(2);
-    const valorActual = cp ? +(p.shares * cp).toFixed(2) : costeTotal;
-    const pnl = +(valorActual - costeTotal).toFixed(2);
-    const pnlPct = costeTotal ? +((pnl / costeTotal) * 100).toFixed(2) : 0;
-    return {
-      "Ticker":         p.ticker,
-      "Empresa":        p.name || "",
-      "Acciones":       p.shares,
-      "Coste medio":    +p.avg_cost.toFixed(4),
-      "Coste total":    costeTotal,
-      "Precio actual":  cp ? +cp.toFixed(4) : "",
-      "Valor actual":   valorActual,
-      "P&L (€)":        pnl,
-      "P&L (%)":        pnlPct,
-      "Divisa":         p.currency || "EUR",
-      "Sector":         p.sector || "",
-      "Yield (%)":      di ? +((di.div_yield || 0) * 100).toFixed(2) : "",
-      "Ingreso anual":  di ? +(di.annual_income || 0).toFixed(2) : "",
-      "Fecha entrada":  p.date || ""
-    };
-  });
-
-  // ── Hoja 2: Transacciones ─────────────────────────────────────
-  const txRows = [...(state.transactions || [])]
-    .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
-    .map(t => ({
-      "Fecha":      (t.date || "").slice(0, 10),
-      "Ticker":     t.ticker,
-      "Tipo":       t.type,
-      "Acciones":   t.shares,
-      "Precio":     t.price,
-      "Comisión":   t.commission || 0,
-      "Divisa":     t.currency || "EUR",
-      "Notas":      t.notes || ""
-    }));
-
-  // ── Hoja 3: Dividendos ────────────────────────────────────────
-  const divRows = (state.divInfo || []).map(d => ({
-    "Ticker":         d.ticker,
-    "Empresa":        d.name || "",
-    "Acciones":       d.shares,
-    "Div/acción (€)": +((d.div_rate || 0)).toFixed(4),
-    "Yield (%)":      +((d.div_yield || 0) * 100).toFixed(2),
-    "Ingreso anual":  +(d.annual_income || 0).toFixed(2),
-    "Próx. ex-div":   d.ex_date || "",
-    "Estimado":       d._estimated ? "Sí" : "No"
-  }));
-
-  const wb = XLSX.utils.book_new();
-
-  const wsPos = XLSX.utils.json_to_sheet(posRows);
-  wsPos["!cols"] = [8,22,10,12,12,12,12,10,10,8,18,10,13,12].map(w=>({wch:w}));
-  XLSX.utils.book_append_sheet(wb, wsPos, "Cartera");
-
-  if (txRows.length) {
-    const wsTx = XLSX.utils.json_to_sheet(txRows);
-    wsTx["!cols"] = [12,10,8,10,10,10,8,30].map(w=>({wch:w}));
-    XLSX.utils.book_append_sheet(wb, wsTx, "Transacciones");
-  }
-
-  if (divRows.length) {
-    const wsDiv = XLSX.utils.json_to_sheet(divRows);
-    wsDiv["!cols"] = [8,22,10,14,10,13,12,10].map(w=>({wch:w}));
-    XLSX.utils.book_append_sheet(wb, wsDiv, "Dividendos");
-  }
-
-  XLSX.writeFile(wb, `kapital_cartera_${fecha}.xlsx`);
-}
-
 function openImportBroker() {
   const overlay = document.getElementById("modal-overlay");
   const box = document.getElementById("modal-box");
@@ -1487,8 +1426,7 @@ function renderPortfolio() {
   <button class="btn" style="background:#475569;font-size:11px;padding:5px 10px" onclick="openEditPos()">✏️ Editar</button>
   <button class="btn-danger" style="font-size:11px;padding:5px 10px" onclick="deletePosition()">🗑 Eliminar</button>
   <button class="btn-green" style="font-size:11px;padding:5px 10px" onclick="openAddAlert()">🔔 Alerta</button>
-  <button class="btn" style="background:#0f766e;font-size:15px;padding:5px 9px;line-height:1" onclick="openImportBroker()" title="Importar extracto de broker">📥</button>
-  <button class="btn" style="background:#166534;font-size:15px;padding:5px 9px;line-height:1" onclick="exportCarteraExcel()" title="Exportar cartera a Excel">📊</button>
+  <button class="btn" style="background:#0f766e;font-size:11px;padding:5px 10px" onclick="openImportBroker()">📥 Importar</button>
           <div style="flex:1"></div>
           <input id="port-filter" class="inp-sm" placeholder="🔍 Filtrar..." style="width:150px;font-size:11px" value="${esc(filter)}" oninput="renderActiveTab()">
           <button class="btn-danger" style="margin-left:6px;font-size:11px;padding:5px 10px" onclick="deleteCartera()" title="Elimina todas las posiciones">🗑️ Vaciar</button>
@@ -1538,20 +1476,78 @@ function deleteAlert(id){ state.alerts=state.alerts.filter(a=>a.id!==id); save()
 // ─────────────────────────────────────────────
 // TAB 2 — DIVIDENDOS
 // ─────────────────────────────────────────────
+// Retención en origen según país del ticker (convenios de doble imposición con España)
+function retencionOrigenPct(ticker, currency) {
+  const t = String(ticker || "").toUpperCase();
+  if (t.endsWith(".MC") || t.endsWith(".MAD") || currency === "EUR" && !t.includes(".")) return 0.19; // España
+  if (t.endsWith(".MC"))  return 0.19;  // España — Hacienda retiene directamente
+  if (t.endsWith(".L"))   return 0.00;  // UK — sin retención en origen
+  if (t.endsWith(".SW") || t.endsWith(".VX")) return 0.35; // Suiza
+  if (t.endsWith(".PA") || t.endsWith(".NX")) return 0.128; // Francia
+  if (t.endsWith(".DE") || t.endsWith(".F") || t.endsWith(".BE") || t.endsWith(".MU") || t.endsWith(".DU")) return 0.25; // Alemania
+  if (t.endsWith(".AS"))  return 0.15;  // Países Bajos
+  if (t.endsWith(".MI"))  return 0.26;  // Italia
+  if (t.endsWith(".LS"))  return 0.28;  // Portugal
+  if (t.endsWith(".BR"))  return 0.30;  // Bélgica
+  if (t.endsWith(".ST"))  return 0.30;  // Suecia
+  if (t.endsWith(".HE"))  return 0.30;  // Finlandia
+  if (t.endsWith(".OL"))  return 0.25;  // Noruega
+  if (t.endsWith(".CO"))  return 0.27;  // Dinamarca
+  if (currency === "USD") return 0.15;  // USA (convenio)
+  if (currency === "CAD") return 0.15;  // Canadá
+  if (currency === "AUD") return 0.15;  // Australia
+  if (currency === "JPY") return 0.15;  // Japón
+  return 0.15; // genérico
+}
+
+function paisLabel(ticker, currency) {
+  const t = String(ticker || "").toUpperCase();
+  if (t.endsWith(".MC"))  return "🇪🇸 España";
+  if (t.endsWith(".L"))   return "🇬🇧 Reino Unido";
+  if (t.endsWith(".SW") || t.endsWith(".VX")) return "🇨🇭 Suiza";
+  if (t.endsWith(".PA") || t.endsWith(".NX")) return "🇫🇷 Francia";
+  if (t.endsWith(".DE") || t.endsWith(".F") || t.endsWith(".BE") || t.endsWith(".MU") || t.endsWith(".DU")) return "🇩🇪 Alemania";
+  if (t.endsWith(".AS"))  return "🇳🇱 P. Bajos";
+  if (t.endsWith(".MI"))  return "🇮🇹 Italia";
+  if (t.endsWith(".LS"))  return "🇵🇹 Portugal";
+  if (t.endsWith(".BR"))  return "🇧🇪 Bélgica";
+  if (t.endsWith(".ST"))  return "🇸🇪 Suecia";
+  if (t.endsWith(".HE"))  return "🇫🇮 Finlandia";
+  if (t.endsWith(".OL"))  return "🇳🇴 Noruega";
+  if (t.endsWith(".CO"))  return "🇩🇰 Dinamarca";
+  if (currency === "USD") return "🇺🇸 EE.UU.";
+  if (currency === "CAD") return "🇨🇦 Canadá";
+  if (currency === "AUD") return "🇦🇺 Australia";
+  if (currency === "JPY") return "🇯🇵 Japón";
+  return "🌍 Internacional";
+}
+
 function renderDividends() {
   const totalAnn = state.divInfo.reduce((s,d)=>s+toEUR(d.annual_income||0,d.currency||"EUR"),0);
+  const totalNeto = state.divInfo.reduce((s,d)=>{
+    const ret = retencionOrigenPct(d.ticker, d.currency);
+    return s + toEUR((d.annual_income||0) * (1 - ret), d.currency||"EUR");
+  }, 0);
+
   const divRows = state.divInfo.map((d)=>{
-    const yp=(d.div_yield||0)*100;
-    const yc=yp>=4?"#16a34a":yp>=2?"#b45309":"#dc2626";
+    const yp = (d.div_yield||0)*100;
+    const yc = yp>=4?"#16a34a":yp>=2?"#b45309":"#dc2626";
+    const ret = retencionOrigenPct(d.ticker, d.currency);
+    const incBrutoEUR = toEUR(d.annual_income||0, d.currency||"EUR");
+    const incNetoEUR  = incBrutoEUR * (1 - ret);
+    const retColor = ret===0?"#16a34a":ret<=0.15?"#b45309":ret<=0.25?"#ea580c":"#dc2626";
     return `<tr>
       <td style="color:#1d4ed8;font-weight:700">${esc(d.ticker)}</td>
-      <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.name)}</td>
+      <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.name)}</td>
       <td>${Math.round(d.shares||0)}</td>
       <td style="font-weight:600">${d.div_rate?d.div_rate.toFixed(4)+" "+d.currency:"—"}</td>
       <td style="color:${yc};font-weight:600">${yp?(d._estimated?"≈"+yp.toFixed(2)+"%":yp.toFixed(2)+"%"):"—"}</td>
       <td style="color:#64748b">${d.ex_date||"—"}</td>
       <td><span class="badge" style="background:#b4530922;color:#b45309">${d.freq||"—"}</span></td>
-      <td style="font-weight:600;color:#b45309">${fmtEUR(toEUR(d.annual_income||0,d.currency||"EUR"))}</td>
+      <td style="font-size:11px;color:#475569">${paisLabel(d.ticker, d.currency)}</td>
+      <td style="font-weight:600;color:${retColor}">${ret>0?(ret*100).toFixed(1)+"%":"Sin ret."}</td>
+      <td style="font-weight:600;color:#b45309">${fmtEUR(incBrutoEUR)}</td>
+      <td style="font-weight:700;color:#16a34a">${fmtEUR(incNetoEUR)}</td>
     </tr>`;
   }).join("");
   const histRows = state.dividends.map(d=>`<tr>
@@ -1564,16 +1560,17 @@ function renderDividends() {
   </tr>`).join("");
   return `<div style="padding:14px">
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px">
-      ${["ANUAL","MENSUAL","DIARIO","POR HORA"].map((l,i)=>{
-        const v=[totalAnn,totalAnn/12,totalAnn/365,totalAnn/8760][i];
-        return `<div class="metric-card" style="border-left:3px solid #b45309"><div class="metric-label">${l}</div><div class="metric-value" style="color:#b45309">${fmtEUR(v)}</div></div>`;
+      ${["BRUTO ANUAL","NETO ANUAL","MENSUAL NETO","DIARIO NETO"].map((l,i)=>{
+        const v=[totalAnn, totalNeto, totalNeto/12, totalNeto/365][i];
+        const color = i===0?"#b45309":"#16a34a";
+        return `<div class="metric-card" style="border-left:3px solid ${color}"><div class="metric-label">${l}</div><div class="metric-value" style="color:${color}">${fmtEUR(v)}</div></div>`;
       }).join("")}
     </div>
     <div style="margin-bottom:12px"><button class="btn" onclick="openAddDividend()">💰 Registrar dividendo</button></div>
     <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">Dividendos esperados por posición</h4>
     <div style="overflow-x:auto;margin-bottom:20px">
-      <table style="min-width:700px"><thead><tr>${["Ticker","Empresa","Acciones","Div./acc","Yield %","Ex-date","Frecuencia","Ingreso anual"].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
-      <tbody>${divRows||`<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>`}</tbody></table>
+      <table style="min-width:900px"><thead><tr>${["Ticker","Empresa","Acciones","Div./acc","Yield %","Ex-date","Frecuencia","País","Retención","Bruto anual","Neto anual"].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+      <tbody>${divRows||`<tr><td colspan="11" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>`}</tbody></table>
     </div>
     <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">Historial de cobros registrados</h4>
     <table><thead><tr>${["Fecha","Ticker","Acc.","Importe/acc","Total","Notas",""].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
@@ -2221,18 +2218,7 @@ function renderRenta() {
   });
 
   // Retención en origen estimada por país (basada en divisa/ticker)
-  function retencionOrigen(ticker, currency) {
-    if (ticker.endsWith(".MC") || currency==="EUR") return 0.19;  // España: no hay doble imposición
-    if (currency==="USD") return 0.15;     // USA: retención en origen 15% (convenio)
-    if (currency==="GBP") return 0.00;     // UK: sin retención en origen sobre dividendos
-    if (ticker.endsWith(".SW") || ticker.endsWith(".VX")) return 0.35; // Suiza: 35%
-    if (ticker.endsWith(".PA") || ticker.endsWith(".NX")) return 0.128; // Francia: 12.8%
-    if (ticker.endsWith(".DE") || ticker.endsWith(".F")) return 0.25;   // Alemania: 25%
-    if (ticker.endsWith(".AS")) return 0.15; // Holanda: 15%
-    if (ticker.endsWith(".MI")) return 0.26; // Italia: 26%
-    if (ticker.endsWith(".LS")) return 0.28; // Portugal: 28%
-    return 0.15; // Estimación genérica
-  }
+  const retencionOrigen = (ticker, currency) => retencionOrigenPct(ticker, currency);
 
   const retencionESP = 0.19; // Retención Hacienda española sobre dividendos
 
