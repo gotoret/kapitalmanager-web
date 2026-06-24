@@ -626,33 +626,25 @@ async function fetchDividendData(ticker) {
       const result = data?.chart?.result?.[0];
       if (!result) continue;
 
-      // Yahoo Finance devuelve precios Y dividendos de tickers .L en peniques (GBp)
-      // Hay que dividir entre 100 para convertir a libras (GBP)
-      const isGBp = String(ticker).toUpperCase().endsWith(".L");
-
-      let price = result.meta?.regularMarketPrice;
-      if (isGBp && price) price = price / 100;
-
+      const price = result.meta?.regularMarketPrice;
       const divEvents = result.events?.dividends;
 
       if (!divEvents || !Object.keys(divEvents).length) {
+        // Sin pagos en los últimos 2 años -> asumimos que no reparte dividendo
         return { yield: 0, rate: 0, exDate: null };
       }
 
       const list = Object.values(divEvents); // [{amount, date(unix seg)}, ...]
       const oneYearAgo = Date.now()/1000 - 365*86400;
       const lastYear = list.filter(d => d.date >= oneYearAgo);
+      // Si en el último año no hubo pagos (p.ej. frecuencia anual/irregular), usamos los 4 últimos pagos conocidos
       const sample = lastYear.length ? lastYear : list.slice(-4);
-
-      // Convertir importes de peniques a libras si es necesario
-      let annualDividend = sample.reduce((s,d)=>s+(d.amount||0),0) * (lastYear.length ? 1 : 4/sample.length);
-      if (isGBp) annualDividend = annualDividend / 100;
-
+      const annualDividend = sample.reduce((s,d)=>s+(d.amount||0),0) * (lastYear.length ? 1 : 4/sample.length);
       const lastExTs = Math.max(...list.map(d=>d.date));
 
       return {
         yield: price ? +(annualDividend/price).toFixed(4) : null,
-        rate: +annualDividend.toFixed(4),  // GBP por acción/año
+        rate: +annualDividend.toFixed(4),
         exDate: lastExTs ? new Date(lastExTs*1000).toISOString().slice(0,10) : null
       };
     } catch(e) { /* probar el siguiente proxy */ }
@@ -662,10 +654,6 @@ async function fetchDividendData(ticker) {
 
 async function refreshDividendYields() {
   const tickers = [...new Set(state.positions.map(p=>p.ticker))];
-  // Limpiar caché de tickers .L que pudieran tener el rate en peniques (bug anterior)
-  tickers.filter(t => String(t).toUpperCase().endsWith(".L")).forEach(t => {
-    delete state.yieldCache[t];
-  });
   const pending = tickers.filter(t => !state.yieldCache[t]);
   if (!pending.length) return;
   await Promise.all(pending.map(async t => {
@@ -673,7 +661,7 @@ async function refreshDividendYields() {
     if (d) state.yieldCache[t] = d;
   }));
   buildDivInfo();
-  if (state.activeTab === 2) renderActiveTab();
+  if (state.activeTab === 2) renderActiveTab(); // 2 = pestaña Dividendos
 }
 
 // ─────────────────────────────────────────────
@@ -877,6 +865,36 @@ function closeAcList(inputId) {
   if (list) list.remove();
   acIdx = -1;
 }
+function exportCartera() {
+  const fecha = new Date().toISOString().slice(0, 10);
+  const nombreCartera = (state.carteras?.[state.activeCartera]?.name || "cartera").replace(/\s+/g, "_");
+
+  const backup = {
+    _version: "kapital-manager-v1",
+    _exportDate: new Date().toISOString(),
+    _cartera: nombreCartera,
+    positions: state.positions,
+    transactions: state.transactions,
+    alerts: state.alerts,
+    goals: state.goals || [],
+    divInfo: state.divInfo || [],
+    yieldCache: state.yieldCache || {},
+    priceCache: state.priceCache || {},
+    fxCache: state.fxCache || {}
+  };
+
+  const json = JSON.stringify(backup, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `kapital_${nombreCartera}_${fecha}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function openImportBroker() {
   const overlay = document.getElementById("modal-overlay");
   const box = document.getElementById("modal-box");
@@ -1423,7 +1441,8 @@ function renderPortfolio() {
   <button class="btn" style="background:#475569;font-size:11px;padding:5px 10px" onclick="openEditPos()">✏️ Editar</button>
   <button class="btn-danger" style="font-size:11px;padding:5px 10px" onclick="deletePosition()">🗑 Eliminar</button>
   <button class="btn-green" style="font-size:11px;padding:5px 10px" onclick="openAddAlert()">🔔 Alerta</button>
-  <button class="btn" style="background:#0f766e;font-size:11px;padding:5px 10px" onclick="openImportBroker()">📥 Importar</button>
+  <button class="btn" style="background:#0f766e;font-size:15px;padding:5px 9px;line-height:1" onclick="openImportBroker()" title="Importar extracto de broker">📥</button>
+  <button class="btn" style="background:#7c3aed;font-size:15px;padding:5px 9px;line-height:1" onclick="exportCartera()" title="Exportar copia de seguridad">📤</button>
           <div style="flex:1"></div>
           <input id="port-filter" class="inp-sm" placeholder="🔍 Filtrar..." style="width:150px;font-size:11px" value="${esc(filter)}" oninput="renderActiveTab()">
           <button class="btn-danger" style="margin-left:6px;font-size:11px;padding:5px 10px" onclick="deleteCartera()" title="Elimina todas las posiciones">🗑️ Vaciar</button>
