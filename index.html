@@ -548,13 +548,17 @@ function normalizeImportType(v) {
 function buildDivInfo() {
   state.divInfo = state.positions.map(p => {
     const cached = state.yieldCache[p.ticker];
+    // cached.rate = dividend amount per share per year (from Yahoo Finance)
+    // cached.yield = annual yield as decimal (e.g. 0.045)
+    // If no cache, estimate from avg_cost * default yield
     const yld = cached?.yield ?? 0.045;
-    const rate = cached?.rate ?? +(p.avg_cost*yld).toFixed(4);
+    const rate = cached?.rate != null ? cached.rate : +(p.avg_cost * yld).toFixed(4);
+    const annual_income = +(rate * p.shares).toFixed(2);
     return {
-      ticker:p.ticker, name:p.name, shares:p.shares, currency:p.currency,
-      div_rate: rate,
-      div_yield: yld,
-      annual_income: +(rate*p.shares).toFixed(2),
+      ticker: p.ticker, name: p.name, shares: p.shares, currency: p.currency,
+      div_rate: rate,           // €/$ per share per year
+      div_yield: yld,           // decimal yield (e.g. 0.045)
+      annual_income,            // rate * shares
       ex_date: cached?.exDate || new Date(Date.now()+30*864e5).toISOString().slice(0,10),
       freq: "Trimestral",
       _estimated: !cached
@@ -596,9 +600,9 @@ function updateDivTicker() {
 
   const makeItem = d => {
     const dateStr = new Date(d.next_ex).toLocaleDateString("es-ES",{day:"2-digit",month:"short"});
-    const income = (d.div_rate * d.shares).toFixed(2);
+    const incomeEUR = toEUR(d.annual_income, d.currency || "EUR");
     const est = d._estimated ? "~" : "";
-    return `<span>💰 <b>${d.ticker}</b> · ${d.name} · <em>${est}${income}€</em> · <s>próx. ex-div ${dateStr}</s></span>`;
+    return `<span>💰 <b>${d.ticker}</b> · ${d.name} · <em>${est}${fmtEUR(incomeEUR)}/año</em> · <s>próx. ex-div ${dateStr}</s></span>`;
   };
 
   const html = withNext.map(makeItem).join("  ·  ") + "　　" +
@@ -1140,6 +1144,7 @@ function applyImportedTransactionsToPortfolio(transactions, replaceMode = false)
     state.transactions = [];
   }
 
+  // Build posMap from CURRENT state positions so we accumulate on top of existing
   const posMap = {};
   state.positions.forEach(p => {
     posMap[p.ticker] = { ...p };
@@ -1160,17 +1165,20 @@ function applyImportedTransactionsToPortfolio(transactions, replaceMode = false)
 
     if (t.type === "DIVIDEND") return;
 
-    const current = posMap[t.ticker] || {
-      ticker: t.ticker,
-      name: t.name || t.ticker,
-      shares: 0,
-      avg_cost: 0,
-      currency: t.currency || detectCurrencyFromTicker(t.ticker),
-      fx_rate: 1,
-      sector: t.sector || guessSectorFromNameOrTicker(t.ticker, t.name),
-      date: t.date || new Date().toISOString().slice(0, 10)
-    };
+    if (!posMap[t.ticker]) {
+      posMap[t.ticker] = {
+        ticker: t.ticker,
+        name: t.name || t.ticker,
+        shares: 0,
+        avg_cost: 0,
+        currency: t.currency || detectCurrencyFromTicker(t.ticker),
+        fx_rate: 1,
+        sector: t.sector || guessSectorFromNameOrTicker(t.ticker, t.name),
+        date: t.date || new Date().toISOString().slice(0, 10)
+      };
+    }
 
+    const current = posMap[t.ticker];
     const feePerShare = t.shares > 0 ? (t.commission || 0) / t.shares : 0;
 
     if (t.type === "BUY") {
@@ -1194,9 +1202,12 @@ function applyImportedTransactionsToPortfolio(transactions, replaceMode = false)
     posMap[t.ticker] = current;
   });
 
-  state.positions = Object.values(posMap)
+  // Rebuild state.positions from posMap (only those with shares > 0)
+  const newPositions = Object.values(posMap)
     .filter(p => p.shares > 0)
     .map(p => normalizePosition(p));
+
+  state.positions = newPositions;
 }
 
 function dedupeImportedTransactions(txs) {
@@ -1226,40 +1237,40 @@ function dedupeImportedTransactions(txs) {
 }
 
 function confirmImportBroker() {
-  try {
-    if (!state.importPreview?.length) {
-      alert("Primero analiza un archivo y genera la vista previa");
-      return;
-    }
-
-    const mode = document.getElementById("import-mode")?.value || "merge";
-    let txs = dedupeImportedTransactions(state.importPreview);
-
-    if (!txs.length) {
-      const force = confirm("Todas las filas parecen duplicadas. ¿Quieres importarlas igualmente?");
-      if (!force) return;
-      txs = [...state.importPreview];
-    }
-
-    if (mode === "replace") {
-      if (!confirm("Se sustituirá la cartera actual por la importada. ¿Continuar?")) return;
-      applyImportedTransactionsToPortfolio(txs, true);
-    } else {
-      applyImportedTransactionsToPortfolio(txs, false);
-    }
-
-    buildDivInfo();
-    save();
-    renderHeader();
-    renderActiveTab();
-    closeModal();
-    refreshDividendYields();
-
-    alert(`✅ Importación completada: ${txs.length} transacciones y cartera actualizada`);
-  } catch (e) {
-    console.error("Error confirmando importación:", e);
-    alert("No se pudo completar la importación");
+  if (!state.importPreview?.length) {
+    alert("Primero analiza un archivo y genera la vista previa");
+    return;
   }
+
+  const mode = document.getElementById("import-mode")?.value || "merge";
+  let txs = dedupeImportedTransactions(state.importPreview);
+
+  if (!txs.length) {
+    const force = confirm("Todas las filas parecen duplicadas. ¿Quieres importarlas igualmente?");
+    if (!force) return;
+    txs = [...state.importPreview];
+  }
+
+  if (mode === "replace") {
+    if (!confirm("Se sustituirá la cartera actual por la importada. ¿Continuar?")) return;
+  }
+
+  try {
+    applyImportedTransactionsToPortfolio(txs, mode === "replace");
+  } catch (e) {
+    console.error("Error aplicando importación:", e);
+    alert("Error al procesar las transacciones: " + e.message);
+    return;
+  }
+
+  buildDivInfo();
+  save();
+  renderHeader();
+  renderActiveTab();
+  closeModal();
+  refreshDividendYields();
+
+  alert(`✅ Importación completada: ${txs.length} transacciones añadidas y cartera actualizada`);
 }
 
 // ─────────────────────────────────────────────
@@ -1919,6 +1930,12 @@ function openAddPos() {
     const exchCur = {"MCE":"EUR","MAD":"EUR","NYQ":"USD","NMS":"USD","NGM":"USD","ASE":"USD","LSE":"GBP","FRA":"EUR","PAR":"EUR","AMS":"EUR","MIL":"EUR","TSX":"CAD","ASX":"AUD","TYO":"JPY","HKG":"HKD"}[r.exchange]||"USD";
     const sel = document.getElementById("m-cur");
     if (sel && CURRENCIES.includes(exchCur)) { sel.value = exchCur; updateFXField(); }
+    // Auto-fill sector if we can guess it, but only if not already set
+    const sectorSel = document.getElementById("m-sector");
+    if (sectorSel && !sectorSel.value) {
+      const guessed = guessSectorFromNameOrTicker(r.ticker, r.name);
+      if (guessed) sectorSel.value = guessed;
+    }
     const preview = document.getElementById("m-price-preview");
     if (preview) { preview.style.display="block"; preview.textContent="⏳ Buscando precio actual..."; }
     const price = await fetchWithProxy(PROXIES, r.ticker);
