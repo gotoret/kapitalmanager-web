@@ -865,34 +865,80 @@ function closeAcList(inputId) {
   if (list) list.remove();
   acIdx = -1;
 }
-function exportCartera() {
+function exportCarteraExcel() {
   const fecha = new Date().toISOString().slice(0, 10);
-  const nombreCartera = (state.carteras?.[state.activeCartera]?.name || "cartera").replace(/\s+/g, "_");
 
-  const backup = {
-    _version: "kapital-manager-v1",
-    _exportDate: new Date().toISOString(),
-    _cartera: nombreCartera,
-    positions: state.positions,
-    transactions: state.transactions,
-    alerts: state.alerts,
-    goals: state.goals || [],
-    divInfo: state.divInfo || [],
-    yieldCache: state.yieldCache || {},
-    priceCache: state.priceCache || {},
-    fxCache: state.fxCache || {}
-  };
+  // ── Hoja 1: Cartera ──────────────────────────────────────────
+  const posRows = state.positions.map(p => {
+    const cp = state.priceCache[p.ticker];
+    const di = state.divInfo?.find(d => d.ticker === p.ticker);
+    const costeTotal = +(p.shares * p.avg_cost).toFixed(2);
+    const valorActual = cp ? +(p.shares * cp).toFixed(2) : costeTotal;
+    const pnl = +(valorActual - costeTotal).toFixed(2);
+    const pnlPct = costeTotal ? +((pnl / costeTotal) * 100).toFixed(2) : 0;
+    return {
+      "Ticker":         p.ticker,
+      "Empresa":        p.name || "",
+      "Acciones":       p.shares,
+      "Coste medio":    +p.avg_cost.toFixed(4),
+      "Coste total":    costeTotal,
+      "Precio actual":  cp ? +cp.toFixed(4) : "",
+      "Valor actual":   valorActual,
+      "P&L (€)":        pnl,
+      "P&L (%)":        pnlPct,
+      "Divisa":         p.currency || "EUR",
+      "Sector":         p.sector || "",
+      "Yield (%)":      di ? +((di.div_yield || 0) * 100).toFixed(2) : "",
+      "Ingreso anual":  di ? +(di.annual_income || 0).toFixed(2) : "",
+      "Fecha entrada":  p.date || ""
+    };
+  });
 
-  const json = JSON.stringify(backup, null, 2);
-  const blob = new Blob([json], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `kapital_${nombreCartera}_${fecha}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  // ── Hoja 2: Transacciones ─────────────────────────────────────
+  const txRows = [...(state.transactions || [])]
+    .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
+    .map(t => ({
+      "Fecha":      (t.date || "").slice(0, 10),
+      "Ticker":     t.ticker,
+      "Tipo":       t.type,
+      "Acciones":   t.shares,
+      "Precio":     t.price,
+      "Comisión":   t.commission || 0,
+      "Divisa":     t.currency || "EUR",
+      "Notas":      t.notes || ""
+    }));
+
+  // ── Hoja 3: Dividendos ────────────────────────────────────────
+  const divRows = (state.divInfo || []).map(d => ({
+    "Ticker":         d.ticker,
+    "Empresa":        d.name || "",
+    "Acciones":       d.shares,
+    "Div/acción (€)": +((d.div_rate || 0)).toFixed(4),
+    "Yield (%)":      +((d.div_yield || 0) * 100).toFixed(2),
+    "Ingreso anual":  +(d.annual_income || 0).toFixed(2),
+    "Próx. ex-div":   d.ex_date || "",
+    "Estimado":       d._estimated ? "Sí" : "No"
+  }));
+
+  const wb = XLSX.utils.book_new();
+
+  const wsPos = XLSX.utils.json_to_sheet(posRows);
+  wsPos["!cols"] = [8,22,10,12,12,12,12,10,10,8,18,10,13,12].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, wsPos, "Cartera");
+
+  if (txRows.length) {
+    const wsTx = XLSX.utils.json_to_sheet(txRows);
+    wsTx["!cols"] = [12,10,8,10,10,10,8,30].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, wsTx, "Transacciones");
+  }
+
+  if (divRows.length) {
+    const wsDiv = XLSX.utils.json_to_sheet(divRows);
+    wsDiv["!cols"] = [8,22,10,14,10,13,12,10].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, wsDiv, "Dividendos");
+  }
+
+  XLSX.writeFile(wb, `kapital_cartera_${fecha}.xlsx`);
 }
 
 function openImportBroker() {
@@ -1442,7 +1488,7 @@ function renderPortfolio() {
   <button class="btn-danger" style="font-size:11px;padding:5px 10px" onclick="deletePosition()">🗑 Eliminar</button>
   <button class="btn-green" style="font-size:11px;padding:5px 10px" onclick="openAddAlert()">🔔 Alerta</button>
   <button class="btn" style="background:#0f766e;font-size:15px;padding:5px 9px;line-height:1" onclick="openImportBroker()" title="Importar extracto de broker">📥</button>
-  <button class="btn" style="background:#7c3aed;font-size:15px;padding:5px 9px;line-height:1" onclick="exportCartera()" title="Exportar copia de seguridad">📤</button>
+  <button class="btn" style="background:#166534;font-size:15px;padding:5px 9px;line-height:1" onclick="exportCarteraExcel()" title="Exportar cartera a Excel">📊</button>
           <div style="flex:1"></div>
           <input id="port-filter" class="inp-sm" placeholder="🔍 Filtrar..." style="width:150px;font-size:11px" value="${esc(filter)}" oninput="renderActiveTab()">
           <button class="btn-danger" style="margin-left:6px;font-size:11px;padding:5px 10px" onclick="deleteCartera()" title="Elimina todas las posiciones">🗑️ Vaciar</button>
