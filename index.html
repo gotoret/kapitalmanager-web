@@ -308,7 +308,18 @@ const DEFAULT_PORTFOLIO = [
 ];
 
 const FX_FALLBACK = {USD:0.92,GBP:1.17,JPY:0.0062,CHF:1.02,CAD:0.68,AUD:0.60,EUR:1.0};
-const PIE_COLORS = ["#4ade80","#60a5fa","#f59e0b","#f87171","#a78bfa","#34d399","#fb923c","#38bdf8","#e879f9","#94a3b8","#fbbf24","#6366f1"];
+const PIE_COLORS = [
+  "#3b82f6",
+  "#22c55e",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#06b6d4",
+  "#84cc16",
+  "#f97316",
+  "#14b8a6",
+  "#a855f7"
+];
 const TABS = ["📋 Cartera","🔔 Alertas","💰 Dividendos","📝 Transacciones","💸 Ventas","📊 Gráficos","🎯 Objetivos","📐 Valoración","🧾 Renta"];
 const CURRENCIES = ["EUR","USD","GBP","CHF","CAD","AUD","JPY"];
 const SECTORS = ["Tecnología","Servicios Financieros","Salud","Consumo Cíclico","Consumo Defensivo","Energía","Materiales Básicos","Industria","Utilities","Inmobiliario","Comunicaciones"];
@@ -667,6 +678,11 @@ async function refreshDividendYields() {
   }));
   buildDivInfo();
   if (state.activeTab === 2) renderActiveTab(); // 2 = pestaña Dividendos
+}
+function chartColor(i) {
+  const raw = String((PIE_COLORS && PIE_COLORS[i % PIE_COLORS.length]) || "").trim();
+  if (!raw) return "#3b82f6";
+  return raw.startsWith("#") ? raw : `#${raw}`;
 }
 
 // ─────────────────────────────────────────────
@@ -1865,7 +1881,7 @@ function renderCharts() {
       <span style="color:#94a3b8;font-size:11px;min-width:18px">#${i + 1}</span>
       <span style="color:#1d4ed8;font-weight:700;font-size:12px;min-width:72px">${esc(p.ticker)}</span>
       <div style="flex:1;background:#e2e8f0;border-radius:999px;height:7px;overflow:hidden">
-        <div style="background:#${PIE_COLORS[i % PIE_COLORS.length]};border-radius:999px;height:7px;width:${(p.totalValue / (arr[0]?.totalValue || 1) * 100).toFixed(1)}%"></div>
+        <div style="background:${chartColor(i)};border-radius:999px;height:7px;width:${(p.totalValue / (arr[0]?.totalValue || 1) * 100).toFixed(1)}%"></div>talValue || 1) * 100).toFixed(1)}%"></div>
       </div>
       <span style="font-size:12px;font-weight:600;min-width:92px;text-align:right">${fmtEUR(p.totalValue)}</span>
     </div>
@@ -1878,7 +1894,7 @@ function renderCharts() {
         <span style="font-weight:600;color:#334155;white-space:nowrap">${(v / total * 100).toFixed(1)}% — ${fmtEUR(v)}</span>
       </div>
       <div style="background:#e2e8f0;border-radius:999px;height:8px;overflow:hidden">
-        <div style="background:${cFn ? cFn(i) : '#' + PIE_COLORS[i % PIE_COLORS.length]};border-radius:999px;height:8px;width:${Math.max(v / total * 100, 0).toFixed(1)}%"></div>
+        <div style="background:${cFn ? cFn(i) : chartColor(i)};border-radius:999px;height:8px;width:${Math.max(v / total * 100, 0).toFixed(1)}%"></div>
       </div>
     </div>
   `).join("");
@@ -1904,7 +1920,7 @@ function renderCharts() {
   let donutItems = top.slice(0, 8).map((p, i) => ({
     label: p.ticker,
     value: p.totalValue,
-    color: "#" + PIE_COLORS[i % PIE_COLORS.length]
+    color: chartColor(i)
   }));
 
   if (top.length > 8) {
@@ -1977,7 +1993,8 @@ function renderCharts() {
 
   const legend = sectors.map((s, i) => `
     <span style="font-size:11px;display:inline-flex;align-items:center;gap:4px;color:#475569">
-      <span style="width:9px;height:9px;border-radius:2px;background:#${PIE_COLORS[i % PIE_COLORS.length]};display:inline-block;flex-shrink:0"></span>${esc(s[0])}
+      <span style="width:9px;height:9px;border-radius:2px;background:${chartColor(i)};display:inline-block;flex-shrink:0"></span>
+</span>${esc(s[0])}
     </span>
   `).join("");
 
