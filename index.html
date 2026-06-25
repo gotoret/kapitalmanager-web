@@ -1836,74 +1836,166 @@ function deleteVenta(id) {
 // TAB 4 — GRÁFICOS
 // ─────────────────────────────────────────────
 function renderCharts() {
-  const sectorData={},currData={};
-  state.positions.forEach(p=>{
-    const v=toEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares,p.currency);
-    sectorData[p.sector||"Otro"]=(sectorData[p.sector||"Otro"]||0)+v;
-    currData[p.currency||"EUR"]=(currData[p.currency||"EUR"]||0)+v;
-  });
-  const total=Object.values(sectorData).reduce((a,b)=>a+b,0)||1;
-  const sectors=Object.entries(sectorData).sort((a,b)=>b[1]-a[1]);
-  const currencies=Object.entries(currData).sort((a,b)=>b[1]-a[1]);
-  const top=[...state.positions].sort((a,b)=>toEUR((state.priceCache[b.ticker]||b.avg_cost)*b.shares,b.currency)-toEUR((state.priceCache[a.ticker]||a.avg_cost)*a.shares,a.currency)).slice(0,8);
+  const sectorData = {}, currData = {};
 
-  const barChart=(data,cFn)=>data.map(([lbl,v],i)=>`
+  state.positions.forEach(p => {
+    const v = toEUR((state.priceCache[p.ticker] || p.avg_cost) * p.shares, p.currency);
+    sectorData[p.sector || "Otro"] = (sectorData[p.sector || "Otro"] || 0) + v;
+    currData[p.currency || "EUR"] = (currData[p.currency || "EUR"] || 0) + v;
+  });
+
+  const total = Object.values(sectorData).reduce((a, b) => a + b, 0) || 1;
+  const sectors = Object.entries(sectorData).sort((a, b) => b[1] - a[1]);
+  const currencies = Object.entries(currData).sort((a, b) => b[1] - a[1]);
+
+  const top = [...state.positions]
+    .map(p => ({
+      ...p,
+      totalValue: toEUR((state.priceCache[p.ticker] || p.avg_cost) * p.shares, p.currency)
+    }))
+    .sort((a, b) => b.totalValue - a.totalValue);
+
+  const top8 = top.slice(0, 8);
+  const donutData = top.slice(0, 10);
+  const donutTotal = donutData.reduce((s, p) => s + p.totalValue, 0) || 1;
+
+  const barChart = (data, cFn) => data.map(([lbl, v], i) => `
     <div style="margin-bottom:9px">
       <div style="display:flex;justify-content:space-between;margin-bottom:3px;font-size:12px">
         <span style="color:#475569">${esc(lbl)}</span>
-        <span style="font-weight:600;color:#334155">${((v/total)*100).toFixed(1)}% — ${fmtEUR(v)}</span>
+        <span style="font-weight:600;color:#334155">${(v / total * 100).toFixed(1)}% — ${fmtEUR(v)}</span>
       </div>
       <div style="background:#e2e8f0;border-radius:6px;height:8px">
-        <div style="background:${cFn?cFn(i):PIE_COLORS[i%PIE_COLORS.length]};border-radius:6px;height:8px;width:${Math.max((v/total)*100,0).toFixed(1)}%"></div>
+        <div style="background:${cFn ? cFn(i) : '#' + PIE_COLORS[i % PIE_COLORS.length]};border-radius:6px;height:8px;width:${Math.max(v / total * 100, 0).toFixed(1)}%"></div>
       </div>
-    </div>`).join("");
+    </div>
+  `).join("");
 
-  const posCards=state.positions.map(p=>{
-    const cp=state.priceCache[p.ticker],inv=toEUR(p.shares*p.avg_cost,p.currency);
-    const cur=cp?toEUR(p.shares*cp,p.currency):null;
-    const pnl=cur!==null?cur-inv:null,pct=pnl!==null&&inv?pnl/inv*100:null;
-    const c=pnl!==null?pnlColor(pnl):"#94a3b8";
-    return `<div style="background:#f8fafc;border-radius:8px;padding:10px;border:1px solid #e2e8f0;border-left:3px solid ${c}">
-      <div style="font-weight:700;font-size:12px;color:#1d4ed8">${esc(p.ticker)}</div>
-      <div style="font-size:10px;color:#64748b;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</div>
-      <div style="font-weight:600;font-size:13px">${fmtEUR(cur||inv)}</div>
-      ${pct!==null?`<div style="font-size:11px;color:${c};font-weight:600">${fmtPct(pct)}</div>`:""}
-    </div>`;
-  }).join("");
-
-  const topBars=top.map((p,i)=>{
-    const v=toEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares,p.currency);
-    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
-      <span style="color:#94a3b8;font-size:11px;min-width:18px">#${i+1}</span>
+  const topBars = top8.map((p, i) => `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+      <span style="color:#94a3b8;font-size:11px;min-width:18px">#${i + 1}</span>
       <span style="color:#1d4ed8;font-weight:700;font-size:12px;min-width:72px">${esc(p.ticker)}</span>
       <div style="flex:1;background:#e2e8f0;border-radius:4px;height:6px">
-        <div style="background:${PIE_COLORS[i%PIE_COLORS.length]};border-radius:4px;height:6px;width:${((v/total)*100).toFixed(1)}%"></div>
+        <div style="background:#${PIE_COLORS[i % PIE_COLORS.length]};border-radius:4px;height:6px;width:${(p.totalValue / (top8[0]?.totalValue || 1) * 100).toFixed(1)}%"></div>
       </div>
-      <span style="font-size:12px;font-weight:600;min-width:90px;text-align:right">${fmtEUR(v)}</span>
-    </div>`;
+      <span style="font-size:12px;font-weight:600;min-width:90px;text-align:right">${fmtEUR(p.totalValue)}</span>
+    </div>
+  `).join("");
+
+  const posCards = state.positions.map(p => {
+    const cp = state.priceCache[p.ticker];
+    const inv = toEUR(p.shares * p.avg_cost, p.currency);
+    const cur = cp ? toEUR(p.shares * cp, p.currency) : null;
+    const pnl = cur !== null ? cur - inv : null;
+    const pct = pnl !== null && inv ? (pnl / inv * 100) : null;
+    const c = pnl !== null ? pnlColor(pnl) : "94a3b8";
+
+    return `
+      <div style="background:#f8fafc;border-radius:8px;padding:10px;border:1px solid #e2e8f0;border-left:3px solid #${c}">
+        <div style="font-weight:700;font-size:12px;color:#1d4ed8">${esc(p.ticker)}</div>
+        <div style="font-size:10px;color:#64748b;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</div>
+        <div style="font-weight:600;font-size:13px">${fmtEUR(cur ?? inv)}</div>
+        ${pct !== null ? `<div style="font-size:11px;color:#${c};font-weight:600">${fmtPct(pct)}%</div>` : ""}
+      </div>
+    `;
   }).join("");
 
-  const legend=sectors.map(([s],i)=>`<span style="font-size:11px;display:inline-flex;align-items:center;gap:3px;color:#475569"><span style="width:9px;height:9px;border-radius:2px;background:${PIE_COLORS[i%PIE_COLORS.length]};display:inline-block;flex-shrink:0"></span>${esc(s)}</span>`).join(" ");
+  function makeDonutSvg(data) {
+    const cx = 90, cy = 90, r = 64;
+    const circumference = 2 * Math.PI * r;
+    let acc = 0;
 
-  return `<div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px">
-    <div class="card">
-      <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:14px">Distribución por Sector</h3>
-      ${barChart(sectors)}
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">${legend}</div>
+    const circles = data.map((p, i) => {
+      const frac = p.totalValue / donutTotal;
+      const len = circumference * frac;
+      const dash = `${len} ${circumference - len}`;
+      const offset = -circumference * acc;
+      acc += frac;
+
+      return `
+        <circle
+          cx="${cx}" cy="${cy}" r="${r}"
+          fill="none"
+          stroke="#${PIE_COLORS[i % PIE_COLORS.length]}"
+          stroke-width="24"
+          stroke-dasharray="${dash}"
+          stroke-dashoffset="${offset}"
+          transform="rotate(-90 ${cx} ${cy})"
+          stroke-linecap="butt"
+        ></circle>
+      `;
+    }).join("");
+
+    return `
+      <svg width="180" height="180" viewBox="0 0 180 180" aria-label="Distribución por posición">
+        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#e2e8f0" stroke-width="24"></circle>
+        ${circles}
+        <text x="90" y="84" text-anchor="middle" style="font-size:11px;fill:#64748b;font-weight:600">Cartera</text>
+        <text x="90" y="102" text-anchor="middle" style="font-size:14px;fill:#0f172a;font-weight:700">${data.length}</text>
+        <text x="90" y="119" text-anchor="middle" style="font-size:10px;fill:#94a3b8">posiciones</text>
+      </svg>
+    `;
+  }
+
+  const donutLegend = donutData.map((p, i) => {
+    const pct = (p.totalValue / donutTotal * 100);
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px;font-size:12px">
+        <div style="display:flex;align-items:center;gap:7px;min-width:0">
+          <span style="width:10px;height:10px;border-radius:50%;background:#${PIE_COLORS[i % PIE_COLORS.length]};display:inline-block;flex-shrink:0"></span>
+          <span style="color:#1d4ed8;font-weight:700">${esc(p.ticker)}</span>
+        </div>
+        <div style="text-align:right;white-space:nowrap">
+          <div style="font-weight:600;color:#334155">${pct.toFixed(1)}%</div>
+          <div style="font-size:11px;color:#64748b">${fmtEUR(p.totalValue)}</div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  const legend = sectors.map((s, i) => `
+    <span style="font-size:11px;display:inline-flex;align-items:center;gap:3px;color:#475569">
+      <span style="width:9px;height:9px;border-radius:2px;background:#${PIE_COLORS[i % PIE_COLORS.length]};display:inline-block;flex-shrink:0"></span>${esc(s[0])}
+    </span>
+  `).join("");
+
+  return `
+   <div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px">
+      <div class="card">
+        <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:14px">Distribución por Sector</h3>
+        ${barChart(sectors)}
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">${legend}</div>
+      </div>
+
+      <div class="card">
+        <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:14px">Distribución por Divisa</h3>
+        ${barChart(currencies, i => ["#2563eb", "#f59e0b", "#16a34a", "#dc2626"][i % 4])}
+        <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin:18px 0 12px">Top posiciones por valor</h3>
+        ${topBars}
+      </div>
+
+      <div class="card">
+        <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:14px">Peso por posición</h3>
+        <div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap">
+          <div style="flex:0 0 190px;display:flex;justify-content:center">
+            ${makeDonutSvg(donutData)}
+          </div>
+          <div style="flex:1;min-width:220px">
+            ${donutLegend}
+            ${top.length > 10 ? `<div style="font-size:11px;color:#94a3b8;margin-top:6px">Mostrando las 10 posiciones con mayor peso.</div>` : ""}
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column:1/-1">
+        <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">Resumen visual de cartera</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">
+          ${posCards}
+        </div>
+      </div>
     </div>
-    <div class="card">
-      <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:14px">Distribución por Divisa</h3>
-      ${barChart(currencies,i=>["#2563eb","#f59e0b","#16a34a","#dc2626"][i%4])}
-      <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin:18px 0 12px">Top posiciones por valor</h3>
-      ${topBars}
-    </div>
-    <div class="card" style="grid-column:1/-1">
-      <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">Resumen visual de cartera</h3>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">${posCards}</div>
-    </div>
-  </div>`;
+  `;
 }
-
 // ─────────────────────────────────────────────
 // TAB 5 — OBJETIVOS
 // ─────────────────────────────────────────────
