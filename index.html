@@ -402,6 +402,7 @@ const posToEUR = (v, pos) => {
   const val = gbpToGBP(v, pos?.ticker);
   return val * getFX(pos?.currency || "EUR");
 };
+const fmtEUR = v => "€"+((v||0).toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2}));
 const fmtPct = v => (v>=0?"+":"")+((v||0).toFixed(2))+"%";
 const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 const pnlColor = v => v>=0?"#16a34a":"#dc2626";
