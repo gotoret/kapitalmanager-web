@@ -304,7 +304,7 @@ const DEFAULT_PORTFOLIO = [
 
 const FX_FALLBACK = {USD:0.92,GBP:1.17,JPY:0.0062,CHF:1.02,CAD:0.68,AUD:0.60,EUR:1.0};
 const PIE_COLORS = ["#4ade80","#60a5fa","#f59e0b","#f87171","#a78bfa","#34d399","#fb923c","#38bdf8","#e879f9","#94a3b8","#fbbf24","#6366f1"];
-const TABS = ["📋 Cartera","🔔 Alertas","💰 Dividendos","📝 Transacciones","📊 Gráficos","🎯 Objetivos","📐 Valoración","🧾 Renta"];
+const TABS = ["📋 Cartera","🔔 Alertas","💰 Dividendos","📝 Transacciones","💸 Ventas","📊 Gráficos","🎯 Objetivos","📐 Valoración","🧾 Renta"];
 const CURRENCIES = ["EUR","USD","GBP","CHF","CAD","AUD","JPY"];
 const SECTORS = ["Tecnología","Servicios Financieros","Salud","Consumo Cíclico","Consumo Defensivo","Energía","Materiales Básicos","Industria","Utilities","Inmobiliario","Comunicaciones"];
 const API = {
@@ -378,32 +378,13 @@ const save = () => {
 // HELPERS
 // ─────────────────────────────────────────────
 const getFX = (cur) => state.fxCache[cur] || FX_FALLBACK[cur] || 1;
-
-// Los tickers .L cotizan en PENIQUES (GBp), no en libras (GBP).
-// Esta función convierte a libras si es necesario antes de cualquier cálculo.
-const isGBpTicker = (ticker) => String(ticker || "").toUpperCase().endsWith(".L");
-const gbpToGBP = (v, ticker) => isGBpTicker(ticker) ? (v || 0) / 100 : (v || 0);
-
-// toEUR ahora acepta ticker opcional para aplicar corrección de peniques
-const toEUR = (v, cur, ticker) => {
-  const val = ticker ? gbpToGBP(v, ticker) : (v || 0);
-  return val * getFX(cur);
-};
-
-// Versión histórica: usa el tipo guardado en la posición para el coste
+const toEUR = (v, cur) => (v||0) * getFX(cur);
+// Versión histórica: usa el tipo guardado en la posición para el coste, el actual para valor de mercado
 const toEURhist = (v, pos) => {
-  if (!pos || pos.currency === "EUR") return v || 0;
-  const val = gbpToGBP(v, pos.ticker);
-  if (pos.fx_rate && pos.fx_rate !== 1) return val / pos.fx_rate;
-  return val * getFX(pos.currency);
-};
-// Helper: convierte valor en divisa local de una posición a EUR, corrigiendo peniques para .L
-const posToEUR = (v, pos) => {
-  if (!v || isNaN(v)) return 0;
-  const ticker = pos?.ticker || "";
-  const currency = pos?.currency || "EUR";
-  const val = gbpToGBP(v, ticker);
-  return val * getFX(currency);
+  if (!pos || pos.currency === "EUR") return v||0;
+  // fx_rate guardado como EUR/divisa (ej: 1.08 = 1 USD = 1/1.08 EUR)
+  if (pos.fx_rate && pos.fx_rate !== 1) return (v||0) / pos.fx_rate;
+  return toEUR(v, pos.currency); // fallback al tipo actual si no hay histórico
 };
 const fmtEUR = v => "€"+((v||0).toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2}));
 const fmtPct = v => (v>=0?"+":"")+((v||0).toFixed(2))+"%";
@@ -567,16 +548,16 @@ function normalizeImportType(v) {
 function buildDivInfo() {
   state.divInfo = state.positions.map(p => {
     const cached = state.yieldCache[p.ticker];
-    const hasCache = cached != null;
-    const yld = hasCache ? (cached.yield ?? 0) : 0.045;
-    const rate = hasCache ? (cached.rate ?? 0) : +(p.avg_cost * 0.045).toFixed(4);
-    const annual_income = +(rate * p.shares).toFixed(2);
-    const freq = cached?.freq || (hasCache ? "Anual" : "—");
+    const yld = cached?.yield ?? 0.045;
+    const rate = cached?.rate ?? +(p.avg_cost*yld).toFixed(4);
     return {
-      ticker: p.ticker, name: p.name, shares: p.shares, currency: p.currency,
-      div_rate: rate, div_yield: yld, annual_income,
+      ticker:p.ticker, name:p.name, shares:p.shares, currency:p.currency,
+      div_rate: rate,
+      div_yield: yld,
+      annual_income: +(rate*p.shares).toFixed(2),
       ex_date: cached?.exDate || new Date(Date.now()+30*864e5).toISOString().slice(0,10),
-      freq, _estimated: !hasCache
+      freq: "Trimestral",
+      _estimated: !cached
     };
   });
   updateDivTicker();
@@ -645,34 +626,28 @@ async function fetchDividendData(ticker) {
       const result = data?.chart?.result?.[0];
       if (!result) continue;
 
-      const isGBp = String(ticker).toUpperCase().endsWith(".L");
-      let price = result.meta?.regularMarketPrice;
-      if (isGBp && price) price = price / 100;
-
+      const price = result.meta?.regularMarketPrice;
       const divEvents = result.events?.dividends;
+
       if (!divEvents || !Object.keys(divEvents).length) {
-        return { yield: 0, rate: 0, exDate: null, freq: "—" };
+        // Sin pagos en los últimos 2 años -> asumimos que no reparte dividendo
+        return { yield: 0, rate: 0, exDate: null };
       }
 
-      const list = Object.values(divEvents).sort((a,b) => a.date - b.date);
+      const list = Object.values(divEvents); // [{amount, date(unix seg)}, ...]
       const oneYearAgo = Date.now()/1000 - 365*86400;
       const lastYear = list.filter(d => d.date >= oneYearAgo);
+      // Si en el último año no hubo pagos (p.ej. frecuencia anual/irregular), usamos los 4 últimos pagos conocidos
       const sample = lastYear.length ? lastYear : list.slice(-4);
+      const annualDividend = sample.reduce((s,d)=>s+(d.amount||0),0) * (lastYear.length ? 1 : 4/sample.length);
+      const lastExTs = Math.max(...list.map(d=>d.date));
 
-      let annualDividend = sample.reduce((s,d) => s+(d.amount||0), 0) * (lastYear.length ? 1 : 4/sample.length);
-      if (isGBp) annualDividend = annualDividend / 100;
-
-      const nPagos = lastYear.length || sample.length;
-      const freq = nPagos >= 10 ? "Mensual" : nPagos >= 3 ? "Trimestral" : nPagos >= 2 ? "Semestral" : "Anual";
-
-      const lastExTs = Math.max(...list.map(d => d.date));
       return {
         yield: price ? +(annualDividend/price).toFixed(4) : null,
         rate: +annualDividend.toFixed(4),
-        exDate: lastExTs ? new Date(lastExTs*1000).toISOString().slice(0,10) : null,
-        freq
+        exDate: lastExTs ? new Date(lastExTs*1000).toISOString().slice(0,10) : null
       };
-    } catch(e) { /* probar siguiente proxy */ }
+    } catch(e) { /* probar el siguiente proxy */ }
   }
   return null;
 }
@@ -699,13 +674,8 @@ async function fetchWithProxy(proxies, ticker) {
       const res = await fetch(url, {signal: AbortSignal.timeout(6000)});
       if (!res.ok) continue;
       const data = await res.json();
-      let price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-      if (price) {
-        // Yahoo Finance devuelve precios del LSE en peniques (GBX), no en libras (GBP)
-        // Tickers .L → dividir entre 100
-        if (String(ticker).toUpperCase().endsWith(".L")) price = +(price / 100).toFixed(4);
-        return price;
-      }
+      const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      if (price) return price;
     } catch(e) { /* try next */ }
   }
   return null;
@@ -806,7 +776,7 @@ function checkAlerts() {
     if (!a.active || a.triggered) return;
     const pos = state.positions.find(p=>p.ticker===a.ticker);
     const cp = state.priceCache[a.ticker]; if (!cp) return;
-    const cpE = pos ? posToEUR(cp, pos) : toEUR(cp, pos?.currency||"EUR");
+    const cpE = toEUR(cp, pos?.currency||"EUR");
     if ((a.direction==="ABOVE"&&cpE>=a.price)||(a.direction==="BELOW"&&cpE<=a.price)) {
       a.triggered=true; a.active=false;
     }
@@ -1273,14 +1243,12 @@ function confirmImportBroker() {
       applyImportedTransactionsToPortfolio(txs, false);
     }
 
-    buildDivInfo();
     save();
     renderHeader();
     renderActiveTab();
     closeModal();
-    refreshDividendYields();
 
-    alert(`✅ Importación completada: ${txs.length} transacciones y cartera actualizada`);
+    alert(`Importación completada: ${txs.length} transacciones`);
   } catch (e) {
     console.error("Error confirmando importación:", e);
     alert("No se pudo completar la importación");
@@ -1291,10 +1259,9 @@ function confirmImportBroker() {
 // RENDER HEADER
 // ─────────────────────────────────────────────
 function renderHeader() {
-  try {
   const totals = state.positions.reduce((acc,p)=>{
-    const inv = posToEUR(p.shares*p.avg_cost, p);
-    const cur = state.priceCache[p.ticker] ? posToEUR(p.shares*state.priceCache[p.ticker], p) : inv;
+    const inv = toEUR(p.shares*p.avg_cost, p.currency);
+    const cur = state.priceCache[p.ticker] ? toEUR(p.shares*state.priceCache[p.ticker], p.currency) : inv;
     acc.inv+=inv; acc.cur+=cur; return acc;
   },{inv:0,cur:0});
   const pnl = totals.cur - totals.inv;
@@ -1320,7 +1287,6 @@ function renderHeader() {
 
   const lbl = document.getElementById("last-update-label");
   if (lbl) lbl.textContent = state.lastUpdate ? `Actualizado: ${state.lastUpdate.toLocaleTimeString("es-ES")} | Próx: ${state.countdown}s` : `Sin actualizar | Próx: ${state.countdown}s`;
-  } catch(e) { console.error("renderHeader error:", e); }
 }
 
 // ─────────────────────────────────────────────
@@ -1336,24 +1302,16 @@ function switchTab(i) { state.activeTab=i; state.selectedTicker=null; renderTabs
 
 function renderActiveTab() {
   const el = document.getElementById("content");
-  try {
-    switch(state.activeTab) {
-      case 0: el.innerHTML = renderPortfolio(); break;
-      case 1: el.innerHTML = renderAlerts(); break;
-      case 2: el.innerHTML = renderDividends(); break;
-      case 3: el.innerHTML = renderTransactions(); break;
-      case 4: el.innerHTML = renderCharts(); break;
-      case 5: el.innerHTML = renderGoals(); break;
-      case 6: el.innerHTML = renderValuation(); break;
-      case 7: el.innerHTML = renderRenta(); break;
-    }
-  } catch(e) {
-    console.error("Error en renderActiveTab (tab "+state.activeTab+"):", e);
-    el.innerHTML = `<div style="padding:20px;color:#dc2626;font-size:13px">
-      <b>⚠️ Error al cargar la vista</b><br><br>
-      <code style="font-size:11px;background:#fee2e2;padding:8px;border-radius:6px;display:block;white-space:pre-wrap">${e?.message || e}</code>
-      <br><button class="btn" onclick="location.reload()">🔄 Recargar app</button>
-    </div>`;
+  switch(state.activeTab) {
+    case 0: el.innerHTML = renderPortfolio(); break;
+    case 1: el.innerHTML = renderAlerts(); break;
+    case 2: el.innerHTML = renderDividends(); break;
+    case 3: el.innerHTML = renderTransactions(); break;
+    case 4: el.innerHTML = renderVentas(); break;
+    case 5: el.innerHTML = renderCharts(); break;
+    case 6: el.innerHTML = renderGoals(); break;
+    case 7: el.innerHTML = renderValuation(); break;
+    case 8: el.innerHTML = renderRenta(); break;
   }
 }
 
@@ -1369,13 +1327,12 @@ function renderPortfolio() {
   );
 
   const getV = (p,col) => {
-    const cp=state.priceCache[p.ticker];
-    const inv=posToEUR(p.shares*p.avg_cost, p);
-    const cpEUR=cp?posToEUR(cp, p):null;
-    const curV=cpEUR!==null?p.shares*cpEUR:null;
+    const cp=state.priceCache[p.ticker],cur=p.currency;
+    const inv=toEUR(p.shares*p.avg_cost,cur);
+    const curV=cp?toEUR(p.shares*cp,cur):null;
     const pnl=curV!==null?curV-inv:null;
     const di=state.divInfo.find(d=>d.ticker===p.ticker);
-    return {ticker:p.ticker,empresa:p.name||"",acciones:p.shares,coste:posToEUR(p.avg_cost,p),precio:cpEUR||0,valor:curV||inv,pnl:pnl||0,pct:pnl&&inv?pnl/inv*100:0,yield:(di?.div_yield||0)*100,sector:p.sector||""}[col]||0;
+    return {ticker:p.ticker,empresa:p.name||"",acciones:p.shares,coste:toEUR(p.avg_cost,cur),precio:cp?toEUR(cp,cur):0,valor:curV||inv,pnl:pnl||0,pct:pnl&&inv?pnl/inv*100:0,yield:(di?.div_yield||0)*100,sector:p.sector||""}[col]||0;
   };
 
   if (state.sortCol) rows = [...rows].sort((a,b)=>state.sortDir*(getV(a,state.sortCol)<getV(b,state.sortCol)?-1:1));
@@ -1393,10 +1350,10 @@ function renderPortfolio() {
   }).join("");
 
   const tbody = rows.map(pos => {
-    const cp=state.priceCache[pos.ticker];
-    const inv=posToEUR(pos.shares*pos.avg_cost, pos);
-    const cpE=cp?posToEUR(cp, pos):null;           // precio/acción en EUR (ya corregido de peniques)
-    const curE=cpE!==null?pos.shares*cpE:null;     // valor total en EUR
+    const cp=state.priceCache[pos.ticker],cur=pos.currency;
+    const inv=toEUR(pos.shares*pos.avg_cost,cur);
+    const cpE=cp?toEUR(cp,cur):null;
+    const curE=cpE?pos.shares*cpE:null;
     const pnl=curE!==null?curE-inv:null;
     const pct=pnl!==null&&inv?pnl/inv*100:null;
     const pc=pnl!==null?pnlColor(pnl):"#94a3b8";
@@ -1408,7 +1365,7 @@ function renderPortfolio() {
       <td style="color:#1d4ed8;font-weight:700">${esc(pos.ticker)}</td>
       <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pos.name)}</td>
       <td style="text-align:center">${Math.round(pos.shares)}</td>
-      <td style="text-align:right">${fmtEUR(posToEUR(pos.avg_cost, pos))}</td>
+      <td style="text-align:right">${fmtEUR(toEUR(pos.avg_cost,cur))}</td>
       <td style="text-align:right">${cpE?fmtEUR(cpE):'<span style="color:#94a3b8">…</span>'}</td>
       <td style="text-align:right;font-weight:600">${fmtEUR(curE||inv)}</td>
       <td style="text-align:right;color:${pc};font-weight:600">${pnl!==null?(pnl>=0?"+":"")+fmtEUR(Math.abs(pnl)):"…"}</td>
@@ -1428,8 +1385,8 @@ function renderPortfolio() {
         ["Coste medio (local)",`${selPos.avg_cost?.toFixed(4)} ${selPos.currency}`],
         ["Coste medio (EUR)",fmtEUR(toEURhist(selPos.avg_cost, selPos))],
         ...(selPos.currency!=="EUR"&&selPos.fx_rate&&selPos.fx_rate!==1?[["TC compra (EUR/"+selPos.currency+")",selPos.fx_rate?.toFixed(4)],["TC actual (EUR/"+selPos.currency+")",+(1/getFX(selPos.currency)).toFixed(4)],["Impacto divisa",`${(((1/getFX(selPos.currency))/selPos.fx_rate-1)*100).toFixed(2)}%`]]:[]),
-        ["Precio actual",state.priceCache[selPos.ticker]?fmtEUR(posToEUR(state.priceCache[selPos.ticker],selPos)):"Sin datos"],
-        ["Valor total",fmtEUR(posToEUR((state.priceCache[selPos.ticker]||selPos.avg_cost)*selPos.shares, selPos))],
+        ["Precio actual",state.priceCache[selPos.ticker]?fmtEUR(toEUR(state.priceCache[selPos.ticker],selPos.currency)):"Sin datos"],
+        ["Valor total",fmtEUR(toEUR((state.priceCache[selPos.ticker]||selPos.avg_cost)*selPos.shares,selPos.currency))],
         ["Coste total (EUR)",fmtEUR(toEURhist(selPos.avg_cost*selPos.shares,selPos))],
         ["Sector",selPos.sector||"—"],["Divisa",selPos.currency],["Fecha",selPos.date||"—"]
       ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #e2e8f0;font-size:12px"><span style="color:#64748b">${k}</span><span style="font-weight:600">${v}</span></div>`).join("")}
@@ -1443,15 +1400,16 @@ function renderPortfolio() {
   return `
     <div style="display:flex;height:100%;overflow:hidden">
       <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
-<div class="toolbar" style="gap:6px;padding:8px 10px;flex-wrap:wrap">
+<div class="toolbar" style="gap:5px;flex-wrap:wrap;padding:8px 10px">
   <button class="btn" style="font-size:11px;padding:5px 10px" onclick="openAddPos()">➕ Añadir</button>
   <button class="btn" style="background:#475569;font-size:11px;padding:5px 10px" onclick="openEditPos()">✏️ Editar</button>
   <button class="btn-danger" style="font-size:11px;padding:5px 10px" onclick="deletePosition()">🗑 Eliminar</button>
   <button class="btn-green" style="font-size:11px;padding:5px 10px" onclick="openAddAlert()">🔔 Alerta</button>
-  <button class="btn" style="background:#0f766e;font-size:11px;padding:5px 10px" onclick="openImportBroker()">📥 Importar</button>
+  <button class="btn" title="Importar extracto" style="background:#0f766e;font-size:15px;padding:5px 10px;line-height:1" onclick="openImportBroker()">📥</button>
+  <button class="btn" title="Exportar a Excel" style="background:#166534;font-size:15px;padding:5px 10px;line-height:1" onclick="exportCarteraExcel()">📊</button>
           <div style="flex:1"></div>
-          <input id="port-filter" class="inp-sm" placeholder="🔍 Filtrar..." style="width:150px;font-size:11px" value="${esc(filter)}" oninput="renderActiveTab()">
-          <button class="btn-danger" style="margin-left:6px;font-size:11px;padding:5px 10px" onclick="deleteCartera()" title="Elimina todas las posiciones">🗑️ Vaciar</button>
+          <input id="port-filter" class="inp-sm" placeholder="🔍 Filtrar..." style="width:140px;font-size:11px" value="${esc(filter)}" oninput="renderActiveTab()">
+          <button class="btn-danger" style="margin-left:6px;font-size:11px;padding:5px 10px" onclick="deleteCartera()" title="Vaciar cartera">🗑️</button>
         </div>
         <div style="flex:1;overflow:auto">
           <table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>
@@ -1498,79 +1456,22 @@ function deleteAlert(id){ state.alerts=state.alerts.filter(a=>a.id!==id); save()
 // ─────────────────────────────────────────────
 // TAB 2 — DIVIDENDOS
 // ─────────────────────────────────────────────
-function retencionOrigenPct(ticker, currency) {
-  const t = String(ticker || "").toUpperCase();
-  if (t.endsWith(".MC") || t.endsWith(".MAD")) return 0.19;
-  if (t.endsWith(".L"))   return 0.00;
-  if (t.endsWith(".SW") || t.endsWith(".VX")) return 0.35;
-  if (t.endsWith(".PA") || t.endsWith(".NX")) return 0.128;
-  if (t.endsWith(".DE") || t.endsWith(".F") || t.endsWith(".BE") || t.endsWith(".MU") || t.endsWith(".DU")) return 0.25;
-  if (t.endsWith(".AS"))  return 0.15;
-  if (t.endsWith(".MI"))  return 0.26;
-  if (t.endsWith(".LS"))  return 0.28;
-  if (t.endsWith(".BR"))  return 0.30;
-  if (t.endsWith(".ST"))  return 0.30;
-  if (t.endsWith(".HE"))  return 0.30;
-  if (t.endsWith(".OL"))  return 0.25;
-  if (t.endsWith(".CO"))  return 0.27;
-  if (currency === "USD") return 0.15;
-  if (currency === "CAD") return 0.15;
-  if (currency === "AUD") return 0.15;
-  if (currency === "JPY") return 0.15;
-  return 0.15;
-}
-
-function paisLabel(ticker, currency) {
-  const t = String(ticker || "").toUpperCase();
-  if (t.endsWith(".MC"))  return "🇪🇸 España";
-  if (t.endsWith(".L"))   return "🇬🇧 Reino Unido";
-  if (t.endsWith(".SW") || t.endsWith(".VX")) return "🇨🇭 Suiza";
-  if (t.endsWith(".PA") || t.endsWith(".NX")) return "🇫🇷 Francia";
-  if (t.endsWith(".DE") || t.endsWith(".F") || t.endsWith(".BE") || t.endsWith(".MU") || t.endsWith(".DU")) return "🇩🇪 Alemania";
-  if (t.endsWith(".AS"))  return "🇳🇱 P. Bajos";
-  if (t.endsWith(".MI"))  return "🇮🇹 Italia";
-  if (t.endsWith(".LS"))  return "🇵🇹 Portugal";
-  if (t.endsWith(".BR"))  return "🇧🇪 Bélgica";
-  if (t.endsWith(".ST"))  return "🇸🇪 Suecia";
-  if (t.endsWith(".HE"))  return "🇫🇮 Finlandia";
-  if (t.endsWith(".OL"))  return "🇳🇴 Noruega";
-  if (t.endsWith(".CO"))  return "🇩🇰 Dinamarca";
-  if (currency === "USD") return "🇺🇸 EE.UU.";
-  if (currency === "CAD") return "🇨🇦 Canadá";
-  if (currency === "AUD") return "🇦🇺 Australia";
-  if (currency === "JPY") return "🇯🇵 Japón";
-  return "🌍 Internacional";
-}
-
 function renderDividends() {
   const totalAnn = state.divInfo.reduce((s,d)=>s+toEUR(d.annual_income||0,d.currency||"EUR"),0);
-  const totalNeto = state.divInfo.reduce((s,d)=>{
-    const ret = retencionOrigenPct(d.ticker, d.currency);
-    return s + toEUR((d.annual_income||0)*(1-ret), d.currency||"EUR");
-  },0);
-
   const divRows = state.divInfo.map((d)=>{
     const yp=(d.div_yield||0)*100;
     const yc=yp>=4?"#16a34a":yp>=2?"#b45309":"#dc2626";
-    const ret = retencionOrigenPct(d.ticker, d.currency);
-    const incBrutoEUR = toEUR(d.annual_income||0, d.currency||"EUR");
-    const incNetoEUR  = incBrutoEUR*(1-ret);
-    const retColor = ret===0?"#16a34a":ret<=0.15?"#b45309":ret<=0.25?"#ea580c":"#dc2626";
     return `<tr>
       <td style="color:#1d4ed8;font-weight:700">${esc(d.ticker)}</td>
-      <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.name)}</td>
+      <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.name)}</td>
       <td>${Math.round(d.shares||0)}</td>
       <td style="font-weight:600">${d.div_rate?d.div_rate.toFixed(4)+" "+d.currency:"—"}</td>
       <td style="color:${yc};font-weight:600">${yp?(d._estimated?"≈"+yp.toFixed(2)+"%":yp.toFixed(2)+"%"):"—"}</td>
       <td style="color:#64748b">${d.ex_date||"—"}</td>
       <td><span class="badge" style="background:#b4530922;color:#b45309">${d.freq||"—"}</span></td>
-      <td style="font-size:11px;color:#475569">${paisLabel(d.ticker,d.currency)}</td>
-      <td style="font-weight:600;color:${retColor}">${ret>0?(ret*100).toFixed(1)+"%":"Sin ret."}</td>
-      <td style="font-weight:600;color:#b45309">${fmtEUR(incBrutoEUR)}</td>
-      <td style="font-weight:700;color:#16a34a">${fmtEUR(incNetoEUR)}</td>
+      <td style="font-weight:600;color:#b45309">${fmtEUR(toEUR(d.annual_income||0,d.currency||"EUR"))}</td>
     </tr>`;
   }).join("");
-
   const histRows = state.dividends.map(d=>`<tr>
     <td style="color:#64748b">${(d.date||"").slice(0,10)}</td>
     <td style="color:#1d4ed8;font-weight:700">${esc(d.ticker)}</td>
@@ -1579,20 +1480,18 @@ function renderDividends() {
     <td style="color:#64748b">${esc(d.notes||"—")}</td>
     <td><button class="btn-danger-sm" onclick="deleteDividend(${d.id})">✕</button></td>
   </tr>`).join("");
-
   return `<div style="padding:14px">
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px">
-      ${["BRUTO ANUAL","NETO ANUAL","MENSUAL NETO","DIARIO NETO"].map((l,i)=>{
-        const v=[totalAnn,totalNeto,totalNeto/12,totalNeto/365][i];
-        const color=i===0?"#b45309":"#16a34a";
-        return `<div class="metric-card" style="border-left:3px solid ${color}"><div class="metric-label">${l}</div><div class="metric-value" style="color:${color}">${fmtEUR(v)}</div></div>`;
+      ${["ANUAL","MENSUAL","DIARIO","POR HORA"].map((l,i)=>{
+        const v=[totalAnn,totalAnn/12,totalAnn/365,totalAnn/8760][i];
+        return `<div class="metric-card" style="border-left:3px solid #b45309"><div class="metric-label">${l}</div><div class="metric-value" style="color:#b45309">${fmtEUR(v)}</div></div>`;
       }).join("")}
     </div>
     <div style="margin-bottom:12px"><button class="btn" onclick="openAddDividend()">💰 Registrar dividendo</button></div>
     <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">Dividendos esperados por posición</h4>
     <div style="overflow-x:auto;margin-bottom:20px">
-      <table style="min-width:900px"><thead><tr>${["Ticker","Empresa","Acciones","Div./acc","Yield %","Ex-date","Frecuencia","País","Retención","Bruto anual","Neto anual"].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
-      <tbody>${divRows||`<tr><td colspan="11" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>`}</tbody></table>
+      <table style="min-width:700px"><thead><tr>${["Ticker","Empresa","Acciones","Div./acc","Yield %","Ex-date","Frecuencia","Ingreso anual"].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+      <tbody>${divRows||`<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>`}</tbody></table>
     </div>
     <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">Historial de cobros registrados</h4>
     <table><thead><tr>${["Fecha","Ticker","Acc.","Importe/acc","Total","Notas",""].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
@@ -1642,19 +1541,205 @@ function renderTransactions() {
 function deleteTransaction(id){ if(!confirm("¿Eliminar esta transacción?")) return; state.transactions=state.transactions.filter(t=>t.id!==id); save(); renderActiveTab(); }
 
 // ─────────────────────────────────────────────
+// EXPORTAR CARTERA A EXCEL
+// ─────────────────────────────────────────────
+function exportCarteraExcel() {
+  try {
+    const wb = XLSX.utils.book_new();
+
+    // Hoja 1: Cartera
+    const cartData = [
+      ["Ticker","Empresa","Acciones","Coste medio (local)","Divisa","TC compra","Coste EUR","Precio actual","Valor EUR","G/P EUR","G/P %","Sector","Fecha compra"],
+      ...state.positions.map(p => {
+        const cur = p.currency||"EUR";
+        const costeEUR = toEURhist(p.avg_cost, p);
+        const precioAct = state.priceCache[p.ticker] || p.avg_cost;
+        const valorEUR = toEUR(precioAct * p.shares, cur);
+        const gpEUR = valorEUR - toEURhist(p.avg_cost * p.shares, p);
+        const gpPct = toEURhist(p.avg_cost * p.shares, p) > 0 ? gpEUR / toEURhist(p.avg_cost * p.shares, p) * 100 : 0;
+        return [p.ticker, p.name, p.shares, p.avg_cost, cur, p.fx_rate||1, +costeEUR.toFixed(4), precioAct, +valorEUR.toFixed(2), +gpEUR.toFixed(2), +gpPct.toFixed(2), p.sector||"", p.date||""];
+      })
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(cartData), "Cartera");
+
+    // Hoja 2: Ventas
+    const ventas = state.transactions.filter(t=>t.type==="SELL");
+    const ventData = [
+      ["Ticker","Empresa","Acciones","Precio venta","Coste medio compra","Comisión","Broker","Fecha","G/P EUR","G/P %"],
+      ...ventas.map(t => {
+        const pos = state.positions.find(p=>p.ticker===t.ticker);
+        const coste = pos?.avg_cost || 0;
+        const gp = ((t.price||0) - coste) * (t.shares||0) - (t.commission||0);
+        const gpPct = coste > 0 ? ((t.price||0)/coste - 1)*100 : 0;
+        return [t.ticker, pos?.name||t.ticker, t.shares, t.price||0, coste, t.commission||0, t.broker||"", (t.date||"").slice(0,10), +gp.toFixed(2), +gpPct.toFixed(2)];
+      })
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ventData), "Ventas");
+
+    // Hoja 3: Dividendos
+    if (state.dividends?.length) {
+      const divData = [
+        ["Ticker","Importe/acc","Acciones","Total","Fecha"],
+        ...state.dividends.map(d => [d.ticker, d.amount||0, d.shares||0, +((d.amount||0)*(d.shares||0)).toFixed(2), (d.date||"").slice(0,10)])
+      ];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(divData), "Dividendos");
+    }
+
+    XLSX.writeFile(wb, `KapitalManager_${new Date().toISOString().slice(0,10)}.xlsx`);
+  } catch(e) {
+    alert("Error al exportar: " + e.message);
+  }
+}
+
+// ─────────────────────────────────────────────
+// TAB 4 — VENTAS
+// ─────────────────────────────────────────────
+function renderVentas() {
+  const ventas = state.transactions.filter(t => t.type === "SELL")
+    .sort((a,b) => (b.date||"").localeCompare(a.date||""));
+
+  const totGP = ventas.reduce((s,t) => {
+    const pos = state.positions.find(p=>p.ticker===t.ticker);
+    const coste = pos?.avg_cost||0;
+    return s + ((t.price||0)-coste)*(t.shares||0) - (t.commission||0);
+  }, 0);
+
+  const rows = ventas.map(t => {
+    const pos = state.positions.find(p=>p.ticker===t.ticker);
+    const coste = pos?.avg_cost || 0;
+    const ingrBruto = (t.price||0) * (t.shares||0);
+    const comision = t.commission||0;
+    const costeTot = coste * (t.shares||0);
+    const gp = ingrBruto - costeTot - comision;
+    const gpPct = costeTot > 0 ? (gp/costeTot)*100 : 0;
+    const col = gp >= 0 ? "#059669" : "#dc2626";
+    return `<tr>
+      <td style="font-weight:700;color:#1d4ed8">${esc(t.ticker)}</td>
+      <td>${esc(pos?.name||t.ticker)}</td>
+      <td style="text-align:right">${t.shares}</td>
+      <td style="text-align:right">${fmtEUR(coste)}</td>
+      <td style="text-align:right">${fmtEUR(t.price||0)}</td>
+      <td style="text-align:right;color:#dc2626">${fmtEUR(comision)}</td>
+      <td style="text-align:center;color:#64748b;font-size:11px">${esc(t.broker||"—")}</td>
+      <td style="text-align:center;color:#64748b;font-size:11px">${(t.date||"").slice(0,10)}</td>
+      <td style="text-align:right;font-weight:700;color:${col}">${gp>=0?"+":""}${fmtEUR(gp)}</td>
+      <td style="text-align:right;font-weight:700;color:${col}">${gp>=0?"+":""}${gpPct.toFixed(2)}%</td>
+      <td><button class="btn-danger-sm" onclick="deleteVenta('${esc(t.id)}')">✕</button></td>
+    </tr>`;
+  }).join("");
+
+  return `<div style="padding:14px;max-width:1100px;margin:0 auto">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <h3 style="font-size:14px;font-weight:700;color:#1e293b;flex:1">💸 Ventas realizadas</h3>
+      <div style="background:${totGP>=0?"#f0fdf4":"#fef2f2"};border:1px solid ${totGP>=0?"#bbf7d0":"#fecaca"};border-radius:8px;padding:6px 14px;font-size:13px;font-weight:700;color:${totGP>=0?"#059669":"#dc2626"}">
+        G/P total: ${totGP>=0?"+":""}${fmtEUR(totGP)}
+      </div>
+      <button class="btn" style="background:#059669" onclick="openAddVenta()">➕ Registrar venta</button>
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;min-width:780px;font-size:12px">
+        <thead><tr style="background:#f8fafc">
+          ${["Ticker","Empresa","Acc.","Coste/acc","Precio venta","Comisión","Broker","Fecha venta","G/P €","G/P %",""].map(h=>`<th style="padding:7px 8px;text-align:${["Acc.","Coste/acc","Precio venta","Comisión","G/P €","G/P %"].includes(h)?"right":"left"};color:#475569;font-weight:700;border-bottom:2px solid #e2e8f0">${h}</th>`).join("")}
+        </tr></thead>
+        <tbody>${rows||`<tr><td colspan="11" style="text-align:center;color:#94a3b8;padding:32px">Sin ventas registradas. Pulsa "Registrar venta" para añadir.</td></tr>`}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function openAddVenta() {
+  const tickers = state.positions.map(p=>`<option value="${esc(p.ticker)}">${esc(p.ticker)} — ${esc(p.name)} (${p.shares} acc @ ${p.avg_cost?.toFixed(2)} ${p.currency})</option>`).join("");
+  if (!tickers) { alert("No tienes posiciones abiertas para vender."); return; }
+  openModal(`
+    <h3>💸 Registrar venta</h3>
+    <div class="field"><label>Empresa / Ticker</label>
+      <select id="v-ticker" class="inp" onchange="updateVentaPreview()">${tickers}</select>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Nº acciones a vender</label><input id="v-shares" type="number" class="inp" min="1" step="1" value="1" oninput="updateVentaPreview()"></div>
+      <div class="field"><label>Precio de venta (divisa local)</label><input id="v-price" type="text" inputmode="decimal" class="inp" placeholder="Ej: 52.30" oninput="updateVentaPreview()"></div>
+      <div class="field"><label>Comisión (€)</label><input id="v-commission" type="text" inputmode="decimal" class="inp" value="0" placeholder="Ej: 3.95" oninput="updateVentaPreview()"></div>
+      <div class="field"><label>Broker</label><input id="v-broker" class="inp" placeholder="Ej: DEGIRO, MyInvestor..."></div>
+    </div>
+    <div class="field"><label>Fecha de venta</label><input id="v-date" type="date" class="inp" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div id="v-preview" style="background:#f8fafc;border-radius:8px;padding:10px 14px;font-size:12px;color:#475569;margin:10px 0;display:none"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
+      <button class="btn" style="background:#059669" onclick="saveVenta()">💾 Guardar venta</button>
+    </div>`);
+  setTimeout(updateVentaPreview, 50);
+}
+
+function updateVentaPreview() {
+  const ticker = document.getElementById("v-ticker")?.value;
+  const shares = parseNum(document.getElementById("v-shares")?.value);
+  const price  = parseNum(document.getElementById("v-price")?.value);
+  const comm   = parseNum(document.getElementById("v-commission")?.value);
+  const prev   = document.getElementById("v-preview");
+  if (!prev || !ticker || !shares || !price) { if(prev) prev.style.display="none"; return; }
+  const pos = state.positions.find(p=>p.ticker===ticker);
+  if (!pos) return;
+  const coste = pos.avg_cost * shares;
+  const ingreso = price * shares;
+  const gp = ingreso - coste - comm;
+  const gpPct = coste > 0 ? (gp/coste)*100 : 0;
+  const col = gp>=0?"#059669":"#dc2626";
+  const maxSh = pos.shares;
+  prev.style.display = "block";
+  prev.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:6px">
+      <div><div style="font-size:10px;color:#94a3b8;text-transform:uppercase">Ingreso bruto</div><div style="font-weight:700">${fmtEUR(ingreso)}</div></div>
+      <div><div style="font-size:10px;color:#94a3b8;text-transform:uppercase">Coste base</div><div style="font-weight:700">${fmtEUR(coste)}</div></div>
+      <div><div style="font-size:10px;color:#94a3b8;text-transform:uppercase">G/P neta</div><div style="font-weight:700;color:${col}">${gp>=0?"+":""}${fmtEUR(gp)} (${gpPct.toFixed(2)}%)</div></div>
+    </div>
+    ${shares > maxSh ? `<div style="color:#dc2626;font-weight:600;font-size:11px">⚠️ Solo tienes ${maxSh} acciones disponibles</div>` : `<div style="color:#64748b;font-size:11px">Quedarán ${maxSh-shares} acciones de ${ticker} tras la venta</div>`}`;
+}
+
+function saveVenta() {
+  const ticker  = document.getElementById("v-ticker")?.value;
+  const shares  = parseNum(document.getElementById("v-shares")?.value);
+  const price   = parseNum(document.getElementById("v-price")?.value);
+  const comm    = parseNum(document.getElementById("v-commission")?.value);
+  const broker  = (document.getElementById("v-broker")?.value||"").trim();
+  const date    = document.getElementById("v-date")?.value;
+  if (!ticker || shares<=0 || price<=0) { alert("Completa ticker, acciones y precio."); return; }
+  const pos = state.positions.find(p=>p.ticker===ticker);
+  if (!pos) { alert("Posición no encontrada."); return; }
+  if (shares > pos.shares) { alert(`Solo tienes ${pos.shares} acciones de ${ticker}.`); return; }
+
+  // Registrar la transacción de venta
+  state.transactions.unshift({id:uid(), ticker, type:"SELL", shares, price, commission:comm, broker, date, currency:pos.currency, notes:`Venta — ${broker||"sin broker"}`});
+
+  // Descontar acciones de la cartera
+  pos.shares = +(pos.shares - shares).toFixed(6);
+  if (pos.shares <= 0.0001) {
+    state.positions = state.positions.filter(p=>p.ticker!==ticker);
+    state.selectedTicker = null;
+  }
+
+  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
+}
+
+function deleteVenta(id) {
+  if (!confirm("¿Eliminar esta venta? Las acciones NO se repondrán en cartera automáticamente.")) return;
+  state.transactions = state.transactions.filter(t=>t.id!==id);
+  save(); renderActiveTab();
+}
+
+// ─────────────────────────────────────────────
 // TAB 4 — GRÁFICOS
 // ─────────────────────────────────────────────
 function renderCharts() {
   const sectorData={},currData={};
   state.positions.forEach(p=>{
-    const v=posToEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares, p);
+    const v=toEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares,p.currency);
     sectorData[p.sector||"Otro"]=(sectorData[p.sector||"Otro"]||0)+v;
     currData[p.currency||"EUR"]=(currData[p.currency||"EUR"]||0)+v;
   });
   const total=Object.values(sectorData).reduce((a,b)=>a+b,0)||1;
   const sectors=Object.entries(sectorData).sort((a,b)=>b[1]-a[1]);
   const currencies=Object.entries(currData).sort((a,b)=>b[1]-a[1]);
-  const top=[...state.positions].sort((a,b)=>posToEUR((state.priceCache[b.ticker]||b.avg_cost)*b.shares,b)-posToEUR((state.priceCache[a.ticker]||a.avg_cost)*a.shares,a)).slice(0,8);
+  const top=[...state.positions].sort((a,b)=>toEUR((state.priceCache[b.ticker]||b.avg_cost)*b.shares,b.currency)-toEUR((state.priceCache[a.ticker]||a.avg_cost)*a.shares,a.currency)).slice(0,8);
 
   const barChart=(data,cFn)=>data.map(([lbl,v],i)=>`
     <div style="margin-bottom:9px">
@@ -1668,10 +1753,8 @@ function renderCharts() {
     </div>`).join("");
 
   const posCards=state.positions.map(p=>{
-    const cp=state.priceCache[p.ticker];
-    const inv=posToEUR(p.shares*p.avg_cost, p);
-    const cpEUR=cp?posToEUR(cp, p):null;
-    const cur=cpEUR!==null?p.shares*cpEUR:null;
+    const cp=state.priceCache[p.ticker],inv=toEUR(p.shares*p.avg_cost,p.currency);
+    const cur=cp?toEUR(p.shares*cp,p.currency):null;
     const pnl=cur!==null?cur-inv:null,pct=pnl!==null&&inv?pnl/inv*100:null;
     const c=pnl!==null?pnlColor(pnl):"#94a3b8";
     return `<div style="background:#f8fafc;border-radius:8px;padding:10px;border:1px solid #e2e8f0;border-left:3px solid ${c}">
@@ -1683,7 +1766,7 @@ function renderCharts() {
   }).join("");
 
   const topBars=top.map((p,i)=>{
-    const v=posToEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares, p);
+    const v=toEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares,p.currency);
     return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
       <span style="color:#94a3b8;font-size:11px;min-width:18px">#${i+1}</span>
       <span style="color:#1d4ed8;font-weight:700;font-size:12px;min-width:72px">${esc(p.ticker)}</span>
@@ -1719,7 +1802,7 @@ function renderCharts() {
 // TAB 5 — OBJETIVOS
 // ─────────────────────────────────────────────
 function renderGoals() {
-  const curVal=state.positions.reduce((s,p)=>s+posToEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares, p),0);
+  const curVal=state.positions.reduce((s,p)=>s+toEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares,p.currency),0);
   const goal=parseFloat((document.getElementById("g-goal")||{}).value||100000);
   const pg=parseFloat((document.getElementById("g-pg")||{}).value||7);
   const dg=parseFloat((document.getElementById("g-dg")||{}).value||3);
@@ -1776,7 +1859,7 @@ function calcProjection() {
   const yrs=parseInt(document.getElementById("g-yrs")?.value||10);
   const dy=parseFloat(document.getElementById("g-dy")?.value||4)/100;
   const reinvest=document.getElementById("g-reinvest")?.checked!==false;
-  const curVal=state.positions.reduce((s,p)=>s+posToEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares, p),0);
+  const curVal=state.positions.reduce((s,p)=>s+toEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares,p.currency),0);
   let v=curVal,da=0,rows=[{y:0,total:v,aport:v,divAcc:0,goal}];
   for(let y=1;y<=yrs;y++){
     const ann=v*dy; da+=ann*(1+dg*y);
@@ -2052,20 +2135,12 @@ function updateFXField() {
 
 function updateFXPreview() {
   const cur = document.getElementById("m-cur")?.value || "EUR";
-  const ticker = (document.getElementById("m-ticker")?.value || "").trim().toUpperCase();
   const cost = +document.getElementById("m-cost")?.value || 0;
   const fx = +document.getElementById("m-fx-rate")?.value || 0;
   const prev = document.getElementById("m-fx-preview");
   if (!prev || cur === "EUR" || !fx || !cost) { if(prev) prev.textContent=""; return; }
-  const isGBp = ticker.endsWith(".L") && cur === "GBP";
-  if (isGBp) {
-    const costGBP = (cost / 100).toFixed(4);
-    const costEUR = (cost / 100 / fx).toFixed(4);
-    prev.textContent = `Coste en EUR: ${cost} GBp ÷ 100 = ${costGBP} GBP ÷ ${fx} = ${costEUR} €/acc`;
-  } else {
-    const costEUR = (cost / fx).toFixed(4);
-    prev.textContent = `Coste en EUR al tipo de compra: ${cost} ${cur} ÷ ${fx} = ${costEUR} €/acc`;
-  }
+  const costEUR = (cost / fx).toFixed(4);
+  prev.textContent = `Coste en EUR al tipo de compra: ${cost} ${cur} ÷ ${fx} = ${costEUR} €/acc`;
 }
 
 function saveNewPos() {
