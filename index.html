@@ -78,6 +78,11 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 .price-sim{background:#fef3c7;color:#92400e;}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid #e2e8f0;border-top-color:#2563eb;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;}
 @keyframes spin{to{transform:rotate(360deg)}}
+@media (max-width: 900px) {
+  .chart-donut-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
 </style>
 </head>
 <body>
@@ -1855,30 +1860,26 @@ function renderCharts() {
     }))
     .sort((a, b) => b.totalValue - a.totalValue);
 
-  const top8 = top.slice(0, 8);
-  const donutData = top.slice(0, 10);
-  const donutTotal = donutData.reduce((s, p) => s + p.totalValue, 0) || 1;
-
-  const barChart = (data, cFn) => data.map(([lbl, v], i) => `
-    <div style="margin-bottom:9px">
-      <div style="display:flex;justify-content:space-between;margin-bottom:3px;font-size:12px">
-        <span style="color:#475569">${esc(lbl)}</span>
-        <span style="font-weight:600;color:#334155">${(v / total * 100).toFixed(1)}% — ${fmtEUR(v)}</span>
-      </div>
-      <div style="background:#e2e8f0;border-radius:6px;height:8px">
-        <div style="background:${cFn ? cFn(i) : '#' + PIE_COLORS[i % PIE_COLORS.length]};border-radius:6px;height:8px;width:${Math.max(v / total * 100, 0).toFixed(1)}%"></div>
-      </div>
-    </div>
-  `).join("");
-
-  const topBars = top8.map((p, i) => `
+  const topBars = top.slice(0, 8).map((p, i, arr) => `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
       <span style="color:#94a3b8;font-size:11px;min-width:18px">#${i + 1}</span>
       <span style="color:#1d4ed8;font-weight:700;font-size:12px;min-width:72px">${esc(p.ticker)}</span>
-      <div style="flex:1;background:#e2e8f0;border-radius:4px;height:6px">
-        <div style="background:#${PIE_COLORS[i % PIE_COLORS.length]};border-radius:4px;height:6px;width:${(p.totalValue / (top8[0]?.totalValue || 1) * 100).toFixed(1)}%"></div>
+      <div style="flex:1;background:#e2e8f0;border-radius:999px;height:7px;overflow:hidden">
+        <div style="background:#${PIE_COLORS[i % PIE_COLORS.length]};border-radius:999px;height:7px;width:${(p.totalValue / (arr[0]?.totalValue || 1) * 100).toFixed(1)}%"></div>
       </div>
-      <span style="font-size:12px;font-weight:600;min-width:90px;text-align:right">${fmtEUR(p.totalValue)}</span>
+      <span style="font-size:12px;font-weight:600;min-width:92px;text-align:right">${fmtEUR(p.totalValue)}</span>
+    </div>
+  `).join("");
+
+  const barChart = (data, cFn) => data.map(([lbl, v], i) => `
+    <div style="margin-bottom:9px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px;gap:8px">
+        <span style="color:#475569">${esc(lbl)}</span>
+        <span style="font-weight:600;color:#334155;white-space:nowrap">${(v / total * 100).toFixed(1)}% — ${fmtEUR(v)}</span>
+      </div>
+      <div style="background:#e2e8f0;border-radius:999px;height:8px;overflow:hidden">
+        <div style="background:${cFn ? cFn(i) : '#' + PIE_COLORS[i % PIE_COLORS.length]};border-radius:999px;height:8px;width:${Math.max(v / total * 100, 0).toFixed(1)}%"></div>
+      </div>
     </div>
   `).join("");
 
@@ -1891,7 +1892,7 @@ function renderCharts() {
     const c = pnl !== null ? pnlColor(pnl) : "94a3b8";
 
     return `
-      <div style="background:#f8fafc;border-radius:8px;padding:10px;border:1px solid #e2e8f0;border-left:3px solid #${c}">
+      <div style="background:#f8fafc;border-radius:10px;padding:10px;border:1px solid #e2e8f0;border-left:3px solid #${c}">
         <div style="font-weight:700;font-size:12px;color:#1d4ed8">${esc(p.ticker)}</div>
         <div style="font-size:10px;color:#64748b;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</div>
         <div style="font-weight:600;font-size:13px">${fmtEUR(cur ?? inv)}</div>
@@ -1900,67 +1901,88 @@ function renderCharts() {
     `;
   }).join("");
 
-  function makeDonutSvg(data) {
-    const cx = 90, cy = 90, r = 64;
-    const circumference = 2 * Math.PI * r;
-    let acc = 0;
+  let donutItems = top.slice(0, 8).map((p, i) => ({
+    label: p.ticker,
+    value: p.totalValue,
+    color: "#" + PIE_COLORS[i % PIE_COLORS.length]
+  }));
 
-    const circles = data.map((p, i) => {
-      const frac = p.totalValue / donutTotal;
-      const len = circumference * frac;
-      const dash = `${len} ${circumference - len}`;
-      const offset = -circumference * acc;
-      acc += frac;
-
-      return `
-        <circle
-          cx="${cx}" cy="${cy}" r="${r}"
-          fill="none"
-          stroke="#${PIE_COLORS[i % PIE_COLORS.length]}"
-          stroke-width="24"
-          stroke-dasharray="${dash}"
-          stroke-dashoffset="${offset}"
-          transform="rotate(-90 ${cx} ${cy})"
-          stroke-linecap="butt"
-        ></circle>
-      `;
-    }).join("");
-
-    return `
-      <svg width="180" height="180" viewBox="0 0 180 180" aria-label="Distribución por posición">
-        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#e2e8f0" stroke-width="24"></circle>
-        ${circles}
-        <text x="90" y="84" text-anchor="middle" style="font-size:11px;fill:#64748b;font-weight:600">Cartera</text>
-        <text x="90" y="102" text-anchor="middle" style="font-size:14px;fill:#0f172a;font-weight:700">${data.length}</text>
-        <text x="90" y="119" text-anchor="middle" style="font-size:10px;fill:#94a3b8">posiciones</text>
-      </svg>
-    `;
+  if (top.length > 8) {
+    const rest = top.slice(8).reduce((s, p) => s + p.totalValue, 0);
+    if (rest > 0) {
+      donutItems.push({
+        label: "RESTO",
+        value: rest,
+       color: "#94a3b8"
+      });
+    }
   }
 
-  const donutLegend = donutData.map((p, i) => {
-    const pct = (p.totalValue / donutTotal * 100);
+  const donutTotal = donutItems.reduce((s, x) => s + x.value, 0) || 1;
+  const mainPct = donutItems.length ? (donutItems[0].value / donutTotal * 100) : 0;
+  const mainLabel = donutItems.length ? donutItems[0].label : "-";
+
+  function polar(cx, cy, r, angle) {
+    const rad = (angle - 90) * Math.PI / 180;
+    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+  }
+
+  function arcPath(cx, cy, rOuter, rInner, startAngle, endAngle) {
+    const startOuter = polar(cx, cy, rOuter, endAngle);
+    const endOuter = polar(cx, cy, rOuter, startAngle);
+    const startInner = polar(cx, cy, rInner, endAngle);
+    const endInner = polar(cx, cy, rInner, startAngle);
+    const largeArc = endAngle - startAngle <= 180 ? 0 : 1;
+
+    return [
+      `M ${startOuter.x} ${startOuter.y}`,
+      `A ${rOuter} ${rOuter} 0 ${largeArc} 0 ${endOuter.x} ${endOuter.y}`,
+      `L ${endInner.x} ${endInner.y}`,
+      `A ${rInner} ${rInner} 0 ${largeArc} 1 ${startInner.x} ${startInner.y}`,
+      "Z"
+    ].join(" ");
+  }
+
+  let start = 0;
+  const donutPaths = donutItems.map((item, i) => {
+    const angle = (item.value / donutTotal) * 360;
+    const end = start + angle;
+    const path = arcPath(120, 120, 92, 54, start, end);
+    const out = `
+      <path d="${path}"
+            fill="${item.color}"
+            style="transition:transform .18s ease, opacity .18s ease; transform-origin:120px 120px"
+            onmouseenter="this.style.opacity='0.88'; this.style.transform='scale(1.03)'"
+            onmouseleave="this.style.opacity='1'; this.style.transform='scale(1)'"></path>
+    `;
+    start = end;
+    return out;
+  }).join("");
+
+  const donutLegend = donutItems.map((item, i) => {
+    const pct = item.value / donutTotal * 100;
     return `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px;font-size:12px">
-        <div style="display:flex;align-items:center;gap:7px;min-width:0">
-          <span style="width:10px;height:10px;border-radius:50%;background:#${PIE_COLORS[i % PIE_COLORS.length]};display:inline-block;flex-shrink:0"></span>
-          <span style="color:#1d4ed8;font-weight:700">${esc(p.ticker)}</span>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 8px;border-radius:8px;transition:background .15s ease" onmouseenter="this.style.background='#f8fafc'" onmouseleave="this.style.background='transparent'">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0">
+          <span style="width:10px;height:10px;border-radius:50%;background:${item.color};display:inline-block;flex-shrink:0"></span>
+          <span style="font-size:12px;font-weight:700;color:${item.label === 'RESTO' ? '#64748b' : '#1d4ed8'}">${esc(item.label)}</span>
         </div>
         <div style="text-align:right;white-space:nowrap">
-          <div style="font-weight:600;color:#334155">${pct.toFixed(1)}%</div>
-          <div style="font-size:11px;color:#64748b">${fmtEUR(p.totalValue)}</div>
+          <div style="font-size:12px;font-weight:700;color:#0f172a">${pct.toFixed(1)}%</div>
+          <div style="font-size:11px;color:#64748b">${fmtEUR(item.value)}</div>
         </div>
       </div>
     `;
   }).join("");
 
   const legend = sectors.map((s, i) => `
-    <span style="font-size:11px;display:inline-flex;align-items:center;gap:3px;color:#475569">
+    <span style="font-size:11px;display:inline-flex;align-items:center;gap:4px;color:#475569">
       <span style="width:9px;height:9px;border-radius:2px;background:#${PIE_COLORS[i % PIE_COLORS.length]};display:inline-block;flex-shrink:0"></span>${esc(s[0])}
     </span>
   `).join("");
 
   return `
-   <div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px">
+    <div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px">
       <div class="card">
         <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:14px">Distribución por Sector</h3>
         ${barChart(sectors)}
@@ -1974,15 +1996,37 @@ function renderCharts() {
         ${topBars}
       </div>
 
-      <div class="card">
-        <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:14px">Peso por posición</h3>
-        <div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap">
-          <div style="flex:0 0 190px;display:flex;justify-content:center">
-            ${makeDonutSvg(donutData)}
+      <div class="card" style="min-height:340px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px">
+          <h3 style="font-size:13px;font-weight:700;color:#1d4ed8">Peso por posición</h3>
+          <span style="font-size:11px;color:#94a3b8">Top 8 + resto</span>
+        </div>
+
+        <div class="chart-donut-grid" style="display:grid;grid-template-columns:220px 1fr;gap:18px;align-items:center">
+          <div style="display:flex;align-items:center;justify-content:center">
+            <svg width="240" height="240" viewBox="0 0 240 240" aria-label="Distribución de cartera por posición">
+              <defs>
+                <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="rgba(15,23,42,0.10)"/>
+                </filter>
+              </defs>
+
+              <g filter="url(#softShadow)">
+                ${donutPaths}
+              </g>
+
+              <circle cx="120" cy="120" r="42" fill="#ffffff"></circle>
+
+              <text x="120" y="102" text-anchor="middle" style="font-size:11px;fill:#64748b;font-weight:600">Mayor peso</text>
+              <text x="120" y="126" text-anchor="middle" style="font-size:24px;fill:#0f172a;font-weight:800">${mainPct.toFixed(1)}%</text>
+              <text x="120" y="145" text-anchor="middle" style="font-size:11px;fill:#1d4ed8;font-weight:700">${esc(mainLabel)}</text>
+            </svg>
           </div>
-          <div style="flex:1;min-width:220px">
-            ${donutLegend}
-            ${top.length > 10 ? `<div style="font-size:11px;color:#94a3b8;margin-top:6px">Mostrando las 10 posiciones con mayor peso.</div>` : ""}
+
+          <div>
+            <div style="max-height:260px;overflow:auto;padding-right:4px">
+              ${donutLegend}
+            </div>
           </div>
         </div>
       </div>
