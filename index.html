@@ -1016,6 +1016,79 @@ async function parseImportFile() {
     } else if (/\.(xls|xlsx)$/i.test(file.name)) {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
+
+      // Detectar si es un export propio de Kapital Manager
+      const isKapitalExport = wb.SheetNames.includes("Transacciones") && wb.SheetNames.includes("Cartera");
+
+      if (isKapitalExport) {
+        // Leer hoja Transacciones directamente — ya tiene el formato correcto
+        const txSheet = wb.Sheets["Transacciones"];
+        const txRows = XLSX.utils.sheet_to_json(txSheet, { header: 1, raw: false, defval: "" });
+        const txHeaders = txRows[0]?.map(h => String(h||"").trim()) || [];
+        const txData = txRows.slice(1).filter(r => r.some(v => String(v||"").trim() !== ""));
+
+        // Mapear columnas del export propio: Fecha, Ticker, Tipo, Acciones, Precio, Comisión, Divisa, Notas
+        const get = (row, ...names) => {
+          for (const n of names) {
+            const i = txHeaders.findIndex(h => h === n);
+            if (i >= 0) return String(row[i]||"").trim();
+          }
+          return "";
+        };
+
+        const txs = txData.map(row => ({
+          id: uid(),
+          date: get(row,"Fecha") || new Date().toISOString().slice(0,10),
+          ticker: get(row,"Ticker").toUpperCase(),
+          type: normalizeImportType(get(row,"Tipo")) || get(row,"Tipo"),
+          shares: parseNum(get(row,"Acciones")),
+          price: parseNum(get(row,"Precio")),
+          commission: parseNum(get(row,"Comisión")),
+          currency: get(row,"Divisa") || "EUR",
+          notes: get(row,"Notas"),
+          source: "kapital-export"
+        })).filter(t => t.ticker && t.shares > 0 && t.type);
+
+        if (!txs.length) {
+          alert("No se encontraron transacciones válidas en la hoja 'Transacciones'");
+          return;
+        }
+
+        // También leer Cartera para recuperar nombres y sectores
+        const cartSheet = wb.Sheets["Cartera"];
+        const cartRows = XLSX.utils.sheet_to_json(cartSheet, { header: 1, raw: false, defval: "" });
+        const cartHeaders = cartRows[0]?.map(h=>String(h||"").trim())||[];
+        const getC = (row,...names) => { for(const n of names){const i=cartHeaders.findIndex(h=>h===n);if(i>=0)return String(row[i]||"").trim();} return ""; };
+        const nameBySector = {};
+        cartRows.slice(1).forEach(row => {
+          const ticker = getC(row,"Ticker").toUpperCase();
+          if (ticker) nameBySector[ticker] = { name: getC(row,"Empresa"), sector: getC(row,"Sector") };
+        });
+        txs.forEach(t => {
+          if (nameBySector[t.ticker]) {
+            t.name = nameBySector[t.ticker].name || t.ticker;
+            t.sector = nameBySector[t.ticker].sector || "";
+          }
+        });
+
+        state.importPreview = txs;
+
+        if (status) status.innerHTML = `✅ Export de Kapital Manager detectado: <b>${txs.length} transacciones</b> listas para importar.`;
+        if (mapWrap) mapWrap.style.display = "none"; // no hace falta mapeo manual
+
+        // Mostrar preview directamente
+        const prevWrap2 = document.getElementById("import-preview-wrap");
+        if (prevWrap2) {
+          prevWrap2.style.display = "block";
+          prevWrap2.innerHTML = `<div style="font-weight:700;font-size:13px;color:#1d4ed8;margin-bottom:8px">Vista previa (${txs.length} transacciones válidas)</div>
+            <div style="overflow-x:auto"><table style="min-width:500px"><thead><tr><th>Fecha</th><th>Ticker</th><th>Tipo</th><th>Acciones</th><th>Precio</th></tr></thead>
+            <tbody>${txs.slice(0,10).map(t=>`<tr><td>${t.date}</td><td style="color:#1d4ed8;font-weight:700">${t.ticker}</td><td>${t.type}</td><td>${t.shares}</td><td>${t.price||"—"}</td></tr>`).join("")}
+            ${txs.length>10?`<tr><td colspan="5" style="color:#94a3b8;font-size:11px;text-align:center">... y ${txs.length-10} más</td></tr>`:""}</tbody></table></div>`;
+        }
+        return; // salir del flujo normal
+      }
+
+      // Excel genérico — coger primera hoja
       const sheet = wb.Sheets[wb.SheetNames[0]];
       rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
     } else {
