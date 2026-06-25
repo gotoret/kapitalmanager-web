@@ -399,8 +399,11 @@ const toEURhist = (v, pos) => {
 };
 // Helper: convierte valor en divisa local de una posición a EUR, corrigiendo peniques para .L
 const posToEUR = (v, pos) => {
-  const val = gbpToGBP(v, pos?.ticker);
-  return val * getFX(pos?.currency || "EUR");
+  if (!v || isNaN(v)) return 0;
+  const ticker = pos?.ticker || "";
+  const currency = pos?.currency || "EUR";
+  const val = gbpToGBP(v, ticker);
+  return val * getFX(currency);
 };
 const fmtEUR = v => "€"+((v||0).toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2}));
 const fmtPct = v => (v>=0?"+":"")+((v||0).toFixed(2))+"%";
@@ -564,16 +567,16 @@ function normalizeImportType(v) {
 function buildDivInfo() {
   state.divInfo = state.positions.map(p => {
     const cached = state.yieldCache[p.ticker];
-    const yld = cached?.yield ?? 0.045;
-    const rate = cached?.rate ?? +(p.avg_cost*yld).toFixed(4);
+    const hasCache = cached != null;
+    const yld = hasCache ? (cached.yield ?? 0) : 0.045;
+    const rate = hasCache ? (cached.rate ?? 0) : +(p.avg_cost * 0.045).toFixed(4);
+    const annual_income = +(rate * p.shares).toFixed(2);
+    const freq = cached?.freq || (hasCache ? "Anual" : "—");
     return {
-      ticker:p.ticker, name:p.name, shares:p.shares, currency:p.currency,
-      div_rate: rate,
-      div_yield: yld,
-      annual_income: +(rate*p.shares).toFixed(2),
+      ticker: p.ticker, name: p.name, shares: p.shares, currency: p.currency,
+      div_rate: rate, div_yield: yld, annual_income,
       ex_date: cached?.exDate || new Date(Date.now()+30*864e5).toISOString().slice(0,10),
-      freq: "Trimestral",
-      _estimated: !cached
+      freq, _estimated: !hasCache
     };
   });
   updateDivTicker();
@@ -642,28 +645,34 @@ async function fetchDividendData(ticker) {
       const result = data?.chart?.result?.[0];
       if (!result) continue;
 
-      const price = result.meta?.regularMarketPrice;
-      const divEvents = result.events?.dividends;
+      const isGBp = String(ticker).toUpperCase().endsWith(".L");
+      let price = result.meta?.regularMarketPrice;
+      if (isGBp && price) price = price / 100;
 
+      const divEvents = result.events?.dividends;
       if (!divEvents || !Object.keys(divEvents).length) {
-        // Sin pagos en los últimos 2 años -> asumimos que no reparte dividendo
-        return { yield: 0, rate: 0, exDate: null };
+        return { yield: 0, rate: 0, exDate: null, freq: "—" };
       }
 
-      const list = Object.values(divEvents); // [{amount, date(unix seg)}, ...]
+      const list = Object.values(divEvents).sort((a,b) => a.date - b.date);
       const oneYearAgo = Date.now()/1000 - 365*86400;
       const lastYear = list.filter(d => d.date >= oneYearAgo);
-      // Si en el último año no hubo pagos (p.ej. frecuencia anual/irregular), usamos los 4 últimos pagos conocidos
       const sample = lastYear.length ? lastYear : list.slice(-4);
-      const annualDividend = sample.reduce((s,d)=>s+(d.amount||0),0) * (lastYear.length ? 1 : 4/sample.length);
-      const lastExTs = Math.max(...list.map(d=>d.date));
 
+      let annualDividend = sample.reduce((s,d) => s+(d.amount||0), 0) * (lastYear.length ? 1 : 4/sample.length);
+      if (isGBp) annualDividend = annualDividend / 100;
+
+      const nPagos = lastYear.length || sample.length;
+      const freq = nPagos >= 10 ? "Mensual" : nPagos >= 3 ? "Trimestral" : nPagos >= 2 ? "Semestral" : "Anual";
+
+      const lastExTs = Math.max(...list.map(d => d.date));
       return {
         yield: price ? +(annualDividend/price).toFixed(4) : null,
         rate: +annualDividend.toFixed(4),
-        exDate: lastExTs ? new Date(lastExTs*1000).toISOString().slice(0,10) : null
+        exDate: lastExTs ? new Date(lastExTs*1000).toISOString().slice(0,10) : null,
+        freq
       };
-    } catch(e) { /* probar el siguiente proxy */ }
+    } catch(e) { /* probar siguiente proxy */ }
   }
   return null;
 }
@@ -1282,6 +1291,7 @@ function confirmImportBroker() {
 // RENDER HEADER
 // ─────────────────────────────────────────────
 function renderHeader() {
+  try {
   const totals = state.positions.reduce((acc,p)=>{
     const inv = posToEUR(p.shares*p.avg_cost, p);
     const cur = state.priceCache[p.ticker] ? posToEUR(p.shares*state.priceCache[p.ticker], p) : inv;
@@ -1310,6 +1320,7 @@ function renderHeader() {
 
   const lbl = document.getElementById("last-update-label");
   if (lbl) lbl.textContent = state.lastUpdate ? `Actualizado: ${state.lastUpdate.toLocaleTimeString("es-ES")} | Próx: ${state.countdown}s` : `Sin actualizar | Próx: ${state.countdown}s`;
+  } catch(e) { console.error("renderHeader error:", e); }
 }
 
 // ─────────────────────────────────────────────
@@ -1325,15 +1336,24 @@ function switchTab(i) { state.activeTab=i; state.selectedTicker=null; renderTabs
 
 function renderActiveTab() {
   const el = document.getElementById("content");
-  switch(state.activeTab) {
-    case 0: el.innerHTML = renderPortfolio(); break;
-    case 1: el.innerHTML = renderAlerts(); break;
-    case 2: el.innerHTML = renderDividends(); break;
-    case 3: el.innerHTML = renderTransactions(); break;
-    case 4: el.innerHTML = renderCharts(); break;
-    case 5: el.innerHTML = renderGoals(); break;
-    case 6: el.innerHTML = renderValuation(); break;
-    case 7: el.innerHTML = renderRenta(); break;
+  try {
+    switch(state.activeTab) {
+      case 0: el.innerHTML = renderPortfolio(); break;
+      case 1: el.innerHTML = renderAlerts(); break;
+      case 2: el.innerHTML = renderDividends(); break;
+      case 3: el.innerHTML = renderTransactions(); break;
+      case 4: el.innerHTML = renderCharts(); break;
+      case 5: el.innerHTML = renderGoals(); break;
+      case 6: el.innerHTML = renderValuation(); break;
+      case 7: el.innerHTML = renderRenta(); break;
+    }
+  } catch(e) {
+    console.error("Error en renderActiveTab (tab "+state.activeTab+"):", e);
+    el.innerHTML = `<div style="padding:20px;color:#dc2626;font-size:13px">
+      <b>⚠️ Error al cargar la vista</b><br><br>
+      <code style="font-size:11px;background:#fee2e2;padding:8px;border-radius:6px;display:block;white-space:pre-wrap">${e?.message || e}</code>
+      <br><button class="btn" onclick="location.reload()">🔄 Recargar app</button>
+    </div>`;
   }
 }
 
@@ -1478,22 +1498,79 @@ function deleteAlert(id){ state.alerts=state.alerts.filter(a=>a.id!==id); save()
 // ─────────────────────────────────────────────
 // TAB 2 — DIVIDENDOS
 // ─────────────────────────────────────────────
+function retencionOrigenPct(ticker, currency) {
+  const t = String(ticker || "").toUpperCase();
+  if (t.endsWith(".MC") || t.endsWith(".MAD")) return 0.19;
+  if (t.endsWith(".L"))   return 0.00;
+  if (t.endsWith(".SW") || t.endsWith(".VX")) return 0.35;
+  if (t.endsWith(".PA") || t.endsWith(".NX")) return 0.128;
+  if (t.endsWith(".DE") || t.endsWith(".F") || t.endsWith(".BE") || t.endsWith(".MU") || t.endsWith(".DU")) return 0.25;
+  if (t.endsWith(".AS"))  return 0.15;
+  if (t.endsWith(".MI"))  return 0.26;
+  if (t.endsWith(".LS"))  return 0.28;
+  if (t.endsWith(".BR"))  return 0.30;
+  if (t.endsWith(".ST"))  return 0.30;
+  if (t.endsWith(".HE"))  return 0.30;
+  if (t.endsWith(".OL"))  return 0.25;
+  if (t.endsWith(".CO"))  return 0.27;
+  if (currency === "USD") return 0.15;
+  if (currency === "CAD") return 0.15;
+  if (currency === "AUD") return 0.15;
+  if (currency === "JPY") return 0.15;
+  return 0.15;
+}
+
+function paisLabel(ticker, currency) {
+  const t = String(ticker || "").toUpperCase();
+  if (t.endsWith(".MC"))  return "🇪🇸 España";
+  if (t.endsWith(".L"))   return "🇬🇧 Reino Unido";
+  if (t.endsWith(".SW") || t.endsWith(".VX")) return "🇨🇭 Suiza";
+  if (t.endsWith(".PA") || t.endsWith(".NX")) return "🇫🇷 Francia";
+  if (t.endsWith(".DE") || t.endsWith(".F") || t.endsWith(".BE") || t.endsWith(".MU") || t.endsWith(".DU")) return "🇩🇪 Alemania";
+  if (t.endsWith(".AS"))  return "🇳🇱 P. Bajos";
+  if (t.endsWith(".MI"))  return "🇮🇹 Italia";
+  if (t.endsWith(".LS"))  return "🇵🇹 Portugal";
+  if (t.endsWith(".BR"))  return "🇧🇪 Bélgica";
+  if (t.endsWith(".ST"))  return "🇸🇪 Suecia";
+  if (t.endsWith(".HE"))  return "🇫🇮 Finlandia";
+  if (t.endsWith(".OL"))  return "🇳🇴 Noruega";
+  if (t.endsWith(".CO"))  return "🇩🇰 Dinamarca";
+  if (currency === "USD") return "🇺🇸 EE.UU.";
+  if (currency === "CAD") return "🇨🇦 Canadá";
+  if (currency === "AUD") return "🇦🇺 Australia";
+  if (currency === "JPY") return "🇯🇵 Japón";
+  return "🌍 Internacional";
+}
+
 function renderDividends() {
   const totalAnn = state.divInfo.reduce((s,d)=>s+toEUR(d.annual_income||0,d.currency||"EUR"),0);
+  const totalNeto = state.divInfo.reduce((s,d)=>{
+    const ret = retencionOrigenPct(d.ticker, d.currency);
+    return s + toEUR((d.annual_income||0)*(1-ret), d.currency||"EUR");
+  },0);
+
   const divRows = state.divInfo.map((d)=>{
     const yp=(d.div_yield||0)*100;
     const yc=yp>=4?"#16a34a":yp>=2?"#b45309":"#dc2626";
+    const ret = retencionOrigenPct(d.ticker, d.currency);
+    const incBrutoEUR = toEUR(d.annual_income||0, d.currency||"EUR");
+    const incNetoEUR  = incBrutoEUR*(1-ret);
+    const retColor = ret===0?"#16a34a":ret<=0.15?"#b45309":ret<=0.25?"#ea580c":"#dc2626";
     return `<tr>
       <td style="color:#1d4ed8;font-weight:700">${esc(d.ticker)}</td>
-      <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.name)}</td>
+      <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.name)}</td>
       <td>${Math.round(d.shares||0)}</td>
       <td style="font-weight:600">${d.div_rate?d.div_rate.toFixed(4)+" "+d.currency:"—"}</td>
       <td style="color:${yc};font-weight:600">${yp?(d._estimated?"≈"+yp.toFixed(2)+"%":yp.toFixed(2)+"%"):"—"}</td>
       <td style="color:#64748b">${d.ex_date||"—"}</td>
       <td><span class="badge" style="background:#b4530922;color:#b45309">${d.freq||"—"}</span></td>
-      <td style="font-weight:600;color:#b45309">${fmtEUR(toEUR(d.annual_income||0,d.currency||"EUR"))}</td>
+      <td style="font-size:11px;color:#475569">${paisLabel(d.ticker,d.currency)}</td>
+      <td style="font-weight:600;color:${retColor}">${ret>0?(ret*100).toFixed(1)+"%":"Sin ret."}</td>
+      <td style="font-weight:600;color:#b45309">${fmtEUR(incBrutoEUR)}</td>
+      <td style="font-weight:700;color:#16a34a">${fmtEUR(incNetoEUR)}</td>
     </tr>`;
   }).join("");
+
   const histRows = state.dividends.map(d=>`<tr>
     <td style="color:#64748b">${(d.date||"").slice(0,10)}</td>
     <td style="color:#1d4ed8;font-weight:700">${esc(d.ticker)}</td>
@@ -1502,18 +1579,20 @@ function renderDividends() {
     <td style="color:#64748b">${esc(d.notes||"—")}</td>
     <td><button class="btn-danger-sm" onclick="deleteDividend(${d.id})">✕</button></td>
   </tr>`).join("");
+
   return `<div style="padding:14px">
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px">
-      ${["ANUAL","MENSUAL","DIARIO","POR HORA"].map((l,i)=>{
-        const v=[totalAnn,totalAnn/12,totalAnn/365,totalAnn/8760][i];
-        return `<div class="metric-card" style="border-left:3px solid #b45309"><div class="metric-label">${l}</div><div class="metric-value" style="color:#b45309">${fmtEUR(v)}</div></div>`;
+      ${["BRUTO ANUAL","NETO ANUAL","MENSUAL NETO","DIARIO NETO"].map((l,i)=>{
+        const v=[totalAnn,totalNeto,totalNeto/12,totalNeto/365][i];
+        const color=i===0?"#b45309":"#16a34a";
+        return `<div class="metric-card" style="border-left:3px solid ${color}"><div class="metric-label">${l}</div><div class="metric-value" style="color:${color}">${fmtEUR(v)}</div></div>`;
       }).join("")}
     </div>
     <div style="margin-bottom:12px"><button class="btn" onclick="openAddDividend()">💰 Registrar dividendo</button></div>
     <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">Dividendos esperados por posición</h4>
     <div style="overflow-x:auto;margin-bottom:20px">
-      <table style="min-width:700px"><thead><tr>${["Ticker","Empresa","Acciones","Div./acc","Yield %","Ex-date","Frecuencia","Ingreso anual"].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
-      <tbody>${divRows||`<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>`}</tbody></table>
+      <table style="min-width:900px"><thead><tr>${["Ticker","Empresa","Acciones","Div./acc","Yield %","Ex-date","Frecuencia","País","Retención","Bruto anual","Neto anual"].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+      <tbody>${divRows||`<tr><td colspan="11" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>`}</tbody></table>
     </div>
     <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">Historial de cobros registrados</h4>
     <table><thead><tr>${["Fecha","Ticker","Acc.","Importe/acc","Total","Notas",""].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
