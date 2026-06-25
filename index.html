@@ -1676,6 +1676,104 @@ function deleteTransaction(id){ if(!confirm("¿Eliminar esta transacción?")) re
 // ─────────────────────────────────────────────
 // TAB 4 — GRÁFICOS
 // ─────────────────────────────────────────────
+function getLogoUrl(ticker, name) {
+  // Mapeo especial para tickers españoles y otros sin dominio obvio
+  const LOGO_MAP = {
+    "ACS.MC":"acs.es","ACX.MC":"acerinox.com","IBE.MC":"iberdrola.com",
+    "REP.MC":"repsol.com","MAP.MC":"mapfre.com","TEF.MC":"telefonica.com",
+    "ENG.MC":"enagás.es","LOG.MC":"logista.com","MCM.MC":"miquelycostas.com",
+    "AMS.MC":"amadeus.com","ELE.MC":"endesa.com","EBRO.MC":"ebrofoods.com",
+    "CAF.MC":"caf.net","BME.MC":"bolsasymercados.es","NTGY.MC":"naturgy.com",
+    "RED.MC":"ree.es","CIE.MC":"ciautomotive.com","VIS.MC":"viscofan.com",
+    "TRE.MC":"tecnicas-reunidas.com","NXT.MC":"nextil.com",
+    "MMM":"3m.com","KO":"coca-cola.com","PG":"pg.com","JNJ":"jnj.com",
+    "VZ":"verizon.com","MO":"altria.com","PFE":"pfizer.com",
+    "WPC":"wpcarey.com","CVS":"cvshealth.com","TROW":"troweprice.com",
+    "BEN":"franklinresources.com","NWN":"nwnatural.com","UVV":"universalcorp.com",
+    "KHC":"kraftheinzcompany.com","BATS.L":"bat.com","BTI":"bat.com"
+  };
+  const domain = LOGO_MAP[ticker];
+  if (domain) return `https://logo.clearbit.com/${domain}`;
+  // Fallback: intentar con nombre de empresa
+  const cleanName = (name||ticker).toLowerCase().replace(/[^a-z0-9]/g," ").trim().split(" ")[0];
+  return `https://logo.clearbit.com/${cleanName}.com`;
+}
+
+function renderDonutByPosition(totalVal) {
+  const allPos = [...state.positions]
+    .map(p => ({ ...p, val: posToEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares, p) }))
+    .filter(p => p.val > 0)
+    .sort((a,b) => b.val - a.val);
+
+  if (!allPos.length) return "";
+  const total = allPos.reduce((s,p) => s+p.val, 0) || 1;
+
+  // Construir segmentos SVG donut
+  const R = 90, r = 54, cx = 110, cy = 110;
+  const TAU = 2 * Math.PI;
+  let angle = -Math.PI / 2; // empezar arriba
+  const segments = allPos.map((p, i) => {
+    const pct = p.val / total;
+    const sweep = pct * TAU;
+    const a1 = angle, a2 = angle + sweep;
+    angle = a2;
+    const x1 = cx + R * Math.cos(a1), y1 = cy + R * Math.sin(a1);
+    const x2 = cx + R * Math.cos(a2), y2 = cy + R * Math.sin(a2);
+    const xi1 = cx + r * Math.cos(a1), yi1 = cy + r * Math.sin(a1);
+    const xi2 = cx + r * Math.cos(a2), yi2 = cy + r * Math.sin(a2);
+    const large = sweep > Math.PI ? 1 : 0;
+    const color = PIE_COLORS[i % PIE_COLORS.length];
+    // Label si el segmento es suficientemente grande
+    const midA = a1 + sweep/2;
+    const labelR = (R + r) / 2;
+    const lx = cx + labelR * Math.cos(midA);
+    const ly = cy + labelR * Math.sin(midA);
+    const label = pct >= 0.03 ? `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" dominant-baseline="middle" fill="white" font-size="7.5" font-weight="700" font-family="system-ui">${(pct*100).toFixed(1)}%</text>` : "";
+    return { path: `<path d="M${x1.toFixed(1)},${y1.toFixed(1)} A${R},${R} 0 ${large},1 ${x2.toFixed(1)},${y2.toFixed(1)} L${xi2.toFixed(1)},${yi2.toFixed(1)} A${r},${r} 0 ${large},0 ${xi1.toFixed(1)},${yi1.toFixed(1)} Z" fill="${color}" stroke="white" stroke-width="1.2"/>`, label, color };
+  });
+
+  const svgPaths = segments.map(s => s.path).join("");
+  const svgLabels = segments.map(s => s.label).join("");
+
+  // Lista de empresas con logo
+  const listItems = allPos.map((p, i) => {
+    const pct = (p.val/total*100).toFixed(1);
+    const color = PIE_COLORS[i % PIE_COLORS.length];
+    const logo = getLogoUrl(p.ticker, p.name);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f1f5f9">
+      <div style="width:36px;height:36px;border-radius:50%;overflow:hidden;background:#f1f5f9;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:2px solid ${color}">
+        <img src="${logo}" style="width:28px;height:28px;object-fit:contain;border-radius:50%"
+          onerror="this.style.display='none';this.parentNode.innerHTML='<span style=\\'font-size:9px;font-weight:700;color:${color};text-align:center;line-height:1.1\\'>${esc(p.ticker.replace(".MC","").replace(".L","").slice(0,4))}</span>'"
+        />
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:700;color:#1d4ed8">${esc(p.ticker)}</div>
+        <div style="font-size:11px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name||"")}</div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div style="font-size:13px;font-weight:700;color:${color}">${pct}%</div>
+        <div style="font-size:11px;color:#64748b">${fmtEUR(p.val)}</div>
+      </div>
+      <div style="width:4px;height:36px;border-radius:2px;background:${color};flex-shrink:0"></div>
+    </div>`;
+  }).join("");
+
+  return `<div class="card" style="grid-column:1/-1">
+    <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:16px">Distribución por Posición</h3>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start">
+      <div style="flex-shrink:0;display:flex;align-items:center;justify-content:center">
+        <svg viewBox="0 0 220 220" width="220" height="220">
+          ${svgPaths}
+          ${svgLabels}
+          <text x="${cx}" y="${cy-7}" text-anchor="middle" fill="#334155" font-size="11" font-weight="700" font-family="system-ui">${allPos.length}</text>
+          <text x="${cx}" y="${cy+8}" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui">posiciones</text>
+        </svg>
+      </div>
+      <div style="flex:1;min-width:240px;max-height:400px;overflow-y:auto">${listItems}</div>
+    </div>
+  </div>`;
+}
+
 function renderCharts() {
   const sectorData={},currData={};
   state.positions.forEach(p=>{
@@ -1740,6 +1838,7 @@ function renderCharts() {
       <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin:18px 0 12px">Top posiciones por valor</h3>
       ${topBars}
     </div>
+    ${renderDonutByPosition(total)}
     <div class="card" style="grid-column:1/-1">
       <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">Resumen visual de cartera</h3>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">${posCards}</div>
