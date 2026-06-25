@@ -78,6 +78,10 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 .price-sim{background:#fef3c7;color:#92400e;}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid #e2e8f0;border-top-color:#2563eb;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* Estilo para el logo en las tablas */
+.pos-logo-wrap{display:flex;align-items:center;gap:8px;}
+.pos-logo{width:24px;height:24px;border-radius:50%;object-fit:contain;flex-shrink:0;background:#f1f5f9;border:1px solid #e2e8f0;}
+.pos-logo-fallback{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;flex-shrink:0;font-size:9px;font-weight:700;color:#fff;}
 </style>
 </head>
 <body>
@@ -165,7 +169,6 @@ async function doRegister() {
   }
 
   if (data.session) {
-    // Confirmación de email desactivada en Supabase: entra directamente
     state.authUser = data.user?.email || null;
     state.authUserId = data.user?.id || null;
     updateLoginStatus();
@@ -217,9 +220,6 @@ async function loadMe() {
   updateLoginStatus();
 }
 
-// ─────────────────────────────────────────────
-// SINCRONIZACIÓN DE CARTERA CON SUPABASE (por usuario)
-// ─────────────────────────────────────────────
 async function loadCloudData() {
   if (!state.authUserId) return;
   try {
@@ -237,14 +237,13 @@ async function loadCloudData() {
       state.dividends = data.dividends || [];
       state.transactions = data.transactions || [];
     } else {
-      // Primera vez que este usuario entra: le damos una cartera de ejemplo y la guardamos
       state.positions = DEFAULT_PORTFOLIO;
       state.alerts = [];
       state.dividends = [];
       state.transactions = [];
       await saveCloud();
     }
-    save(); // refresca la caché local con lo que viene de la nube
+    save(); 
   } catch(e) { console.error('Error cargando cartera:', e); }
 }
 
@@ -263,17 +262,6 @@ async function saveCloud() {
   } catch(e) { console.error('Error guardando cartera en la nube:', e); }
 }
 
-
-//const TABS = ['Cartera','Alertas','Dividendos','Transacciones','Gráficos','Objetivos','Valoración IA'];
-
-//const API = {
-  //valuation: '/.netlify/functions/valuation',
-  //search: '/.netlify/functions/search',
- // quote: '/.netlify/functions/quote'
-//};
-  // ─────────────────────────────────────────────
-// DATA
-// ─────────────────────────────────────────────
 const DEFAULT_PORTFOLIO = [
   {date:"2021-03-30",ticker:"ACX.MC",name:"ACERINOX",shares:197,avg_cost:10.18,currency:"EUR",sector:"Materiales Básicos"},
   {date:"2021-04-06",ticker:"TEF.MC",name:"TELEFONICA",shares:295,avg_cost:3.80,currency:"EUR",sector:"Comunicaciones"},
@@ -312,7 +300,6 @@ const API = {
   search: '/.netlify/functions/search',
   quote: '/.netlify/functions/quote'
 };
-// CORS proxies — se prueban en orden hasta que uno funcione
 const PROXIES = [
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
@@ -324,16 +311,12 @@ const SEARCH_PROXIES = [
   q => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
 ];
 
-// Proxies para el histórico real de dividendos pagados (mismo endpoint que ya funciona para precios)
 const YIELD_PROXIES = [
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
 ];
 
-// ─────────────────────────────────────────────
-// STATE
-// ─────────────────────────────────────────────
 let _uid = Date.now();
 const uid = () => ++_uid;
 const ls = {
@@ -346,9 +329,9 @@ let state = {
   alerts: ls.get("km_alerts", []),
   dividends: ls.get("km_dividends", []),
   transactions: ls.get("km_transactions", []),
-  priceCache: {},       // ticker -> precio en divisa original
-  fxCache: {},          // "EURUSD=X" -> tasa
-  yieldCache: {},        // ticker -> {yield, rate, exDate} reales de Yahoo Finance
+  priceCache: {},       
+  fxCache: {},          
+  yieldCache: {},       
   divInfo: [],
   activeTab: 0,
   sortCol: null,
@@ -356,10 +339,10 @@ let state = {
   selectedTicker: null,
   countdown: 60,
   lastUpdate: null,
-  livePrices: false,    // true si al menos un precio real fue obtenido
-  authUser: null,        // email del usuario logueado
-  authUserId: null,      // id de Supabase del usuario logueado
-  _appStarted: false,    // evita reiniciar precios/contador en cada login
+  livePrices: false,    
+  authUser: null,        
+  authUserId: null,      
+  _appStarted: false,    
 importPreview: [],
 importMap: null,
 importHeaders: [],
@@ -374,30 +357,23 @@ const save = () => {
   if (state.authUserId) saveCloud();
 };
 
-// ─────────────────────────────────────────────
-// HELPERS
-// ─────────────────────────────────────────────
 const getFX = (cur) => state.fxCache[cur] || FX_FALLBACK[cur] || 1;
 
-// Los tickers .L cotizan en PENIQUES (GBp), no en libras (GBP).
-// Esta función convierte a libras si es necesario antes de cualquier cálculo.
 const isGBpTicker = (ticker) => String(ticker || "").toUpperCase().endsWith(".L");
 const gbpToGBP = (v, ticker) => isGBpTicker(ticker) ? (v || 0) / 100 : (v || 0);
 
-// toEUR ahora acepta ticker opcional para aplicar corrección de peniques
 const toEUR = (v, cur, ticker) => {
   const val = ticker ? gbpToGBP(v, ticker) : (v || 0);
   return val * getFX(cur);
 };
 
-// Versión histórica: usa el tipo guardado en la posición para el coste
 const toEURhist = (v, pos) => {
   if (!pos || pos.currency === "EUR") return v || 0;
   const val = gbpToGBP(v, pos.ticker);
   if (pos.fx_rate && pos.fx_rate !== 1) return val / pos.fx_rate;
   return val * getFX(pos.currency);
 };
-// Helper: convierte valor en divisa local de una posición a EUR, corrigiendo peniques para .L
+
 const posToEUR = (v, pos) => {
   if (!v || isNaN(v)) return 0;
   const ticker = pos?.ticker || "";
@@ -592,16 +568,11 @@ function updateDivTicker() {
 
   const today = new Date().toISOString().slice(0,10);
 
-  // Calcular la PRÓXIMA fecha ex-div estimada a partir de la última conocida
   function nextExDate(lastExDateStr, annualRate, priceRef) {
     if (!lastExDateStr) return null;
     const last = new Date(lastExDateStr);
-    // Estimar frecuencia: si yield < 3% => probable anual (360 días), else trimestral (90 días)
-    // Usamos el ratio rate/price para intentar deducir la frecuencia
-    // Por defecto asumimos trimestral (90 días) que es lo más habitual en acciones europeas y USA
-    const freqDays = 90; // trimestral por defecto
+    const freqDays = 90; 
     let next = new Date(last);
-    // Avanzar tantos periodos como haga falta hasta estar en el futuro
     while (next.toISOString().slice(0,10) <= today) {
       next = new Date(next.getTime() + freqDays * 864e5);
     }
@@ -624,12 +595,11 @@ function updateDivTicker() {
                withNext.map(makeItem).join("  ·  ") + "　　";
   inner.innerHTML = html;
 
-  // Forzar repintado para medir bien el ancho
   inner.style.animation = "none";
   inner.offsetWidth;
 
   const totalW = inner.scrollWidth / 2;
-  const dur = Math.max(10, totalW / 180); // 180px/s → doble de rápido
+  const dur = Math.max(10, totalW / 180); 
   inner.style.animation = `ticker-slide ${dur}s linear infinite`;
 
   wrap.style.display = "block";
@@ -679,7 +649,6 @@ async function fetchDividendData(ticker) {
 
 async function refreshDividendYields() {
   const tickers = [...new Set(state.positions.map(p=>p.ticker))];
-  // Limpiar caché de .L que pudieran tener el rate en peniques (bug anterior)
   tickers.filter(t => String(t).toUpperCase().endsWith(".L")).forEach(t => { delete state.yieldCache[t]; });
   const pending = tickers.filter(t => !state.yieldCache[t]);
   if (!pending.length) return;
@@ -741,9 +710,6 @@ function exportCarteraExcel() {
   XLSX.writeFile(wb, `kapital_cartera_${fecha}.xlsx`);
 }
 
-// ─────────────────────────────────────────────
-// YAHOO FINANCE — precios reales
-// ─────────────────────────────────────────────
 async function fetchWithProxy(proxies, ticker) {
   for (const proxyFn of proxies) {
     try {
@@ -753,8 +719,6 @@ async function fetchWithProxy(proxies, ticker) {
       const data = await res.json();
       let price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
       if (price) {
-        // Yahoo Finance devuelve precios del LSE en peniques (GBX), no en libras (GBP)
-        // Tickers .L → dividir entre 100
         if (String(ticker).toUpperCase().endsWith(".L")) price = +(price / 100).toFixed(4);
         return price;
       }
@@ -787,9 +751,7 @@ async function fetchFXRates() {
   for (const pair of pairs) {
     const price = await fetchWithProxy(PROXIES, pair);
     if (price) {
-      // pair es "EURxxx=X", extraemos la divisa destino
       const cur = pair.replace("EUR","").replace("=X","");
-      // price = EUR/XXX, así que 1 XXX = 1/price EUR
       state.fxCache[cur] = +(1/price).toFixed(6);
     }
   }
@@ -797,7 +759,6 @@ async function fetchFXRates() {
 }
 
 async function refreshPrices() {
-  // Primero tipos de cambio
   await fetchFXRates();
 
   let liveCount = 0;
@@ -809,20 +770,18 @@ async function refreshPrices() {
       state.priceCache[ticker] = price;
       liveCount++;
     } else {
-      // Precio simulado como fallback
       if (!state.priceCache[ticker]) {
         const pos = state.positions.find(p=>p.ticker===ticker);
         state.priceCache[ticker] = +(pos.avg_cost*(1+(Math.random()-0.45)*0.06)).toFixed(4);
       }
     }
-    await sleep(120); // evitar rate limiting
+    await sleep(120); 
   }
 
   state.livePrices = liveCount > 0;
   state.lastUpdate = new Date();
   state.countdown = 60;
 
-  // Actualizar badge
   const tag = document.getElementById("price-mode-tag");
   if (tag) {
     if (state.livePrices) {
@@ -839,9 +798,6 @@ async function refreshPrices() {
   renderActiveTab();
 }
 
-// ─────────────────────────────────────────────
-// COUNTDOWN
-// ─────────────────────────────────────────────
 let countdownInterval = null;
 function startCountdown() {
   if (countdownInterval) clearInterval(countdownInterval);
@@ -866,9 +822,6 @@ function checkAlerts() {
   save();
 }
 
-// ─────────────────────────────────────────────
-// AUTOCOMPLETE TICKER
-// ─────────────────────────────────────────────
 let acTimeout = null;
 let acResults = [];
 let acIdx = -1;
@@ -1017,17 +970,14 @@ async function parseImportFile() {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
 
-      // Detectar si es un export propio de Kapital Manager
       const isKapitalExport = wb.SheetNames.includes("Transacciones") && wb.SheetNames.includes("Cartera");
 
       if (isKapitalExport) {
-        // Leer hoja Transacciones directamente — ya tiene el formato correcto
         const txSheet = wb.Sheets["Transacciones"];
         const txRows = XLSX.utils.sheet_to_json(txSheet, { header: 1, raw: false, defval: "" });
         const txHeaders = txRows[0]?.map(h => String(h||"").trim()) || [];
         const txData = txRows.slice(1).filter(r => r.some(v => String(v||"").trim() !== ""));
 
-        // Mapear columnas del export propio: Fecha, Ticker, Tipo, Acciones, Precio, Comisión, Divisa, Notas
         const get = (row, ...names) => {
           for (const n of names) {
             const i = txHeaders.findIndex(h => h === n);
@@ -1054,7 +1004,6 @@ async function parseImportFile() {
           return;
         }
 
-        // También leer Cartera para recuperar nombres y sectores
         const cartSheet = wb.Sheets["Cartera"];
         const cartRows = XLSX.utils.sheet_to_json(cartSheet, { header: 1, raw: false, defval: "" });
         const cartHeaders = cartRows[0]?.map(h=>String(h||"").trim())||[];
@@ -1074,9 +1023,8 @@ async function parseImportFile() {
         state.importPreview = txs;
 
         if (status) status.innerHTML = `✅ Export de Kapital Manager detectado: <b>${txs.length} transacciones</b> listas para importar.`;
-        if (mapWrap) mapWrap.style.display = "none"; // no hace falta mapeo manual
+        if (mapWrap) mapWrap.style.display = "none"; 
 
-        // Mostrar preview directamente
         const prevWrap2 = document.getElementById("import-preview-wrap");
         if (prevWrap2) {
           prevWrap2.style.display = "block";
@@ -1085,10 +1033,9 @@ async function parseImportFile() {
             <tbody>${txs.slice(0,10).map(t=>`<tr><td>${t.date}</td><td style="color:#1d4ed8;font-weight:700">${t.ticker}</td><td>${t.type}</td><td>${t.shares}</td><td>${t.price||"—"}</td></tr>`).join("")}
             ${txs.length>10?`<tr><td colspan="5" style="color:#94a3b8;font-size:11px;text-align:center">... y ${txs.length-10} más</td></tr>`:""}</tbody></table></div>`;
         }
-        return; // salir del flujo normal
+        return; 
       }
 
-      // Excel genérico — coger primera hoja
       const sheet = wb.Sheets[wb.SheetNames[0]];
       rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
     } else {
@@ -1391,9 +1338,6 @@ function confirmImportBroker() {
   alert(`✅ Importación completada: ${txs.length} transacciones añadidas y cartera actualizada`);
 }
 
-// ─────────────────────────────────────────────
-// RENDER HEADER
-// ─────────────────────────────────────────────
 function renderHeader() {
   try {
   const totals = state.positions.reduce((acc,p)=>{
@@ -1427,9 +1371,6 @@ function renderHeader() {
   } catch(e) { console.error("renderHeader error:", e); }
 }
 
-// ─────────────────────────────────────────────
-// TABS
-// ─────────────────────────────────────────────
 function renderTabs() {
   document.getElementById("tabs-bar").innerHTML = TABS.map((t,i)=>
     `<button class="tab-btn ${state.activeTab===i?"active":""}" onclick="switchTab(${i})">${esc(t)}</button>`
@@ -1461,9 +1402,45 @@ function renderActiveTab() {
   }
 }
 
-// ─────────────────────────────────────────────
-// TAB 0 — CARTERA
-// ─────────────────────────────────────────────
+// --- NUEVAS FUNCIONES DE LOGO (SOLUCIÓN AVANZADA) ---
+function getLogoUrl(ticker, name) {
+  const LOGO_MAP = {
+    "ACS.MC":"acs.es","ACX.MC":"acerinox.com","IBE.MC":"iberdrola.com",
+    "REP.MC":"repsol.com","MAP.MC":"mapfre.com","TEF.MC":"telefonica.com",
+    "ENG.MC":"enagás.es","LOG.MC":"logista.com","MCM.MC":"miquelycostas.com",
+    "AMS.MC":"amadeus.com","ELE.MC":"endesa.com","EBRO.MC":"ebrofoods.com",
+    "CAF.MC":"caf.net","BME.MC":"bolsasymercados.es","NTGY.MC":"naturgy.com",
+    "RED.MC":"ree.es","CIE.MC":"ciautomotive.com","VIS.MC":"viscofan.com",
+    "TRE.MC":"tecnicas-reunidas.com","NXT.MC":"nextil.com",
+    "MMM":"3m.com","KO":"coca-cola.com","PG":"pg.com","JNJ":"jnj.com",
+    "VZ":"verizon.com","MO":"altria.com","PFE":"pfizer.com",
+    "WPC":"wpcarey.com","CVS":"cvshealth.com","TROW":"troweprice.com",
+    "BEN":"franklinresources.com","NWN":"nwnatural.com","UVV":"universalcorp.com",
+    "KHC":"kraftheinzcompany.com","BATS.L":"bat.com","BTI":"bat.com",
+    "INTC":"intel.com","KNOP":"knotoffshore.com","WPC":"wpcarey.com"
+  };
+  const domain = LOGO_MAP[ticker];
+  if (domain) {
+    // Usamos un proxy público para evitar CORS (images.weserv.nl)
+    return `https://images.weserv.nl/?url=${encodeURIComponent(`https://logo.clearbit.com/${domain}`)}`;
+  }
+  const cleanName = (name||ticker).toLowerCase().replace(/[^a-z0-9]/g," ").trim().split(" ")[0];
+  return `https://images.weserv.nl/?url=${encodeURIComponent(`https://logo.clearbit.com/${cleanName}.com`)}`;
+}
+
+function createLogoHtml(ticker, name) {
+  const color = PIE_COLORS[state.positions.findIndex(p=>p.ticker===ticker) % PIE_COLORS.length] || "#2563eb";
+  const shortTicker = ticker.replace(".MC", "").replace(".L", "").replace(".PA", "").replace(".MI", "");
+  const url = getLogoUrl(ticker, name);
+  
+  return `<div class="pos-logo-wrap">
+    <img class="pos-logo" src="${url}" alt="${esc(ticker)}" 
+      onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'; this.nextElementSibling.innerText='${esc(shortTicker.slice(0,3))}'; this.nextElementSibling.style.background='${color}';">
+    <div class="pos-logo-fallback" style="display:none;background:${color};">${esc(shortTicker.slice(0,3))}</div>
+  </div>`;
+}
+
+// TAB 0 — CARTERA (MODIFICADO PARA INCLUIR LOGOS)
 function renderPortfolio() {
   const filter = (document.getElementById("port-filter")||{}).value||"";
   let rows = state.positions.filter(p=>
@@ -1499,8 +1476,8 @@ function renderPortfolio() {
   const tbody = rows.map(pos => {
     const cp=state.priceCache[pos.ticker];
     const inv=posToEUR(pos.shares*pos.avg_cost, pos);
-    const cpE=cp?posToEUR(cp, pos):null;           // precio/acción en EUR (ya corregido de peniques)
-    const curE=cpE!==null?pos.shares*cpE:null;     // valor total en EUR
+    const cpE=cp?posToEUR(cp, pos):null;           
+    const curE=cpE!==null?pos.shares*cpE:null;     
     const pnl=curE!==null?curE-inv:null;
     const pct=pnl!==null&&inv?pnl/inv*100:null;
     const pc=pnl!==null?pnlColor(pnl):"#94a3b8";
@@ -1508,8 +1485,14 @@ function renderPortfolio() {
     const yld=di?(di.div_yield||0)*100:null;
     const yc=yld?(yld>=4?"#16a34a":yld>=2?"#b45309":"#dc2626"):"#94a3b8";
     const sel=state.selectedTicker===pos.ticker;
+
+    const logoHtml = createLogoHtml(pos.ticker, pos.name);
+
     return `<tr style="${sel?"background:#eff6ff!important":""}" onclick="selectTicker('${esc(pos.ticker)}')">
-      <td style="color:#1d4ed8;font-weight:700">${esc(pos.ticker)}</td>
+      <td style="color:#1d4ed8;font-weight:700;display:flex;align-items:center;">
+        ${logoHtml}
+        ${esc(pos.ticker)}
+      </td>
       <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pos.name)}</td>
       <td style="text-align:center">${Math.round(pos.shares)}</td>
       <td style="text-align:right">${fmtEUR(posToEUR(pos.avg_cost, pos))}</td>
@@ -1575,9 +1558,6 @@ function selectTicker(tk) {
   renderActiveTab();
 }
 
-// ─────────────────────────────────────────────
-// TAB 1 — ALERTAS
-// ─────────────────────────────────────────────
 function renderAlerts() {
   const rows = state.alerts.map(a=>{
     const cond=a.direction==="ABOVE"?"↑ Sube a":"↓ Baja a";
@@ -1600,9 +1580,6 @@ function renderAlerts() {
 }
 function deleteAlert(id){ state.alerts=state.alerts.filter(a=>a.id!==id); save(); renderActiveTab(); renderHeader(); }
 
-// ─────────────────────────────────────────────
-// TAB 2 — DIVIDENDOS
-// ─────────────────────────────────────────────
 function retencionOrigenPct(ticker, currency) {
   const t = String(ticker || "").toUpperCase();
   if (t.endsWith(".MC") || t.endsWith(".MAD")) return 0.19;
@@ -1706,9 +1683,6 @@ function renderDividends() {
 }
 function deleteDividend(id){ state.dividends=state.dividends.filter(d=>d.id!==id); save(); renderActiveTab(); }
 
-// ─────────────────────────────────────────────
-// TAB 3 — TRANSACCIONES
-// ─────────────────────────────────────────────
 function renderTransactions() {
   const rows = state.transactions.map(t => `
     <tr>
@@ -1746,32 +1720,6 @@ function renderTransactions() {
 
 function deleteTransaction(id){ if(!confirm("¿Eliminar esta transacción?")) return; state.transactions=state.transactions.filter(t=>t.id!==id); save(); renderActiveTab(); }
 
-// ─────────────────────────────────────────────
-// TAB 4 — GRÁFICOS
-// ─────────────────────────────────────────────
-function getLogoUrl(ticker, name) {
-  // Mapeo especial para tickers españoles y otros sin dominio obvio
-  const LOGO_MAP = {
-    "ACS.MC":"acs.es","ACX.MC":"acerinox.com","IBE.MC":"iberdrola.com",
-    "REP.MC":"repsol.com","MAP.MC":"mapfre.com","TEF.MC":"telefonica.com",
-    "ENG.MC":"enagás.es","LOG.MC":"logista.com","MCM.MC":"miquelycostas.com",
-    "AMS.MC":"amadeus.com","ELE.MC":"endesa.com","EBRO.MC":"ebrofoods.com",
-    "CAF.MC":"caf.net","BME.MC":"bolsasymercados.es","NTGY.MC":"naturgy.com",
-    "RED.MC":"ree.es","CIE.MC":"ciautomotive.com","VIS.MC":"viscofan.com",
-    "TRE.MC":"tecnicas-reunidas.com","NXT.MC":"nextil.com",
-    "MMM":"3m.com","KO":"coca-cola.com","PG":"pg.com","JNJ":"jnj.com",
-    "VZ":"verizon.com","MO":"altria.com","PFE":"pfizer.com",
-    "WPC":"wpcarey.com","CVS":"cvshealth.com","TROW":"troweprice.com",
-    "BEN":"franklinresources.com","NWN":"nwnatural.com","UVV":"universalcorp.com",
-    "KHC":"kraftheinzcompany.com","BATS.L":"bat.com","BTI":"bat.com"
-  };
-  const domain = LOGO_MAP[ticker];
-  if (domain) return `https://logo.clearbit.com/${domain}`;
-  // Fallback: intentar con nombre de empresa
-  const cleanName = (name||ticker).toLowerCase().replace(/[^a-z0-9]/g," ").trim().split(" ")[0];
-  return `https://logo.clearbit.com/${cleanName}.com`;
-}
-
 function renderDonutByPosition(totalVal) {
   const allPos = [...state.positions]
     .map(p => ({ ...p, val: posToEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares, p) }))
@@ -1781,10 +1729,9 @@ function renderDonutByPosition(totalVal) {
   if (!allPos.length) return "";
   const total = allPos.reduce((s,p) => s+p.val, 0) || 1;
 
-  // Construir segmentos SVG donut
   const R = 90, r = 54, cx = 110, cy = 110;
   const TAU = 2 * Math.PI;
-  let angle = -Math.PI / 2; // empezar arriba
+  let angle = -Math.PI / 2; 
   const segments = allPos.map((p, i) => {
     const pct = p.val / total;
     const sweep = pct * TAU;
@@ -1796,7 +1743,6 @@ function renderDonutByPosition(totalVal) {
     const xi2 = cx + r * Math.cos(a2), yi2 = cy + r * Math.sin(a2);
     const large = sweep > Math.PI ? 1 : 0;
     const color = PIE_COLORS[i % PIE_COLORS.length];
-    // Label si el segmento es suficientemente grande
     const midA = a1 + sweep/2;
     const labelR = (R + r) / 2;
     const lx = cx + labelR * Math.cos(midA);
@@ -1808,17 +1754,15 @@ function renderDonutByPosition(totalVal) {
   const svgPaths = segments.map(s => s.path).join("");
   const svgLabels = segments.map(s => s.label).join("");
 
-  // Lista de empresas con logo
   const listItems = allPos.map((p, i) => {
     const pct = (p.val/total*100).toFixed(1);
     const color = PIE_COLORS[i % PIE_COLORS.length];
-    const logo = getLogoUrl(p.ticker, p.name);
+    
+    // Usamos el mismo helper de logo que en la tabla
+    const logoHtml = createLogoHtml(p.ticker, p.name);
+
     return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f1f5f9">
-      <div style="width:36px;height:36px;border-radius:50%;overflow:hidden;background:#f1f5f9;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:2px solid ${color}">
-        <img src="${logo}" style="width:28px;height:28px;object-fit:contain;border-radius:50%"
-          onerror="this.style.display='none';this.parentNode.innerHTML='<span style=\\'font-size:9px;font-weight:700;color:${color};text-align:center;line-height:1.1\\'>${esc(p.ticker.replace(".MC","").replace(".L","").slice(0,4))}</span>'"
-        />
-      </div>
+      ${logoHtml}
       <div style="flex:1;min-width:0">
         <div style="font-size:12px;font-weight:700;color:#1d4ed8">${esc(p.ticker)}</div>
         <div style="font-size:11px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name||"")}</div>
@@ -1919,9 +1863,6 @@ function renderCharts() {
   </div>`;
 }
 
-// ─────────────────────────────────────────────
-// TAB 5 — OBJETIVOS
-// ─────────────────────────────────────────────
 function renderGoals() {
   const curVal=state.positions.reduce((s,p)=>s+posToEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares, p),0);
   const goal=parseFloat((document.getElementById("g-goal")||{}).value||100000);
@@ -1991,9 +1932,6 @@ function calcProjection() {
   state._projData=rows; renderActiveTab();
 }
 
-// ─────────────────────────────────────────────
-// TAB 6 — VALORACIÓN IA
-// ─────────────────────────────────────────────
 function toggleMethodInfo(key) {
   const el = document.getElementById('method-info-'+key);
   if (!el) return;
@@ -2001,13 +1939,10 @@ function toggleMethodInfo(key) {
 }
 
 function createValAlert(ticker, name, perFwd, yieldPct) {
-  // Precio óptimo: basado en el PER_fwd y precio actual disponible, con descuento del 10%.
-  // Si no hay precio actual, pedimos al usuario que lo confirme.
   const livePrice = state.priceCache[ticker];
   let suggestedPrice = null;
 
   if (livePrice) {
-    // Precio óptimo = precio actual con descuento del 10% como margen de seguridad
     suggestedPrice = +(livePrice * 0.90).toFixed(2);
   }
 
@@ -2129,7 +2064,6 @@ async function analyzeValuation() {
   state._valError = "";
   renderActiveTab();
 
-  // Datos reales primero: precio y dividendo (mismo mecanismo que ya usa el resto de la app)
   const [livePrice, divData] = await Promise.all([
     fetchWithProxy(PROXIES, ticker),
     fetchDividendData(ticker)
@@ -2146,7 +2080,6 @@ async function analyzeValuation() {
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
 
-    // El dato de yield/dividendo real (ya calculado en la app) manda sobre lo que estime la IA
     if (divData?.yield != null && data?.metrics) {
       data.metrics.Yield_pct = +(divData.yield*100).toFixed(2);
     }
@@ -2158,13 +2091,11 @@ async function analyzeValuation() {
   }
   state._valLoading = false;
 
-  // Registrar precio y yield en cache si los obtuvimos
   if (livePrice) state.priceCache[ticker] = livePrice;
   if (divData) state.yieldCache[ticker] = divData;
 
   renderActiveTab();
 
-  // Configurar autocompletado para futuras búsquedas
   setTimeout(() => {
     setupAutocomplete("val-ticker", r => {
       state._valTicker = r.ticker;
@@ -2174,9 +2105,6 @@ async function analyzeValuation() {
   }, 100);
 }
 
-// ─────────────────────────────────────────────
-// MODALES
-// ─────────────────────────────────────────────
 function openModal(html) {
   document.getElementById("modal-box").innerHTML = html;
   document.getElementById("modal-overlay").style.display = "flex";
@@ -2221,7 +2149,6 @@ function openAddPos() {
     const exchCur = {"MCE":"EUR","MAD":"EUR","NYQ":"USD","NMS":"USD","NGM":"USD","ASE":"USD","LSE":"GBP","FRA":"EUR","PAR":"EUR","AMS":"EUR","MIL":"EUR","TSX":"CAD","ASX":"AUD","TYO":"JPY","HKG":"HKD"}[r.exchange]||"USD";
     const sel = document.getElementById("m-cur");
     if (sel && CURRENCIES.includes(exchCur)) { sel.value = exchCur; updateFXField(); }
-    // Auto-rellenar sector si no está ya seleccionado
     const sectorSel = document.getElementById("m-sector");
     if (sectorSel && !sectorSel.value) {
       const guessed = guessSectorFromNameOrTicker(r.ticker, r.name);
@@ -2250,11 +2177,10 @@ function updateFXField() {
   } else {
     row.style.display = "block";
     if (lbl) lbl.textContent = cur;
-    // Rellenar con el tipo actual si está disponible
     if (inp && (!inp.value || +inp.value === 0)) {
-      const fxKey = cur; // fxCache guarda como "USD" -> EUR/USD
-      const rate = state.fxCache[fxKey]; // EUR por 1 unidad de divisa
-      if (rate) inp.value = +(1/rate).toFixed(4); // convertir a EUR/divisa
+      const fxKey = cur; 
+      const rate = state.fxCache[fxKey]; 
+      if (rate) inp.value = +(1/rate).toFixed(4); 
     }
     updateFXPreview();
   }
@@ -2285,10 +2211,7 @@ function saveNewPos() {
   const currency=document.getElementById("m-cur").value;
   if(!ticker||shares<=0){alert("Ticker y acciones son obligatorios");return;}
 
-  // Tipo de cambio en el momento de la compra (EUR por unidad de divisa)
-  // m-fx-rate guarda el valor como EUR/divisa → convertimos a divisa/EUR para calcular luego
   const fxRawInput = +document.getElementById("m-fx-rate")?.value || 0;
-  // Si divisa EUR, fx_rate = 1 siempre
   const fx_rate = currency === "EUR" ? 1 : (fxRawInput > 0 ? fxRawInput : (state.fxCache[currency] ? +(1/state.fxCache[currency]).toFixed(4) : 1));
 
   const pos={ticker,name:document.getElementById("m-name").value||ticker,shares,avg_cost:cost,currency,sector:document.getElementById("m-sector").value,date:document.getElementById("m-date").value,fx_rate};
@@ -2330,7 +2253,6 @@ function openEditPos(ticker) {
       <button class="btn-gray" onclick="closeModal()">Cancelar</button>
       <button class="btn" onclick="saveEditPos('${esc(pos.ticker)}')">💾 Guardar</button>
     </div>`);
-  // Rellenar preview si ya hay valor
   if (!isEUR) setTimeout(updateFXPreview, 50);
 }
 
@@ -2435,18 +2357,13 @@ function saveDividendModal() {
   save(); closeModal(); renderActiveTab();
 }
 
-// ─────────────────────────────────────────────
-// TAB 7 — DECLARACIÓN DE LA RENTA
-// ─────────────────────────────────────────────
 function renderRenta() {
   const now = new Date();
-  const ejercicio = now.getFullYear() - 1; // Año anterior
+  const ejercicio = now.getFullYear() - 1; 
   const yearStr = String(ejercicio);
 
-  // ── 1. DIVIDENDOS COBRADOS EN EL EJERCICIO ──
   const divEjercicio = state.dividends.filter(d => (d.date||"").startsWith(yearStr));
 
-  // Agrupar por ticker
   const divPorTicker = {};
   divEjercicio.forEach(d => {
     const tk = d.ticker;
@@ -2459,21 +2376,20 @@ function renderRenta() {
     divPorTicker[tk].count++;
   });
 
-  // Retención en origen estimada por país (basada en divisa/ticker)
   function retencionOrigen(ticker, currency) {
-    if (ticker.endsWith(".MC") || currency==="EUR") return 0.19;  // España: no hay doble imposición
-    if (currency==="USD") return 0.15;     // USA: retención en origen 15% (convenio)
-    if (currency==="GBP") return 0.00;     // UK: sin retención en origen sobre dividendos
-    if (ticker.endsWith(".SW") || ticker.endsWith(".VX")) return 0.35; // Suiza: 35%
-    if (ticker.endsWith(".PA") || ticker.endsWith(".NX")) return 0.128; // Francia: 12.8%
-    if (ticker.endsWith(".DE") || ticker.endsWith(".F")) return 0.25;   // Alemania: 25%
-    if (ticker.endsWith(".AS")) return 0.15; // Holanda: 15%
-    if (ticker.endsWith(".MI")) return 0.26; // Italia: 26%
-    if (ticker.endsWith(".LS")) return 0.28; // Portugal: 28%
-    return 0.15; // Estimación genérica
+    if (ticker.endsWith(".MC") || currency==="EUR") return 0.19;  
+    if (currency==="USD") return 0.15;     
+    if (currency==="GBP") return 0.00;     
+    if (ticker.endsWith(".SW") || ticker.endsWith(".VX")) return 0.35; 
+    if (ticker.endsWith(".PA") || ticker.endsWith(".NX")) return 0.128; 
+    if (ticker.endsWith(".DE") || ticker.endsWith(".F")) return 0.25;   
+    if (ticker.endsWith(".AS")) return 0.15; 
+    if (ticker.endsWith(".MI")) return 0.26; 
+    if (ticker.endsWith(".LS")) return 0.28; 
+    return 0.15; 
   }
 
-  const retencionESP = 0.19; // Retención Hacienda española sobre dividendos
+  const retencionESP = 0.19; 
 
   const divRows = Object.values(divPorTicker).map(d => {
     const retOr = retencionOrigen(d.ticker, d.currency);
@@ -2481,7 +2397,6 @@ function renderRenta() {
     const brutoEUR = +(toEUR(d.bruto, d.currency)).toFixed(2);
     const retOrEUR = +(toEUR(retOrImporte, d.currency)).toFixed(2);
     const retEsp = +(brutoEUR * retencionESP).toFixed(2);
-    // Deducible: lo ya retenido en origen (con límite del convenio, normalmente 15%)
     const limConvenio = Math.min(retOr, 0.15);
     const deducibleOrigen = +(brutoEUR * limConvenio).toFixed(2);
     const retEspNeta = +(Math.max(0, retEsp - deducibleOrigen)).toFixed(2);
@@ -2496,7 +2411,6 @@ function renderRenta() {
     retEspNeta: divRows.reduce((s,d)=>s+d.retEspNeta,0),
   };
 
-  // ── 2. PLUSVALÍAS / MINUSVALÍAS (VENTAS EN EL EJERCICIO) ──
   const ventasEjercicio = state.transactions.filter(t => t.type==="SELL" && (t.date||"").startsWith(yearStr));
 
   const pvRows = ventasEjercicio.map(t => {
@@ -2505,9 +2419,7 @@ function renderRenta() {
     const coste = pos?.avg_cost || 0;
     const precioVenta = t.price;
     const acciones = t.shares;
-    // Coste fiscal en EUR: se usa el tipo de cambio histórico guardado en la posición
     const costeTotalEUR = +(toEURhist(coste * acciones, pos)).toFixed(2);
-    // Ingreso en EUR: se usa el tipo guardado en la transacción de venta (si existe), si no el actual
     const fxVenta = t.fx_rate && t.fx_rate !== 1 ? t.fx_rate : null;
     const ingresoTotal = fxVenta
       ? +((precioVenta * acciones) / fxVenta).toFixed(2)
@@ -2543,7 +2455,6 @@ function renderRenta() {
   const minusvalias = pvRows.filter(r=>r.resultado<0).reduce((s,r)=>s+r.resultado,0);
   const saldoNeto = +(plusvalias + minusvalias).toFixed(2);
 
-  // ── 3. BASE IMPONIBLE DEL AHORRO y TIPOS ──
   const baseAhorro = +(totDiv.bruto + saldoNeto).toFixed(2);
 
   function tipoMarginalAhorro(base) {
@@ -2569,10 +2480,6 @@ function renderRenta() {
   const cuotaBruta = cuotaAhorro(baseAhorro);
   const cuotaNeta = +(Math.max(0, cuotaBruta - totDiv.deducibleOrigen - totDiv.retEspNeta)).toFixed(2);
 
-  // ── 4. CASILLAS IRPF ORIENTATIVAS ──
-  // (basadas en modelo IRPF vigente, orientativas, no vinculantes)
-
-  // ── RENDER ──
   const fmtPct = v => (v*100).toFixed(1)+"%";
   const fmtN = v => v?.toFixed(2)+"€";
 
@@ -2602,7 +2509,6 @@ function renderRenta() {
 
   return `<div style="padding:16px;max-width:960px;margin:0 auto">
 
-    <!-- CABECERA DEL INFORME -->
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:12px">
       <div>
         <h2 style="font-size:17px;font-weight:800;color:#1e293b;margin-bottom:2px">🧾 Informe fiscal — Ejercicio ${yearStr}</h2>
@@ -2611,12 +2517,10 @@ function renderRenta() {
       <button class="btn" onclick="printRenta()" style="font-size:12px;padding:8px 16px">🖨️ Imprimir / Guardar PDF</button>
     </div>
 
-    <!-- AVISO LEGAL -->
     <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:10px;padding:12px 14px;font-size:11px;color:#92400e;margin-bottom:20px;line-height:1.6">
       ⚠️ <strong>Aviso:</strong> Este informe es meramente orientativo y se basa en los datos que has introducido en la app. Las retenciones en origen son estimaciones según convenios de doble imposición. Consulta siempre con un asesor fiscal o gestor antes de presentar tu declaración. Los importes pueden diferir de los datos que aparecen en tu borrador de la AEAT.
     </div>
 
-    <!-- RESUMEN EJECUTIVO -->
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:20px">
       ${[
         ["Dividendos brutos",fmtEUR(totDiv.bruto),"#2563eb"],
@@ -2631,7 +2535,6 @@ function renderRenta() {
       </div>`).join("")}
     </div>
 
-    <!-- SECCIÓN 1: DIVIDENDOS -->
     <div class="card" style="margin-bottom:16px">
       <h3 style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:12px">📊 Dividendos cobrados en ${yearStr}</h3>
       <div style="overflow-x:auto">
@@ -2652,7 +2555,6 @@ function renderRenta() {
         </table>
       </div>
 
-      <!-- CASILLAS IRPF DIVIDENDOS -->
       ${divRows.length?`<div style="margin-top:14px;background:#eff6ff;border-radius:8px;padding:12px;font-size:11px">
         <div style="font-weight:700;color:#1d4ed8;margin-bottom:8px">📋 Casillas orientativas IRPF — Rendimientos del capital mobiliario</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px">
@@ -2670,7 +2572,6 @@ function renderRenta() {
       </div>`:""}
     </div>
 
-    <!-- SECCIÓN 2: PLUSVALÍAS Y MINUSVALÍAS -->
     <div class="card" style="margin-bottom:16px">
       <h3 style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:12px">📈 Ganancias y pérdidas patrimoniales — Ventas en ${yearStr}</h3>
       <div style="overflow-x:auto">
@@ -2715,7 +2616,6 @@ function renderRenta() {
       </div>`:""}
     </div>
 
-    <!-- SECCIÓN 3: RESUMEN FISCAL -->
     <div class="card" style="margin-bottom:16px;border:2px solid #7c3aed22">
       <h3 style="font-size:13px;font-weight:700;color:#7c3aed;margin-bottom:12px">🧮 Resumen fiscal estimado — Base del ahorro ${yearStr}</h3>
       <div style="font-size:11px;color:#475569;line-height:2">
@@ -2730,7 +2630,6 @@ function renderRenta() {
       <div style="margin-top:8px;font-size:10px;color:#94a3b8">Tipo marginal aplicable estimado: ${tipoMarginalAhorro(baseAhorro)} · Tramos 2024 (Ley 35/2006 IRPF)</div>
     </div>
 
-    <!-- SECCIÓN 4: NOTAS Y CONSEJO -->
     <div style="background:#f8fafc;border-radius:10px;padding:14px;font-size:11px;color:#475569;line-height:1.7">
       <div style="font-weight:700;color:#1e293b;margin-bottom:6px">💡 Notas importantes para tu declaración</div>
       <ul style="margin:0;padding-left:16px">
@@ -2752,9 +2651,6 @@ function acceptDisclaimer() {
   document.getElementById("disclaimer-overlay").style.display="none";
 }
 
-// ─────────────────────────────────────────────
-// LOGIN / ARRANQUE DE LA APP
-// ─────────────────────────────────────────────
 function updateLoginStatus() {
   const loginOverlay = document.getElementById("login-overlay");
   const emailLabel = document.getElementById("user-email-label");
@@ -2774,7 +2670,6 @@ function updateLoginStatus() {
 
 async function startAppIfNeeded() {
   if (state._appStarted) {
-    // Ya estaba todo en marcha (p.ej. sesión restaurada): solo refrescamos vistas
     buildDivInfo();
     renderTabs();
     renderHeader();
@@ -2796,7 +2691,6 @@ async function startAppIfNeeded() {
   renderHeader();
   renderActiveTab();
 
-  // Configurar autocompletado en pestaña valoración al cambiar a ella
   document.getElementById("tabs-bar").addEventListener("click", () => {
     setTimeout(() => {
       if(state.activeTab===6) {
@@ -2809,7 +2703,6 @@ async function startAppIfNeeded() {
     }, 150);
   });
 
-  // Arrancar actualización de precios y dividendos reales en background
   refreshPrices();
   refreshDividendYields();
   startCountdown();
@@ -2818,7 +2711,7 @@ async function startAppIfNeeded() {
 async function init() {
   document.getElementById("disclaimer-overlay").style.display = "none";
   document.getElementById("login-overlay").style.display = "flex";
-  await loadMe(); // si ya hay sesión guardada en el navegador, entra directo
+  await loadMe(); 
 }
 
 init();
