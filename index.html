@@ -78,8 +78,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 .price-sim{background:#fef3c7;color:#92400e;}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid #e2e8f0;border-top-color:#2563eb;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;}
 @keyframes spin{to{transform:rotate(360deg)}}
-.company-logo{width:34px;height:34px;object-fit:contain;border-radius:50%;background:#fff;border:1px solid #e2e8f0;display:block;flex-shrink:0}
-</style>
+.company-logo{width:34px;height:34px;object-fit:contain;border-radius:50%;background:#fff;border:1px solid #e2e8f0;display:block;flex-shrink:0}.logo-fallback{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;background:#dbeafe;color:#1d4ed8;font-size:11px;font-weight:700;flex-shrink:0}.logo-attrib{position:fixed;left:12px;bottom:10px;z-index:60;font-size:10px;color:#94a3b8;background:rgba(255,255,255,.85);padding:4px 8px;border-radius:999px;text-decoration:none}</style>
 </head>
 <body>
 <div id="app">
@@ -305,6 +304,8 @@ const DEFAULT_PORTFOLIO = [
 
 const FX_FALLBACK = {USD:0.92,GBP:1.17,JPY:0.0062,CHF:1.02,CAD:0.68,AUD:0.60,EUR:1.0};
 const PIE_COLORS = ["#4ade80","#60a5fa","#f59e0b","#f87171","#a78bfa","#34d399","#fb923c","#38bdf8","#e879f9","#94a3b8","#fbbf24","#6366f1"];
+const TICKER_LOGOS_CDN = "https://cdn.tickerlogos.com";
+const TICKER_LOGOS_ATTR = "https://www.allinvestview.com/tools/ticker-logos/";
 const TABS = ["📋 Cartera","🔔 Alertas","💰 Dividendos","📝 Transacciones","📊 Gráficos","🎯 Objetivos","📐 Valoración","🧾 Renta"];
 const CURRENCIES = ["EUR","USD","GBP","CHF","CAD","AUD","JPY"];
 const SECTORS = ["Tecnología","Servicios Financieros","Salud","Consumo Cíclico","Consumo Defensivo","Energía","Materiales Básicos","Industria","Utilities","Inmobiliario","Comunicaciones"];
@@ -2840,26 +2841,3 @@ init();
 </script>
 </body>
 </html>
-
-function getAllInvestViewLogoDomain(ticker, name = "") {
-  const t = String(ticker || "").toUpperCase();
-  const n = String(name || "").toUpperCase();
-  const map = {"ACS.MC":"grupoacs.com","ACX.MC":"acerinox.com","IBE.MC":"iberdrola.com","MAP.MC":"mapfre.com","REP.MC":"repsol.com","LOG.MC":"logista.com","MCM.MC":"miquelycostas.com","TEF.MC":"telefonica.com","ENG.MC":"enagas.es","RED.MC":"redeia.com","ELE.MC":"endesa.com","BKT.MC":"bankinter.com","SAN.MC":"santander.com","BBVA.MC":"bbva.com","CABK.MC":"caixabank.com","EBRO.MC":"ebrofoods.com","ITX.MC":"inditex.com","AENA.MC":"aena.es","FER.MC":"ferrovial.com","MMM":"3m.com","BEN":"franklinresources.com","TROW":"troweprice.com","BTI":"bat.com","VZ":"verizon.com","KO":"coca-colacompany.com","KHC":"kraftheinzcompany.com","MO":"altria.com","UVV":"uvv.com","CVS":"cvshealth.com","PFE":"pfizer.com","WPC":"wpcarey.com","INTC":"intel.com","XOM":"exxonmobil.com","CVX":"chevron.com","NWN":"nwn.com"};
-  if (map[t]) return map[t];
-  if (n.includes("NORTHWEST NATURAL")) return "nwn.com";
-  if (n.includes("IBERDROLA")) return "iberdrola.com";
-  if (n.includes("MAPFRE")) return "mapfre.com";
-  if (n.includes("REPSOL")) return "repsol.com";
-  if (n.includes("ACERINOX")) return "acerinox.com";
-  if (n.includes("ACS")) return "grupoacs.com";
-  return "";
-}
-function getLogoUrl(ticker, name = "") {
-  const domain = getAllInvestViewLogoDomain(ticker, name);
-  return domain ? `https://cdn.tickerlogos.com/${domain}.png` : "";
-}
-function logoFallbackMarkup(text) {
-  const t = String(text || "").trim().toUpperCase();
-  const chars = (t.match(/[A-Z0-9]/g) || []).slice(0,2).join('');
-  return `<span style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;background:#dbeafe;color:#1d4ed8;font-size:11px;font-weight:700;flex-shrink:0">${chars || '?'}</span>`;
-}
