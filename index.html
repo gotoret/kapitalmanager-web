@@ -2050,76 +2050,56 @@ function saveValAlert() {
 }
 
 function renderValuation() {
-  const ticker=state._valTicker||"";
-  const result=state._valResult;
-  const loading=state._valLoading;
-  const error=state._valError||"";
-  const methodLabels={ddm:"DDM — Dividendos",epv:"EPV — Beneficios actuales",pe:"P/E Múltiplos",ev_ebitda:"EV/EBITDA",pb:"Price/Book",ev_revenue:"EV/Revenue",dcf_quality:"Calidad DCF",weiss:"Geraldine Weiss"};
-  const methodExplanations={
-    ddm:"Descuenta a valor presente los dividendos futuros esperados. Premia a empresas con dividendo estable y creciente en el tiempo.",
-    epv:"Earnings Power Value: valora la empresa según su capacidad actual de generar beneficios, sin asumir ningún crecimiento futuro — un enfoque conservador.",
-    pe:"Compara el PER (precio/beneficio) actual de la empresa con su media histórica y la de su sector, para ver si cotiza cara o barata.",
-    ev_ebitda:"Compara el valor total de la empresa (incluida la deuda) frente a su EBITDA. Útil para comparar empresas con distinta estructura financiera.",
-    pb:"Price/Book: compara el precio de la acción con el valor contable de sus activos netos.",
-    ev_revenue:"Compara el valor de la empresa con sus ingresos totales. Útil en sectores de bajo margen o alto crecimiento donde el beneficio aún no es representativo.",
-    dcf_quality:"Evalúa la calidad y previsibilidad de los flujos de caja futuros de la empresa, la base de cualquier descuento de flujos (DCF).",
-    weiss:"Método de Geraldine Weiss: compara el yield (rentabilidad por dividendo) actual con su rango histórico propio para detectar si la acción cotiza barata o cara según su dividendo."
-  };
+  const ticker = state._valTicker || "";
+  const result = state._valResult;
+  const loading = state._valLoading;
+  const error = state._valError || "";
+  const company = result || null;
 
-  let resultHtml="";
-  if(result){
-    const scores=Object.values(result.scores||{});
-    const overall=scores.length?Math.round(scores.reduce((a,b)=>a+b,0)/scores.length):0;
-    const oc=overall>=70?"#16a34a":overall>=40?"#f59e0b":"#ef4444";
-    const scoreBars=Object.entries(result.scores||{}).map(([k,v])=>{
-      const c=v>=70?"#16a34a":v>=40?"#f59e0b":"#ef4444";
-      const expl=methodExplanations[k]||"";
-      return `<div style="margin-bottom:9px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;font-size:12px">
-          <span style="color:#475569;display:flex;align-items:center;gap:5px">${methodLabels[k]||k}<span onclick="toggleMethodInfo('${k}')" title="Cómo se calcula" style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:700;cursor:pointer;flex-shrink:0">?</span></span>
-          <span style="color:${c};font-weight:700">${v}/100</span>
-        </div>
-        <div style="background:#e2e8f0;border-radius:6px;height:8px"><div style="background:${c};border-radius:6px;height:8px;width:${v}%"></div></div>
-        <div id="method-info-${k}" style="display:none;font-size:11px;color:#64748b;background:#f8fafc;border-radius:6px;padding:7px 9px;margin-top:5px;line-height:1.45">${esc(expl)}</div>
-      </div>`;
-    }).join("");
-    const metricRows=Object.entries(result.metrics||{}).map(([k,v])=>
-      `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:12px">
-        <span style="color:#64748b">${k.replace(/_/g," ")}</span><span style="font-weight:600">${v!==null&&v!==undefined?v:"—"}</span>
-      </div>`
-    ).join("");
-    resultHtml=`
-      <div style="background:#f0f7ff;border-radius:14px;border:1px solid #bfdbfe;padding:16px;margin-bottom:12px">
-        <div style="font-size:17px;font-weight:700;color:#1d4ed8">${esc(result.name)}</div>
-        <div style="font-size:12px;color:#475569;margin:2px 0 6px">${esc(result.ticker)} · ${esc(result.sector)}</div>
-        <div style="font-size:12px;color:#64748b">${esc(result.description)}</div>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-bottom:12px">
-        <div class="card"><h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">📊 Puntuaciones por método</h4>${scoreBars}</div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-          <div class="card">
-            <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">🏆 Puntuación global</h4>
-            <div style="display:flex;align-items:center;gap:12px">
-              <span style="font-size:42px;font-weight:900;color:${oc};line-height:1">${overall}</span>
-              <span style="font-size:14px;color:#94a3b8">/100</span>
-              <span class="badge" style="background:${result.rec_color||"#2563eb"}22;color:${result.rec_color||"#2563eb"}">${esc(result.recommendation)}</span>
-            </div>
-          </div>
-          <div class="card"><h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">📋 Métricas clave</h4>${metricRows}</div>
+  const kpis = company ? [
+    {k:'Precio', v: company.metrics?.price ?? company.price ?? '—'},
+    {k:'P/E', v: company.metrics?.PER_fwd ?? company.metrics?.PER ?? '—'},
+    {k:'EV/EBITDA', v: company.metrics?.EV_EBITDA ?? company.metrics?.EV_EBITDA_fwd ?? '—'},
+    {k:'P/FCF', v: company.metrics?.P_FCF ?? '—'},
+    {k:'ROIC', v: company.metrics?.ROIC_pct ?? '—'},
+    {k:'FCF Yield', v: company.metrics?.FCFYield_pct ?? '—'}
+  ] : [];
+
+  const chartCard = (title, subtitle, body) => `
+    <div class="card" style="padding:14px">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;margin-bottom:10px;flex-wrap:wrap">
+        <div>
+          <h4 style="font-size:13px;font-weight:700;color:#1d4ed8">${title}</h4>
+          ${subtitle ? `<div style="font-size:11px;color:#64748b;margin-top:2px">${subtitle}</div>` : ''}
         </div>
       </div>
-      <div style="background:#f0fdf4;border-radius:14px;border:2px solid ${result.weiss_color||"#16a34a"}55;padding:16px">
-        <h4 style="font-size:13px;font-weight:700;color:${result.weiss_color||"#16a34a"};margin-bottom:6px">📘 Valoración Geraldine Weiss — Blue Chip Dividend Value</h4>
-        <div style="color:${result.weiss_color||"#16a34a"};font-weight:600;font-size:12px">${esc(result.weiss_verdict)}</div>
-      </div>
-      <div style="margin-top:12px;text-align:right">
-        <button class="btn" style="background:#059669;font-size:12px;padding:7px 16px" onclick="createValAlert('${esc(result.ticker||"")}','${esc(result.name||"")}',${result.metrics?.PER_fwd||0},${result.metrics?.Yield_pct||0})">🔔 Crear alerta de compra óptima</button>
-      </div>`;
-  }
+      ${body}
+    </div>`;
+
+  const emptyState = `<div class="card" style="padding:18px;background:#f8fafc;border-style:dashed">
+    <div style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:6px">Analiza una empresa</div>
+    <div style="font-size:12px;color:#64748b;line-height:1.5">Escribe un ticker o nombre arriba para cargar la vista de valoración con múltiplos, caja, márgenes y el rango histórico.</div>
+  </div>`;
+
+  const body = company ? `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px">
+      ${kpis.map(x => `<div class="metric-card"><div class="metric-label">${x.k}</div><div class="metric-value" style="font-size:16px">${x.v}</div></div>`).join('')}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px">
+      ${chartCard('1. Crecimiento', 'Ingresos, EBIT y beneficio neto', '<div id="val-chart-growth"></div>')}
+      ${chartCard('2. Caja', 'Flujo operativo y Free Cash Flow', '<div id="val-chart-cash"></div>')}
+      ${chartCard('3. Márgenes', 'Bruto, operativo y neto', '<div id="val-chart-margins"></div>')}
+      ${chartCard('4. Rentabilidad', 'ROIC y ROE', '<div id="val-chart-roic"></div>')}
+      ${chartCard('5. Balance', 'Deuda neta / EBITDA y cobertura', '<div id="val-chart-debt"></div>')}
+      ${chartCard('6. Precio vs fundamental', 'Precio frente a EPS / FCF / ventas', '<div id="val-chart-price"></div>')}
+      ${chartCard('7. Múltiplos históricos', 'P/E, P/FCF, EV/EBITDA', '<div id="val-chart-multiples"></div>')}
+      ${chartCard('8. Football field', 'Rango de valoración por método', '<div id="val-chart-field"></div>')}
+    </div>
+  ` : emptyState;
 
   return `<div style="padding:14px">
     <div style="background:#f0f7ff;border-radius:12px;border:1px solid #bfdbfe;padding:16px;margin-bottom:16px">
-      <h4 style="font-size:14px;font-weight:700;color:#1d4ed8;margin-bottom:10px">📐 Análisis de Valoración (IA)</h4>
+      <h4 style="font-size:14px;font-weight:700;color:#1d4ed8;margin-bottom:10px">📐 Análisis de Valoración</h4>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <div class="ac-wrap" style="flex:1;max-width:340px">
           <input id="val-ticker" class="inp-sm" placeholder="Escribe empresa o ticker: Iberdrola, KO, MSFT..." style="width:100%;background:#fff" value="${esc(ticker)}" onkeydown="if(event.key==='Enter')analyzeValuation()">
@@ -2127,9 +2107,9 @@ function renderValuation() {
         <button class="btn" onclick="analyzeValuation()" ${loading?"disabled":""} style="padding:6px 16px">${loading?`<span class="spinner"></span> Analizando...`:"🔍 Analizar"}</button>
       </div>
       ${error?`<div style="color:#dc2626;margin-top:10px;font-size:12px">⚠️ ${esc(error)}</div>`:""}
-      <div style="margin-top:8px;font-size:11px;color:#64748b">Escribe el nombre o ticker. Autocompletado activo con Yahoo Finance. Requiere conexión a internet.</div>
+      <div style="margin-top:8px;font-size:11px;color:#64748b">Autocompletado activo con Yahoo Finance.</div>
     </div>
-    ${resultHtml}
+    ${body}
   </div>`;
 }
 
@@ -2143,315 +2123,35 @@ async function analyzeValuation() {
   state._valError = "";
   renderActiveTab();
 
-  // Datos reales primero: precio y dividendo (mismo mecanismo que ya usa el resto de la app)
   const [livePrice, divData] = await Promise.all([
     fetchWithProxy(PROXIES, ticker),
     fetchDividendData(ticker)
   ]);
 
+  let data = null;
   try {
-    const { data, error } = await supabaseClient.functions.invoke('valuation', {
-      body: {
+    const res = await fetch(API.valuation, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         ticker,
         price: livePrice || null,
         realYieldPct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null
-      }
+      })
     });
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-
-    // El dato de yield/dividendo real (ya calculado en la app) manda sobre lo que estime la IA
-    if (divData?.yield != null && data?.metrics) {
-      data.metrics.Yield_pct = +(divData.yield*100).toFixed(2);
-    }
+    data = await res.json();
+    if (!res.ok || data?.error) throw new Error(data?.error || 'error');
+    if (divData?.yield != null && data?.metrics) data.metrics.Yield_pct = +(divData.yield*100).toFixed(2);
     state._valResult = data;
-    state._valError = "";
-  } catch(e) {
-    console.error('Error análisis IA:', e);
-    state._valError = "No se pudo conectar con el análisis IA. Comprueba tu conexión a internet.";
+  } catch (e) {
+    console.error(e);
+    state._valError = 'No se pudo cargar el análisis de valoración.';
   }
   state._valLoading = false;
-
-  // Registrar precio y yield en cache si los obtuvimos
   if (livePrice) state.priceCache[ticker] = livePrice;
   if (divData) state.yieldCache[ticker] = divData;
-
   renderActiveTab();
-
-  // Configurar autocompletado para futuras búsquedas
-  setTimeout(() => {
-    setupAutocomplete("val-ticker", r => {
-      state._valTicker = r.ticker;
-      const inp = document.getElementById("val-ticker");
-      if(inp) inp.value = r.ticker;
-    });
-  }, 100);
 }
-
-// ─────────────────────────────────────────────
-// MODALES
-// ─────────────────────────────────────────────
-function openModal(html) {
-  document.getElementById("modal-box").innerHTML = html;
-  document.getElementById("modal-overlay").style.display = "flex";
-}
-function closeModal() {
-  document.getElementById("modal-overlay").style.display = "none";
-}
-
-function openAddPos() {
-  const curFX = cur => cur === "EUR" ? null : (state.fxCache[cur] ? (1/state.fxCache[cur]).toFixed(4) : "");
-  openModal(`
-    <h3>＋ Nueva posición</h3>
-    <div class="field"><label>Ticker / Empresa</label>
-      <div class="ac-wrap"><input id="m-ticker" class="inp" placeholder="Escribe empresa o ticker: Iberdrola, Apple, SAN..."></div>
-    </div>
-    <div class="field"><label>Nombre empresa</label><input id="m-name" class="inp" placeholder="Se rellena automáticamente..."></div>
-    <div class="grid2">
-      <div class="field"><label>Nº acciones</label><input id="m-shares" type="number" class="inp" value="0" min="0" step="1"></div>
-      <div class="field"><label>Coste medio (en divisa local)</label><input id="m-cost" type="number" step="0.0001" class="inp" value="0" min="0" oninput="updateFXPreview()"></div>
-      <div class="field"><label>Divisa</label><select id="m-cur" class="inp" onchange="updateFXField()">${CURRENCIES.map(c=>`<option>${c}</option>`).join("")}</select></div>
-      <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">— Sector —</option>${SECTORS.map(s=>`<option>${s}</option>`).join("")}</select></div>
-    </div>
-    <div id="m-fx-row" style="display:none">
-      <div class="field" style="margin-bottom:4px">
-        <label style="display:flex;align-items:center;gap:6px">
-          Tipo de cambio en la compra (EUR/<span id="m-fx-cur-label">USD</span>)
-          <span style="background:#dbeafe;color:#1d4ed8;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600">tipo actual → editable</span>
-        </label>
-        <input id="m-fx-rate" type="number" step="0.0001" class="inp" placeholder="Ej: 1.08" oninput="updateFXPreview()">
-      </div>
-      <div id="m-fx-preview" style="font-size:11px;color:#059669;font-weight:600;padding:4px 10px;background:#f0fdf4;border-radius:6px;margin-bottom:10px"></div>
-    </div>
-    <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${new Date().toISOString().slice(0,10)}"></div>
-    <div id="m-price-preview" style="display:none;padding:8px 12px;background:#f0fdf4;border-radius:8px;font-size:12px;color:#065f46;font-weight:600;margin-bottom:10px"></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
-      <button class="btn" onclick="saveNewPos()">💾 Guardar</button>
-    </div>`);
-
-  setupAutocomplete("m-ticker", async r => {
-    document.getElementById("m-name").value = r.name||r.ticker;
-    const exchCur = {"MCE":"EUR","MAD":"EUR","NYQ":"USD","NMS":"USD","NGM":"USD","ASE":"USD","LSE":"GBP","FRA":"EUR","PAR":"EUR","AMS":"EUR","MIL":"EUR","TSX":"CAD","ASX":"AUD","TYO":"JPY","HKG":"HKD"}[r.exchange]||"USD";
-    const sel = document.getElementById("m-cur");
-    if (sel && CURRENCIES.includes(exchCur)) { sel.value = exchCur; updateFXField(); }
-    // Auto-rellenar sector si no está ya seleccionado
-    const sectorSel = document.getElementById("m-sector");
-    if (sectorSel && !sectorSel.value) {
-      const guessed = guessSectorFromNameOrTicker(r.ticker, r.name);
-      if (guessed) sectorSel.value = guessed;
-    }
-    const preview = document.getElementById("m-price-preview");
-    if (preview) { preview.style.display="block"; preview.textContent="⏳ Buscando precio actual..."; }
-    const price = await fetchWithProxy(PROXIES, r.ticker);
-    if (price && preview) {
-      preview.textContent = `✅ Precio actual en Yahoo Finance: ${price} ${exchCur}`;
-      const costInp = document.getElementById("m-cost");
-      if (costInp && (+costInp.value===0||costInp.value==="0")) { costInp.value = price; updateFXPreview(); }
-    } else if (preview) { preview.style.display="none"; }
-  });
-}
-
-function updateFXField() {
-  const cur = document.getElementById("m-cur")?.value || "EUR";
-  const row = document.getElementById("m-fx-row");
-  const lbl = document.getElementById("m-fx-cur-label");
-  const inp = document.getElementById("m-fx-rate");
-  if (!row) return;
-  if (cur === "EUR") {
-    row.style.display = "none";
-    if (inp) inp.value = "";
-  } else {
-    row.style.display = "block";
-    if (lbl) lbl.textContent = cur;
-    // Rellenar con el tipo actual si está disponible
-    if (inp && (!inp.value || +inp.value === 0)) {
-      const fxKey = cur; // fxCache guarda como "USD" -> EUR/USD
-      const rate = state.fxCache[fxKey]; // EUR por 1 unidad de divisa
-      if (rate) inp.value = +(1/rate).toFixed(4); // convertir a EUR/divisa
-    }
-    updateFXPreview();
-  }
-}
-
-function updateFXPreview() {
-  const cur = document.getElementById("m-cur")?.value || "EUR";
-  const ticker = (document.getElementById("m-ticker")?.value || "").trim().toUpperCase();
-  const cost = +document.getElementById("m-cost")?.value || 0;
-  const fx = +document.getElementById("m-fx-rate")?.value || 0;
-  const prev = document.getElementById("m-fx-preview");
-  if (!prev || cur === "EUR" || !fx || !cost) { if(prev) prev.textContent=""; return; }
-  const isGBp = ticker.endsWith(".L") && cur === "GBP";
-  if (isGBp) {
-    const costGBP = (cost / 100).toFixed(4);
-    const costEUR = (cost / 100 / fx).toFixed(4);
-    prev.textContent = `Coste en EUR: ${cost} GBp ÷ 100 = ${costGBP} GBP ÷ ${fx} = ${costEUR} €/acc`;
-  } else {
-    const costEUR = (cost / fx).toFixed(4);
-    prev.textContent = `Coste en EUR al tipo de compra: ${cost} ${cur} ÷ ${fx} = ${costEUR} €/acc`;
-  }
-}
-
-function saveNewPos() {
-  const ticker=(document.getElementById("m-ticker").value||"").trim().toUpperCase().split(" ")[0];
-  const shares=+document.getElementById("m-shares").value;
-  const cost=+document.getElementById("m-cost").value;
-  const currency=document.getElementById("m-cur").value;
-  if(!ticker||shares<=0){alert("Ticker y acciones son obligatorios");return;}
-
-  // Tipo de cambio en el momento de la compra (EUR por unidad de divisa)
-  // m-fx-rate guarda el valor como EUR/divisa → convertimos a divisa/EUR para calcular luego
-  const fxRawInput = +document.getElementById("m-fx-rate")?.value || 0;
-  // Si divisa EUR, fx_rate = 1 siempre
-  const fx_rate = currency === "EUR" ? 1 : (fxRawInput > 0 ? fxRawInput : (state.fxCache[currency] ? +(1/state.fxCache[currency]).toFixed(4) : 1));
-
-  const pos={ticker,name:document.getElementById("m-name").value||ticker,shares,avg_cost:cost,currency,sector:document.getElementById("m-sector").value,date:document.getElementById("m-date").value,fx_rate};
-  const idx=state.positions.findIndex(p=>p.ticker===ticker);
-  if(idx>=0) state.positions[idx]=pos; else state.positions.push(pos);
-  state.transactions.unshift({id:uid(),ticker,type:"BUY",shares,price:cost,date:pos.date,fx_rate,notes:"Posición inicial"});
-  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
-  refreshDividendYields();
-}
-
-function openEditPos(ticker) {
-  const tk=ticker||state.selectedTicker;
-  const pos=tk?state.positions.find(p=>p.ticker===tk):null;
-  if(!pos){alert("Selecciona una posición primero");return;}
-  const isEUR = pos.currency === "EUR";
-  const savedFX = pos.fx_rate && pos.fx_rate !== 1 ? pos.fx_rate : "";
-  openModal(`
-    <h3>✏ Editar posición — ${esc(pos.ticker)}</h3>
-    <div class="field"><label>Ticker</label><input class="inp" value="${esc(pos.ticker)}" readonly style="background:#f1f5f9;color:#64748b"></div>
-    <div class="field"><label>Nombre empresa</label><input id="m-name" class="inp" value="${esc(pos.name||"")}"></div>
-    <div class="grid2">
-      <div class="field"><label>Nº acciones</label><input id="m-shares" type="number" class="inp" value="${pos.shares}"></div>
-      <div class="field"><label>Coste medio (divisa local)</label><input id="m-cost" type="number" step="0.0001" class="inp" value="${pos.avg_cost}" oninput="updateFXPreview()"></div>
-      <div class="field"><label>Divisa</label><select id="m-cur" class="inp" onchange="updateFXField()">${CURRENCIES.map(c=>`<option ${c===pos.currency?"selected":""}>${c}</option>`).join("")}</select></div>
-      <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">— Sector —</option>${SECTORS.map(s=>`<option ${s===pos.sector?"selected":""}>${s}</option>`).join("")}</select></div>
-    </div>
-    <div id="m-fx-row" style="display:${isEUR?"none":"block"}">
-      <div class="field" style="margin-bottom:4px">
-        <label style="display:flex;align-items:center;gap:6px">
-          Tipo de cambio en la compra (EUR/<span id="m-fx-cur-label">${pos.currency}</span>)
-          ${savedFX ? `<span style="background:#dcfce7;color:#15803d;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600">valor guardado</span>` : `<span style="background:#dbeafe;color:#1d4ed8;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600">tipo actual → editable</span>`}
-        </label>
-        <input id="m-fx-rate" type="number" step="0.0001" class="inp" value="${savedFX||""}" placeholder="Ej: 1.08" oninput="updateFXPreview()">
-      </div>
-      <div id="m-fx-preview" style="font-size:11px;color:#059669;font-weight:600;padding:4px 10px;background:#f0fdf4;border-radius:6px;margin-bottom:10px"></div>
-    </div>
-    <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${pos.date||""}"></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
-      <button class="btn" onclick="saveEditPos('${esc(pos.ticker)}')">💾 Guardar</button>
-    </div>`);
-  // Rellenar preview si ya hay valor
-  if (!isEUR) setTimeout(updateFXPreview, 50);
-}
-
-function saveEditPos(ticker) {
-  const idx=state.positions.findIndex(p=>p.ticker===ticker);
-  if(idx<0)return;
-  const currency = document.getElementById("m-cur").value;
-  const fxRawInput = +document.getElementById("m-fx-rate")?.value || 0;
-  const fx_rate = currency === "EUR" ? 1 : (fxRawInput > 0 ? fxRawInput : (state.positions[idx].fx_rate || 1));
-  state.positions[idx]={...state.positions[idx],
-    name:document.getElementById("m-name").value,
-    shares:+document.getElementById("m-shares").value,
-    avg_cost:+document.getElementById("m-cost").value,
-    currency,
-    sector:document.getElementById("m-sector").value,
-    date:document.getElementById("m-date").value,
-    fx_rate
-  };
-  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
-}
-
-function deletePosition(ticker) {
-  const tk=ticker||state.selectedTicker;
-  if(!tk){alert("Selecciona una posición primero");return;}
-  if(!confirm(`¿Eliminar ${tk} de la cartera?`))return;
-  state.positions=state.positions.filter(p=>p.ticker!==tk);
-  state.selectedTicker=null;
-  buildDivInfo(); save(); renderHeader(); renderActiveTab();
-}
-
-function deleteCartera() {
-  if (!state.positions.length) { alert("La cartera ya está vacía."); return; }
-  if (!confirm(`⚠️ ¿Seguro que quieres ELIMINAR TODA LA CARTERA?\n\nSe borrarán las ${state.positions.length} posiciones que tienes actualmente. Esta acción no se puede deshacer.`)) return;
-  state.positions = [];
-  state.selectedTicker = null;
-  buildDivInfo(); save(); renderHeader(); renderActiveTab();
-}
-
-function openAddAlert(defaultTicker) {
-  const tickers=state.positions.map(p=>`<option ${p.ticker===(defaultTicker||state.selectedTicker)?"selected":""}>${esc(p.ticker)} — ${esc(p.name)}</option>`).join("");
-  openModal(`
-    <h3>🔔 Nueva alerta de precio</h3>
-    <div class="field"><label>Ticker</label><select id="m-a-ticker" class="inp">${tickers}</select></div>
-    <div class="field"><label>Condición</label>
-      <select id="m-a-dir" class="inp"><option value="ABOVE">↑ Sube por encima de</option><option value="BELOW">↓ Baja por debajo de</option></select>
-    </div>
-    <div class="field"><label>Precio objetivo (€)</label><input id="m-a-price" type="number" step="0.01" class="inp" value="0"></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
-      <button class="btn" onclick="saveAlertModal()">💾 Guardar</button>
-    </div>`);
-}
-
-function saveAlertModal() {
-  const ticker=(document.getElementById("m-a-ticker").value||"").split(" ")[0];
-  const direction=document.getElementById("m-a-dir").value;
-  const price=+document.getElementById("m-a-price").value;
-  if(!ticker||price<=0){alert("Completa todos los campos");return;}
-  state.alerts.push({id:uid(),ticker,direction,price,active:true,triggered:false,created_at:new Date().toISOString()});
-  save(); closeModal(); renderActiveTab(); renderHeader();
-}
-
-function openAddDividend() {
-  const opts=state.positions.map(p=>`<option value="${esc(p.ticker)}">${esc(p.ticker)} — ${esc(p.name)}</option>`).join("");
-  openModal(`
-    <h3>💰 Registrar dividendo cobrado</h3>
-    <div class="field"><label>Ticker</label><select id="m-d-ticker" class="inp" onchange="updateDivShares()">${opts}</select></div>
-    <div id="div-shares-info" style="font-size:11px;color:#64748b;margin-bottom:8px"></div>
-    <div class="grid2">
-      <div class="field"><label>Importe por acción</label><input id="m-d-amount" type="number" step="0.0001" class="inp" value="0" oninput="updateDivTotal()"></div>
-      <div class="field"><label>Nº acciones</label><input id="m-d-shares" type="number" class="inp" value="${state.positions[0]?.shares||0}" oninput="updateDivTotal()"></div>
-    </div>
-    <div class="field"><label>Notas</label><input id="m-d-notes" class="inp" placeholder="Opcional..."></div>
-    <div id="div-total-preview" style="margin-top:8px;padding:10px;background:#fef9c3;border-radius:8px;font-size:12px;color:#b45309;font-weight:600">Total cobrado: —</div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
-      <button class="btn" onclick="saveDividendModal()">💾 Guardar</button>
-    </div>`);
-  updateDivShares();
-}
-
-function updateDivShares() {
-  const tk=(document.getElementById("m-d-ticker")?.value||"").split(" ")[0];
-  const pos=state.positions.find(p=>p.ticker===tk);
-  if(pos){document.getElementById("m-d-shares").value=Math.round(pos.shares);document.getElementById("div-shares-info").textContent=`Acciones en cartera: ${Math.round(pos.shares)}`;}
-  updateDivTotal();
-}
-function updateDivTotal() {
-  const a=+document.getElementById("m-d-amount")?.value||0;
-  const s=+document.getElementById("m-d-shares")?.value||0;
-  const el=document.getElementById("div-total-preview");
-  if(el) el.textContent="Total cobrado: "+fmtEUR(a*s);
-}
-
-function saveDividendModal() {
-  const ticker=(document.getElementById("m-d-ticker").value||"").split(" ")[0];
-  const amount=+document.getElementById("m-d-amount").value;
-  const shares=+document.getElementById("m-d-shares").value;
-  const notes=document.getElementById("m-d-notes").value;
-  if(!ticker||amount<=0||shares<=0){alert("Completa todos los campos");return;}
-  state.dividends.unshift({id:uid(),ticker,amount,shares,notes,date:new Date().toISOString()});
-  save(); closeModal(); renderActiveTab();
-}
-
-// ─────────────────────────────────────────────
-// TAB 7 — DECLARACIÓN DE LA RENTA
-// ─────────────────────────────────────────────
 function renderRenta() {
   const now = new Date();
   const ejercicio = now.getFullYear() - 1; // Año anterior
