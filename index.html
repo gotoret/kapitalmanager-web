@@ -335,6 +335,10 @@ const FUND_PROXIES = [
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
 ];
 
 // ─────────────────────────────────────────────
@@ -1792,9 +1796,11 @@ function logoImg(ticker, name, size=28) {
   const s = size, fs = Math.round(s * 0.34);
   // Usamos icon.horse — servicio gratuito sin CORS que devuelve logos de empresas
   const url = `https://icon.horse/icon/${domain}`;
-  const fallback = `this.onerror=null;this.style.display='none';this.parentNode.innerHTML='<span style="font-size:${fs}px;font-weight:800;color:${color};line-height:1">${abbr.slice(0,3)}</span>'`;
+  // NOTA: el onerror NO puede contener comillas dobles (romperían el atributo HTML).
+  // Solución: el span fallback ya está en el DOM como hermano siguiente del img.
   return `<div style="width:${s}px;height:${s}px;border-radius:50%;overflow:hidden;background:#fff;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1.5px solid #e2e8f0;box-shadow:0 1px 3px #0001" title="${esc(name||ticker)}">
-    <img src="${url}" width="${s}" height="${s}" style="object-fit:contain" onerror="${fallback}"/>
+    <img src="${url}" width="${s}" height="${s}" style="object-fit:contain;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/>
+    <span style="display:none;font-size:${fs}px;font-weight:800;color:${color};line-height:1;width:100%;height:100%;align-items:center;justify-content:center;text-align:center">${abbr.slice(0,3)}</span>
   </div>`;
 }
 
@@ -2365,7 +2371,29 @@ async function analyzeValuation() {
     state._valError = "";
   } catch(e) {
     console.error('Error análisis IA:', e);
-    state._valError = "No se pudo conectar con el análisis IA. Comprueba tu conexión a internet.";
+    // Si la IA falla pero tenemos fundamentales de Yahoo, mostrarlos igualmente
+    if (fundamentals) {
+      state._valResult = {
+        ticker,
+        name: ticker,
+        sector: "",
+        description: "Análisis IA no disponible. Mostrando datos fundamentales de Yahoo Finance.",
+        scores: {},
+        metrics: {
+          Precio_actual: livePrice || null,
+          Yield_pct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null
+        },
+        ranges: {},
+        recommendation: "Sin análisis IA",
+        rec_color: "#94a3b8",
+        weiss_verdict: "Análisis IA no disponible",
+        weiss_color: "#94a3b8",
+        fundamentals
+      };
+      state._valError = "⚠️ Análisis IA no disponible, pero se muestran los datos fundamentales de Yahoo Finance.";
+    } else {
+      state._valError = "No se pudo conectar con el análisis IA. Comprueba tu conexión a internet.";
+    }
   }
   state._valLoading = false;
 
