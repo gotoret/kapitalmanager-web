@@ -1749,20 +1749,17 @@ function deleteTransaction(id){ if(!confirm("¿Eliminar esta transacción?")) re
 // ─────────────────────────────────────────────
 // TAB 4 — GRÁFICOS
 // ─────────────────────────────────────────────
-// Mapa ticker → dominio para obtener favicon via Google (funciona desde browser sin CORS)
+// Mapa ticker → dominio para Logo.dev (devuelve logos reales de empresas, funciona desde browser)
 const TICKER_DOMAIN = {
-  // España .MC
   "ACS.MC":"acs.es","ACX.MC":"acerinox.com","IBE.MC":"iberdrola.com",
   "REP.MC":"repsol.com","MAP.MC":"mapfre.com","TEF.MC":"telefonica.com",
   "ENG.MC":"enagas.es","LOG.MC":"logista.com","MCM.MC":"miquelycostas.com",
   "AMS.MC":"amadeus.com","ELE.MC":"endesa.com","EBRO.MC":"ebrofoods.com",
   "CAF.MC":"caf.net","NTGY.MC":"naturgy.com","RED.MC":"ree.es",
   "CIE.MC":"ciautomotive.com","VIS.MC":"viscofan.com","TRE.MC":"tecnicasreunidas.com",
-  "GRF.MC":"grifols.com","SAB.MC":"grupbancsabadell.com","SAN.MC":"santander.com",
+  "GRF.MC":"grifols.com","SAB.MC":"bancsabadell.com","SAN.MC":"santander.com",
   "BBVA.MC":"bbva.com","ITX.MC":"inditex.com","FER.MC":"ferrovial.com",
-  "ANA.MC":"acciona.com","PHM.MC":"pharmamar.com","MRL.MC":"merlin-properties.com",
-  "COL.MC":"codere.com","CLNX.MC":"cellnex.com","MEL.MC":"melia.com",
-  // USA
+  "ANA.MC":"acciona.com","CLNX.MC":"cellnex.com","MEL.MC":"melia.com",
   "MMM":"3m.com","KO":"coca-cola.com","PG":"pg.com","JNJ":"jnj.com",
   "VZ":"verizon.com","MO":"altria.com","PFE":"pfizer.com","WPC":"wpcarey.com",
   "CVS":"cvshealth.com","TROW":"troweprice.com","BEN":"franklinresources.com",
@@ -1773,35 +1770,25 @@ const TICKER_DOMAIN = {
   "HD":"homedepot.com","DIS":"disney.com","V":"visa.com","MA":"mastercard.com",
   "ABBV":"abbvie.com","MRK":"merck.com","LMT":"lockheedmartin.com",
   "RTX":"rtx.com","GE":"ge.com","CAT":"caterpillar.com","UPS":"ups.com",
-  "FDX":"fedex.com","NEE":"nexteraenergy.com","D":"dominionenergy.com",
-  "SO":"southerncompany.com","DUK":"duke-energy.com","O":"realtyincome.com",
-  "MAIN":"maincapital.com","STAG":"stagindustrial.com","EPD":"enterpriseproducts.com",
-  "ENB":"enbridge.com","TRP":"tc-energy.com","BCE":"bce.ca",
-  // UK .L
-  "ULVR.L":"unilever.com","SHEL.L":"shell.com","BP.L":"bp.com",
-  "AZN.L":"astrazeneca.com","GSK.L":"gsk.com","VOD.L":"vodafone.com",
-  "LLOY.L":"lloydsbank.com","HSBA.L":"hsbc.com","RIO.L":"riotinto.com",
-  "BHP.L":"bhpgroup.com","DGE.L":"diageo.com","REL.L":"relx.com",
+  "FDX":"fedex.com","NEE":"nexteraenergy.com","O":"realtyincome.com",
+  "ENB":"enbridge.com","ULVR.L":"unilever.com","SHEL.L":"shell.com",
+  "BP.L":"bp.com","AZN.L":"astrazeneca.com","GSK.L":"gsk.com",
+  "VOD.L":"vodafone.com","HSBA.L":"hsbc.com","RIO.L":"riotinto.com",
+  "DGE.L":"diageo.com",
 };
-
-function getLogoUrl(ticker) {
-  const domain = TICKER_DOMAIN[ticker];
-  if (domain) return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
-  // Fallback: intentar con ticker limpio
-  const clean = ticker.replace(/\.(MC|L|PA|DE|AS|MI)$/i,"").toLowerCase();
-  return `https://www.google.com/s2/favicons?domain=${clean}.com&sz=64`;
-}
 
 function logoImg(ticker, name, size=28) {
   const abbr = ticker.replace(/\.(MC|L|PA|DE|AS|MI|SW)$/i,"").slice(0,4).toUpperCase();
   const colors = ["#2563eb","#16a34a","#dc2626","#d97706","#7c3aed","#0891b2","#be185d","#065f46"];
   const color = colors[abbr.charCodeAt(0) % colors.length];
-  const url = getLogoUrl(ticker);
-  const s = size, fs = Math.round(s*0.33);
-  return `<div style="width:${s}px;height:${s}px;border-radius:50%;overflow:hidden;background:#f1f5f9;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1.5px solid #e2e8f0" title="${esc(name||ticker)}">
-    <img src="${url}" width="${s}" height="${s}" style="object-fit:contain;border-radius:50%"
-      onerror="this.parentNode.innerHTML='<span style=\\'font-size:${fs}px;font-weight:700;color:${color};text-align:center;line-height:1\\'>${abbr.slice(0,3)}</span>'"
-    />
+  const domain = TICKER_DOMAIN[ticker] ||
+    ticker.replace(/\.(MC|L|PA|DE|AS|MI|SW)$/i,"").toLowerCase() + ".com";
+  // Logo.dev: devuelve el logo oficial de la empresa por dominio, gratuito, sin CORS
+  const url = `https://img.logo.dev/${domain}?token=pk_BjagPAU2QSmN5OTBxKgicA&size=64&format=png`;
+  const s = size, fs = Math.round(s * 0.34);
+  const fallback = `this.onerror=null;this.style.display='none';this.parentNode.innerHTML='<span style="font-size:${fs}px;font-weight:800;color:${color};line-height:1">${abbr.slice(0,3)}</span>'`;
+  return `<div style="width:${s}px;height:${s}px;border-radius:50%;overflow:hidden;background:#fff;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1.5px solid #e2e8f0;box-shadow:0 1px 3px #0001" title="${esc(name||ticker)}">
+    <img src="${url}" width="${s}" height="${s}" style="object-fit:contain" onerror="${fallback}"/>
   </div>`;
 }
 
