@@ -324,11 +324,17 @@ const SEARCH_PROXIES = [
   q => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
 ];
 
-// Proxies para el histórico real de dividendos pagados (mismo endpoint que ya funciona para precios)
 const YIELD_PROXIES = [
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
+];
+
+const MODULES = "incomeStatementHistory,cashflowStatementHistory,balanceSheetHistory,defaultKeyStatistics,financialData";
+const FUND_PROXIES = [
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
 ];
 
 // ─────────────────────────────────────────────
@@ -1783,9 +1789,9 @@ function logoImg(ticker, name, size=28) {
   const color = colors[abbr.charCodeAt(0) % colors.length];
   const domain = TICKER_DOMAIN[ticker] ||
     ticker.replace(/\.(MC|L|PA|DE|AS|MI|SW)$/i,"").toLowerCase() + ".com";
-  // Logo.dev: devuelve el logo oficial de la empresa por dominio, gratuito, sin CORS
-  const url = `https://img.logo.dev/${domain}?token=pk_BjagPAU2QSmN5OTBxKgicA&size=64&format=png`;
   const s = size, fs = Math.round(s * 0.34);
+  // Usamos icon.horse — servicio gratuito sin CORS que devuelve logos de empresas
+  const url = `https://icon.horse/icon/${domain}`;
   const fallback = `this.onerror=null;this.style.display='none';this.parentNode.innerHTML='<span style="font-size:${fs}px;font-weight:800;color:${color};line-height:1">${abbr.slice(0,3)}</span>'`;
   return `<div style="width:${s}px;height:${s}px;border-radius:50%;overflow:hidden;background:#fff;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1.5px solid #e2e8f0;box-shadow:0 1px 3px #0001" title="${esc(name||ticker)}">
     <img src="${url}" width="${s}" height="${s}" style="object-fit:contain" onerror="${fallback}"/>
@@ -2270,6 +2276,61 @@ function renderValuation() {
   </div>`;
 }
 
+async function fetchFundamentals(ticker) {
+  for (const proxyFn of FUND_PROXIES) {
+    try {
+      const res = await fetch(proxyFn(ticker), { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) continue;
+      const json = await res.json();
+      const r = json?.quoteSummary?.result?.[0];
+      if (!r) continue;
+
+      const getV = (obj, ...keys) => { for (const k of keys) { const v=obj?.[k]?.raw; if (v!=null) return +v; } return null; };
+
+      const inc = [...(r.incomeStatementHistory?.incomeStatementHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
+      const cf  = [...(r.cashflowStatementHistory?.cashflowStatementHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
+      const bs  = [...(r.balanceSheetHistory?.balanceSheetHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
+      const ks  = r.defaultKeyStatistics || {};
+
+      const years      = inc.map(x => new Date((x.endDate?.raw||0)*1000).getFullYear());
+      const revenue    = inc.map(x => { const v=getV(x,"totalRevenue"); return v!=null?+(v/1e6).toFixed(0):null; });
+      const ebit       = inc.map(x => { const v=getV(x,"ebit","operatingIncome"); return v!=null?+(v/1e6).toFixed(0):null; });
+      const net_income = inc.map(x => { const v=getV(x,"netIncome"); return v!=null?+(v/1e6).toFixed(0):null; });
+      const cfo        = cf.map(x  => { const v=getV(x,"totalCashFromOperatingActivities"); return v!=null?+(v/1e6).toFixed(0):null; });
+      const capex      = cf.map(x  => { const v=getV(x,"capitalExpenditures"); return v!=null?+(v/1e6).toFixed(0):null; });
+      const fcf        = cfo.map((c,i) => c!=null&&capex[i]!=null ? +(c+capex[i]).toFixed(0) : null);
+
+      const gross_margin  = inc.map(x => { const g=getV(x,"grossProfit"),rv=getV(x,"totalRevenue"); return g&&rv?+((g/rv)*100).toFixed(1):null; });
+      const ebit_margin   = inc.map((_,i) => revenue[i]&&ebit[i]?+((ebit[i]/revenue[i])*100).toFixed(1):null);
+      const net_margin    = inc.map((_,i) => revenue[i]&&net_income[i]?+((net_income[i]/revenue[i])*100).toFixed(1):null);
+
+      const net_debt     = bs.map(x  => { const d=getV(x,"longTermDebt","totalDebt")||0; const c=getV(x,"cash","cashAndCashEquivalents")||0; return +((d-c)/1e6).toFixed(0); });
+      const ebitda_arr   = inc.map((x,i) => { const e=(ebit[i]||0)*1e6; const da=Math.abs(getV(x,"depreciationAndAmortization")||0); return e+da>0?+((e+da)/1e6).toFixed(0):null; });
+      const debt_ebitda  = net_debt.map((d,i) => ebitda_arr[i]?+(d/ebitda_arr[i]).toFixed(2):null);
+      const interest_coverage = inc.map((x,i) => { const ie=Math.abs(getV(x,"interestExpense")||0); return ebit[i]&&ie?+((ebit[i]*1e6)/ie).toFixed(1):null; });
+
+      const shares = getV(ks,"sharesOutstanding")||1;
+      const eps    = inc.map(x => { const v=getV(x,"basicEPS","dilutedEPS"); return v!=null?+v.toFixed(2):null; });
+      const fcf_per_share = fcf.map(f => f!=null?+((f*1e6)/shares).toFixed(2):null);
+      const curPrice = state.priceCache[ticker]||0;
+      const pe_hist   = eps.map(e => e&&curPrice?+((curPrice/e)).toFixed(1):null);
+      const pfcf_hist = fcf_per_share.map(f => f&&f>0&&curPrice?+(curPrice/f).toFixed(1):null);
+
+      const roe  = bs.map((x,i) => { const eq=getV(x,"totalStockholderEquity"); return eq&&net_income[i]?+((net_income[i]*1e6/eq)*100).toFixed(1):null; });
+      const roic = bs.map((x,i) => { const eq=getV(x,"totalStockholderEquity")||0; const d=getV(x,"longTermDebt")||0; const ic=eq+d; const nopat=(ebit[i]||0)*1e6*0.75; return ic>0?+((nopat/ic)*100).toFixed(1):null; });
+
+      const price_hist = years.map((_,i) => i===years.length-1?curPrice:null);
+      const ev_ebitda_hist = years.map(()=>null);
+
+      if (!years.length) continue;
+      return { years, revenue, ebit, net_income, cfo, fcf, gross_margin, ebit_margin, net_margin,
+               net_debt, debt_ebitda, interest_coverage, eps, fcf_per_share, price_hist,
+               pe_hist, pfcf_hist, ev_ebitda_hist, roe, roic };
+    } catch(e) { console.warn("fetchFundamentals error:", e.message); }
+  }
+  return null;
+}
+
 async function analyzeValuation() {
   const input = document.getElementById("val-ticker");
   const ticker = (input?.value||"").trim().toUpperCase().split(" ")[0];
@@ -2281,26 +2342,25 @@ async function analyzeValuation() {
   state._valTab = 0;
   renderActiveTab();
 
-  const [livePrice, divData] = await Promise.all([
+  // Lanzar todo en paralelo: precio, dividendo, fundamentales y análisis IA
+  const [livePrice, divData, fundamentals] = await Promise.all([
     fetchWithProxy(PROXIES, ticker),
-    fetchDividendData(ticker)
+    fetchDividendData(ticker),
+    fetchFundamentals(ticker)
   ]);
 
   try {
     const { data, error } = await supabaseClient.functions.invoke('valuation', {
-      body: {
-        ticker,
-        price: livePrice || null,
-        realYieldPct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null,
-        requestFundamentals: true   // solicitar series históricas de 5 años
-      }
+      body: { ticker, price: livePrice || null,
+        realYieldPct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null }
     });
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
-
     if (divData?.yield != null && data?.metrics) {
       data.metrics.Yield_pct = +(divData.yield*100).toFixed(2);
     }
+    // Inyectar datos históricos obtenidos de Yahoo directamente
+    if (fundamentals) data.fundamentals = fundamentals;
     state._valResult = data;
     state._valError = "";
   } catch(e) {
