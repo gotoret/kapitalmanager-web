@@ -2088,32 +2088,169 @@ function renderValuation() {
         <span style="color:#64748b">${k.replace(/_/g," ")}</span><span style="font-weight:600">${v!==null&&v!==undefined?v:"—"}</span>
       </div>`
     ).join("");
+
+    // ── Gráficas fundamentales ──────────────────
+    const fd = result.fundamentals || {};
+    const years = fd.years || [];
+    const hasData = years.length > 0;
+
+    const chartHtml = hasData ? `
+      <div style="margin-top:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
+
+          <!-- 1. Ingresos + EBIT + Beneficio neto -->
+          ${barLineChart("📈 Crecimiento: Ingresos · EBIT · Beneficio neto", years,
+            [
+              {label:"Ingresos", values: fd.revenue||[], color:"#2563eb"},
+              {label:"EBIT",     values: fd.ebit||[],    color:"#16a34a"},
+              {label:"Bº neto",  values: fd.net_income||[], color:"#f59e0b"}
+            ], "M€")}
+
+          <!-- 2. FCF vs Flujo operativo -->
+          ${barLineChart("💵 Calidad: Flujo operativo · Free Cash Flow", years,
+            [
+              {label:"Flujo op.", values: fd.cfo||[],  color:"#0891b2"},
+              {label:"FCF",       values: fd.fcf||[],  color:"#16a34a"}
+            ], "M€")}
+
+          <!-- 3. Márgenes -->
+          ${lineChart("📊 Márgenes: Bruto · Operativo · Neto", years,
+            [
+              {label:"Mg. Bruto",  values: fd.gross_margin||[],  color:"#2563eb"},
+              {label:"Mg. Operat.",values: fd.ebit_margin||[],   color:"#16a34a"},
+              {label:"Mg. Neto",   values: fd.net_margin||[],    color:"#f59e0b"}
+            ], "%")}
+
+          <!-- 4. ROIC + ROE -->
+          ${lineChart("🏆 Retorno sobre capital: ROIC · ROE", years,
+            [
+              {label:"ROIC", values: fd.roic||[], color:"#7c3aed"},
+              {label:"ROE",  values: fd.roe||[],  color:"#dc2626"}
+            ], "%")}
+
+          <!-- 5. Deuda neta / EBITDA -->
+          ${barLineChart("🏦 Balance: Deuda neta · Deuda/EBITDA", years,
+            [
+              {label:"Deuda neta", values: fd.net_debt||[], color:"#dc2626"},
+              {label:"D/EBITDA",   values: fd.debt_ebitda||[], color:"#f59e0b", axis:"right"}
+            ], "M€")}
+
+          <!-- 6. Precio vs FCF/acción vs EPS -->
+          ${lineChart("📉 Precio vs Fundamental: Precio · EPS · FCF/acc", years,
+            [
+              {label:"Precio",   values: fd.price_hist||[], color:"#1d4ed8"},
+              {label:"EPS",      values: fd.eps||[],        color:"#16a34a"},
+              {label:"FCF/acc",  values: fd.fcf_per_share||[], color:"#f59e0b"}
+            ], "€/$")}
+
+          <!-- 7. Múltiplos históricos -->
+          ${lineChart("🔢 Múltiplos históricos: P/E · P/FCF · EV/EBITDA", years,
+            [
+              {label:"P/E",       values: fd.pe_hist||[],        color:"#2563eb"},
+              {label:"P/FCF",     values: fd.pfcf_hist||[],      color:"#7c3aed"},
+              {label:"EV/EBITDA", values: fd.ev_ebitda_hist||[], color:"#f59e0b"}
+            ], "x")}
+
+          <!-- 8. Football field -->
+          ${footballField(result)}
+        </div>
+      </div>` : `<div style="margin-top:12px;padding:14px;background:#fafafa;border-radius:10px;border:1px solid #e2e8f0;text-align:center;color:#94a3b8;font-size:12px">
+        📊 Datos históricos no disponibles para este análisis. La IA no devolvió series temporales.
+      </div>`;
+
     resultHtml=`
       <div style="background:#f0f7ff;border-radius:14px;border:1px solid #bfdbfe;padding:16px;margin-bottom:12px">
-        <div style="font-size:17px;font-weight:700;color:#1d4ed8">${esc(result.name)}</div>
-        <div style="font-size:12px;color:#475569;margin:2px 0 6px">${esc(result.ticker)} · ${esc(result.sector)}</div>
-        <div style="font-size:12px;color:#64748b">${esc(result.description)}</div>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-bottom:12px">
-        <div class="card"><h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">📊 Puntuaciones por método</h4>${scoreBars}</div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-          <div class="card">
-            <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">🏆 Puntuación global</h4>
-            <div style="display:flex;align-items:center;gap:12px">
-              <span style="font-size:42px;font-weight:900;color:${oc};line-height:1">${overall}</span>
-              <span style="font-size:14px;color:#94a3b8">/100</span>
-              <span class="badge" style="background:${result.rec_color||"#2563eb"}22;color:${result.rec_color||"#2563eb"}">${esc(result.recommendation)}</span>
-            </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          ${logoImg(result.ticker||"",result.name||"",40)}
+          <div>
+            <div style="font-size:17px;font-weight:700;color:#1d4ed8">${esc(result.name)}</div>
+            <div style="font-size:12px;color:#475569;margin:2px 0 6px">${esc(result.ticker)} · ${esc(result.sector)}</div>
+            <div style="font-size:12px;color:#64748b">${esc(result.description)}</div>
           </div>
-          <div class="card"><h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">📋 Métricas clave</h4>${metricRows}</div>
         </div>
       </div>
-      <div style="background:#f0fdf4;border-radius:14px;border:2px solid ${result.weiss_color||"#16a34a"}55;padding:16px">
-        <h4 style="font-size:13px;font-weight:700;color:${result.weiss_color||"#16a34a"};margin-bottom:6px">📘 Valoración Geraldine Weiss — Blue Chip Dividend Value</h4>
-        <div style="color:${result.weiss_color||"#16a34a"};font-weight:600;font-size:12px">${esc(result.weiss_verdict)}</div>
+
+      <!-- KPIs rápidos -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin-bottom:14px">
+        ${[
+          ["P/E", result.metrics?.PER_fwd, "x"],
+          ["EV/EBITDA", result.metrics?.EV_EBITDA, "x"],
+          ["FCF Yield", result.metrics?.FCF_yield, "%"],
+          ["ROIC", result.metrics?.ROIC, "%"],
+          ["D/EBITDA", result.metrics?.Deuda_EBITDA, "x"],
+          ["Yield", result.metrics?.Yield_pct, "%"]
+        ].map(([l,v,u])=>{
+          const val = v!=null?`${v}${u}`:"—";
+          return `<div class="metric-card" style="padding:8px;text-align:center">
+            <div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.5px">${l}</div>
+            <div style="font-size:16px;font-weight:800;color:#1d4ed8;margin-top:2px">${val}</div>
+          </div>`;
+        }).join("")}
       </div>
-      <div style="margin-top:12px;text-align:right">
-        <button class="btn" style="background:#059669;font-size:12px;padding:7px 16px" onclick="createValAlert('${esc(result.ticker||"")}','${esc(result.name||"")}',${result.metrics?.PER_fwd||0},${result.metrics?.Yield_pct||0})">🔔 Crear alerta de compra óptima</button>
+
+      <!-- Tabs internas: Scoring | Crecimiento | Calidad | Balance | Valoración -->
+      <div style="display:flex;gap:0;border-bottom:2px solid #e2e8f0;margin-bottom:14px;overflow-x:auto">
+        ${["🏆 Scoring","📈 Crecimiento","💎 Calidad","🏦 Balance","📐 Valoración"].map((t,i)=>
+          `<button onclick="setValTab(${i})" id="vt${i}" style="padding:7px 12px;font-size:11px;font-weight:600;border:none;background:none;cursor:pointer;white-space:nowrap;border-bottom:2px solid ${state._valTab===i?'#2563eb':'transparent'};color:${state._valTab===i?'#2563eb':'#64748b'};margin-bottom:-2px">${t}</button>`
+        ).join("")}
+      </div>
+
+      <!-- Tab 0: Scoring -->
+      <div id="val-tab-0" style="display:${(state._valTab||0)===0?'block':'none'}">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">
+          <div class="card"><h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">📊 Puntuaciones por método</h4>${scoreBars}</div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div class="card">
+              <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">🏆 Puntuación global</h4>
+              <div style="display:flex;align-items:center;gap:12px">
+                <span style="font-size:42px;font-weight:900;color:${oc};line-height:1">${overall}</span>
+                <span style="font-size:14px;color:#94a3b8">/100</span>
+                <span class="badge" style="background:${result.rec_color||"#2563eb"}22;color:${result.rec_color||"#2563eb"}">${esc(result.recommendation)}</span>
+              </div>
+            </div>
+            <div class="card"><h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">📋 Métricas clave</h4>${metricRows}</div>
+          </div>
+        </div>
+        <div style="background:#f0fdf4;border-radius:14px;border:2px solid ${result.weiss_color||"#16a34a"}55;padding:16px;margin-top:12px">
+          <h4 style="font-size:13px;font-weight:700;color:${result.weiss_color||"#16a34a"};margin-bottom:6px">📘 Valoración Geraldine Weiss</h4>
+          <div style="color:${result.weiss_color||"#16a34a"};font-weight:600;font-size:12px">${esc(result.weiss_verdict)}</div>
+        </div>
+        <div style="margin-top:12px;text-align:right">
+          <button class="btn" style="background:#059669;font-size:12px;padding:7px 16px" onclick="createValAlert('${esc(result.ticker||"")}','${esc(result.name||"")}',${result.metrics?.PER_fwd||0},${result.metrics?.Yield_pct||0})">🔔 Crear alerta de compra óptima</button>
+        </div>
+      </div>
+
+      <!-- Tab 1: Crecimiento -->
+      <div id="val-tab-1" style="display:${(state._valTab||0)===1?'block':'none'}">
+        ${hasData ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
+          ${barLineChart("📈 Ingresos · EBIT · Beneficio neto", years, [{label:"Ingresos",values:fd.revenue||[],color:"#2563eb"},{label:"EBIT",values:fd.ebit||[],color:"#16a34a"},{label:"Bº neto",values:fd.net_income||[],color:"#f59e0b"}],"M€")}
+          ${barLineChart("💵 Flujo operativo · Free Cash Flow", years, [{label:"Flujo op.",values:fd.cfo||[],color:"#0891b2"},{label:"FCF",values:fd.fcf||[],color:"#16a34a"}],"M€")}
+        </div>` : noDataMsg()}
+      </div>
+
+      <!-- Tab 2: Calidad -->
+      <div id="val-tab-2" style="display:${(state._valTab||0)===2?'block':'none'}">
+        ${hasData ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
+          ${lineChart("📊 Márgenes: Bruto · Operativo · Neto", years, [{label:"Mg. Bruto",values:fd.gross_margin||[],color:"#2563eb"},{label:"Mg. Operat.",values:fd.ebit_margin||[],color:"#16a34a"},{label:"Mg. Neto",values:fd.net_margin||[],color:"#f59e0b"}],"%")}
+          ${lineChart("🏆 ROIC · ROE", years, [{label:"ROIC",values:fd.roic||[],color:"#7c3aed"},{label:"ROE",values:fd.roe||[],color:"#dc2626"}],"%")}
+        </div>` : noDataMsg()}
+      </div>
+
+      <!-- Tab 3: Balance -->
+      <div id="val-tab-3" style="display:${(state._valTab||0)===3?'block':'none'}">
+        ${hasData ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
+          ${barLineChart("🏦 Deuda neta · Deuda/EBITDA", years, [{label:"Deuda neta",values:fd.net_debt||[],color:"#dc2626"},{label:"D/EBITDA",values:fd.debt_ebitda||[],color:"#f59e0b"}],"M€")}
+          ${lineChart("💧 Cobertura de intereses", years, [{label:"EBIT/Intereses",values:fd.interest_coverage||[],color:"#0891b2"}],"x")}
+        </div>` : noDataMsg()}
+      </div>
+
+      <!-- Tab 4: Valoración -->
+      <div id="val-tab-4" style="display:${(state._valTab||0)===4?'block':'none'}">
+        ${hasData ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
+          ${lineChart("📉 Precio vs EPS · FCF/acción", years, [{label:"Precio",values:fd.price_hist||[],color:"#1d4ed8"},{label:"EPS",values:fd.eps||[],color:"#16a34a"},{label:"FCF/acc",values:fd.fcf_per_share||[],color:"#f59e0b"}],"€/$")}
+          ${lineChart("🔢 P/E · P/FCF · EV/EBITDA histórico", years, [{label:"P/E",values:fd.pe_hist||[],color:"#2563eb"},{label:"P/FCF",values:fd.pfcf_hist||[],color:"#7c3aed"},{label:"EV/EBITDA",values:fd.ev_ebitda_hist||[],color:"#f59e0b"}],"x")}
+          ${footballField(result)}
+        </div>` : noDataMsg()}
       </div>`;
   }
 
@@ -2141,9 +2278,9 @@ async function analyzeValuation() {
   state._valLoading = true;
   state._valResult = null;
   state._valError = "";
+  state._valTab = 0;
   renderActiveTab();
 
-  // Datos reales primero: precio y dividendo (mismo mecanismo que ya usa el resto de la app)
   const [livePrice, divData] = await Promise.all([
     fetchWithProxy(PROXIES, ticker),
     fetchDividendData(ticker)
@@ -2154,13 +2291,13 @@ async function analyzeValuation() {
       body: {
         ticker,
         price: livePrice || null,
-        realYieldPct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null
+        realYieldPct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null,
+        requestFundamentals: true   // solicitar series históricas de 5 años
       }
     });
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
 
-    // El dato de yield/dividendo real (ya calculado en la app) manda sobre lo que estime la IA
     if (divData?.yield != null && data?.metrics) {
       data.metrics.Yield_pct = +(divData.yield*100).toFixed(2);
     }
@@ -2172,13 +2309,11 @@ async function analyzeValuation() {
   }
   state._valLoading = false;
 
-  // Registrar precio y yield en cache si los obtuvimos
   if (livePrice) state.priceCache[ticker] = livePrice;
   if (divData) state.yieldCache[ticker] = divData;
 
   renderActiveTab();
 
-  // Configurar autocompletado para futuras búsquedas
   setTimeout(() => {
     setupAutocomplete("val-ticker", r => {
       state._valTicker = r.ticker;
@@ -2188,9 +2323,153 @@ async function analyzeValuation() {
   }, 100);
 }
 
-// ─────────────────────────────────────────────
-// MODALES
-// ─────────────────────────────────────────────
+function setValTab(i) {
+  state._valTab = i;
+  renderActiveTab();
+}
+
+function noDataMsg() {
+  return `<div style="padding:24px;text-align:center;color:#94a3b8;font-size:12px;background:#fafafa;border-radius:10px;border:1px solid #e2e8f0">
+    📊 Datos históricos no disponibles para este ticker.<br>La IA no devolvió series temporales.
+  </div>`;
+}
+
+// ── SVG line chart ─────────────────────────────────────────────
+function lineChart(title, years, series, unit="") {
+  const W=300, H=160, PL=42, PR=12, PT=10, PB=28;
+  const gW=W-PL-PR, gH=H-PT-PB;
+  const allVals = series.flatMap(s=>s.values).filter(v=>v!=null&&!isNaN(v));
+  if(!allVals.length) return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">${title}</h4>${noDataMsg()}</div>`;
+  const minV=Math.min(...allVals), maxV=Math.max(...allVals);
+  const range=maxV-minV||1;
+  const toX=i=>PL+i*(gW/(years.length-1||1));
+  const toY=v=>PT+gH-(((v-minV)/range)*gH);
+  const colors=["#2563eb","#16a34a","#f59e0b","#dc2626","#7c3aed","#0891b2"];
+  let paths="", dots="", legend="";
+  series.forEach((s,si)=>{
+    const c=s.color||colors[si%colors.length];
+    const pts=s.values.map((v,i)=>v!=null?`${toX(i).toFixed(1)},${toY(v).toFixed(1)}`:null).filter(Boolean);
+    if(pts.length>1) paths+=`<polyline points="${pts.join(" ")}" fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    s.values.forEach((v,i)=>{ if(v!=null) dots+=`<circle cx="${toX(i).toFixed(1)}" cy="${toY(v).toFixed(1)}" r="3" fill="${c}" stroke="white" stroke-width="1"/>`; });
+    legend+=`<span style="display:flex;align-items:center;gap:4px;font-size:10px;color:#475569"><span style="width:12px;height:3px;background:${c};border-radius:2px;display:inline-block"></span>${s.label}</span>`;
+  });
+  // Y axis labels
+  const yLabels=[0,.25,.5,.75,1].map(f=>{
+    const v=minV+f*range;
+    const label=Math.abs(v)>=1000?`${(v/1000).toFixed(1)}k`:v.toFixed(1);
+    const y=PT+gH-f*gH;
+    return `<text x="${PL-4}" y="${y+4}" text-anchor="end" font-size="8" fill="#94a3b8">${label}</text>
+    <line x1="${PL}" y1="${y}" x2="${PL+gW}" y2="${y}" stroke="#f1f5f9" stroke-width="1"/>`;
+  }).join("");
+  const xLabels=years.map((yr,i)=>`<text x="${toX(i).toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="8" fill="#94a3b8">${yr}</text>`).join("");
+  return `<div class="card">
+    <h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">${title}</h4>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;overflow:visible">
+      ${yLabels}${xLabels}${paths}${dots}
+      <text x="${PL-2}" y="${PT-2}" font-size="8" fill="#94a3b8">${unit}</text>
+    </svg>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">${legend}</div>
+  </div>`;
+}
+
+// ── SVG bar+line chart ─────────────────────────────────────────
+function barLineChart(title, years, series, unit="") {
+  const W=300, H=160, PL=42, PR=12, PT=10, PB=28;
+  const gW=W-PL-PR, gH=H-PT-PB;
+  const barSeries=series.filter(s=>!s.axis);
+  const lineSeries=series.filter(s=>s.axis==="right");
+  const barVals=barSeries.flatMap(s=>s.values).filter(v=>v!=null&&!isNaN(v));
+  if(!barVals.length) return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">${title}</h4>${noDataMsg()}</div>`;
+  const minV=Math.min(0,...barVals), maxV=Math.max(...barVals);
+  const range=maxV-minV||1;
+  const n=years.length, bw=(gW/n)*0.7, bspace=gW/n;
+  const toY=v=>PT+gH-(((v-minV)/range)*gH);
+  const zero=toY(0);
+  let bars="", lines="", legend="";
+  barSeries.forEach((s,si)=>{
+    const c=s.color;
+    s.values.forEach((v,i)=>{
+      if(v==null) return;
+      const x=PL+i*bspace+(bspace-bw)/2+(si*(bw/barSeries.length));
+      const bwi=bw/barSeries.length;
+      const y=v>=0?toY(v):zero;
+      const bh=Math.abs(toY(v)-zero);
+      bars+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bwi.toFixed(1)}" height="${Math.max(1,bh).toFixed(1)}" fill="${c}" rx="2" opacity="0.85"/>`;
+    });
+    legend+=`<span style="display:flex;align-items:center;gap:4px;font-size:10px;color:#475569"><span style="width:10px;height:10px;background:${c};border-radius:2px;display:inline-block"></span>${s.label}</span>`;
+  });
+  // Line series on right axis
+  if(lineSeries.length) {
+    const lVals=lineSeries.flatMap(s=>s.values).filter(v=>v!=null&&!isNaN(v));
+    if(lVals.length) {
+      const lMin=Math.min(...lVals), lMax=Math.max(...lVals), lR=lMax-lMin||1;
+      const toYR=v=>PT+gH-(((v-lMin)/lR)*gH);
+      lineSeries.forEach(s=>{
+        const c=s.color;
+        const pts=s.values.map((v,i)=>v!=null?`${(PL+i*bspace+bspace/2).toFixed(1)},${toYR(v).toFixed(1)}`:null).filter(Boolean);
+        if(pts.length>1) lines+=`<polyline points="${pts.join(" ")}" fill="none" stroke="${c}" stroke-width="2" stroke-dasharray="4,2"/>`;
+        s.values.forEach((v,i)=>{ if(v!=null) lines+=`<circle cx="${(PL+i*bspace+bspace/2).toFixed(1)}" cy="${toYR(v).toFixed(1)}" r="2.5" fill="${c}" stroke="white" stroke-width="1"/>`; });
+        legend+=`<span style="display:flex;align-items:center;gap:4px;font-size:10px;color:#475569"><span style="width:12px;height:2px;background:${c};border-radius:2px;display:inline-block;border-bottom:2px dashed ${c}"></span>${s.label}</span>`;
+      });
+    }
+  }
+  const yLabels=[0,.5,1].map(f=>{
+    const v=minV+f*range;
+    const label=Math.abs(v)>=1000?`${(v/1000).toFixed(1)}k`:v.toFixed(1);
+    const y=PT+gH-f*gH;
+    return `<text x="${PL-4}" y="${y+4}" text-anchor="end" font-size="8" fill="#94a3b8">${label}</text>
+    <line x1="${PL}" y1="${y}" x2="${PL+gW}" y2="${y}" stroke="#f1f5f9" stroke-width="1"/>`;
+  }).join("");
+  const xLabels=years.map((yr,i)=>`<text x="${(PL+i*bspace+bspace/2).toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="8" fill="#94a3b8">${yr}</text>`).join("");
+  return `<div class="card">
+    <h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">${title}</h4>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;overflow:visible">
+      ${yLabels}${xLabels}${bars}${lines}
+      <text x="${PL-2}" y="${PT-2}" font-size="8" fill="#94a3b8">${unit}</text>
+    </svg>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">${legend}</div>
+  </div>`;
+}
+
+// ── Football field chart ───────────────────────────────────────
+function footballField(result) {
+  const price = result.metrics?.Precio_actual || result.metrics?.price || 0;
+  const methods = [
+    {label:"DDM",        low:result.ranges?.ddm_low,       high:result.ranges?.ddm_high,       color:"#2563eb"},
+    {label:"EPV",        low:result.ranges?.epv_low,        high:result.ranges?.epv_high,        color:"#16a34a"},
+    {label:"P/E hist.",  low:result.ranges?.pe_low,         high:result.ranges?.pe_high,         color:"#f59e0b"},
+    {label:"EV/EBITDA",  low:result.ranges?.ev_low,         high:result.ranges?.ev_high,         color:"#7c3aed"},
+    {label:"P/FCF",      low:result.ranges?.pfcf_low,       high:result.ranges?.pfcf_high,       color:"#0891b2"},
+    {label:"DCF",        low:result.ranges?.dcf_low,        high:result.ranges?.dcf_high,        color:"#dc2626"},
+  ].filter(m=>m.low!=null&&m.high!=null);
+  if(!methods.length) return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">⚽ Football Field</h4>${noDataMsg()}</div>`;
+  const allV=[...methods.flatMap(m=>[m.low,m.high]),price].filter(Boolean);
+  const gMin=Math.min(...allV)*0.85, gMax=Math.max(...allV)*1.15, gR=gMax-gMin||1;
+  const W=300, H=methods.length*28+40, PL=68, PR=16, PT=16, PB=20, gW=W-PL-PR;
+  const toX=v=>PL+((v-gMin)/gR)*gW;
+  const rows=methods.map((m,i)=>{
+    const x1=toX(m.low), x2=toX(m.high), y=PT+i*28+8;
+    const mid=((m.low+m.high)/2).toFixed(0);
+    return `<rect x="${x1.toFixed(1)}" y="${y}" width="${(x2-x1).toFixed(1)}" height="16" fill="${m.color}" rx="3" opacity="0.75"/>
+    <text x="${PL-4}" y="${y+11}" text-anchor="end" font-size="8.5" fill="#475569" font-weight="600">${m.label}</text>
+    <text x="${((x1+x2)/2).toFixed(1)}" y="${y+11}" text-anchor="middle" font-size="8" fill="white" font-weight="700">${m.low.toFixed(0)}–${m.high.toFixed(0)}</text>`;
+  }).join("");
+  const priceX=price?toX(price):null;
+  const priceLine=priceX?`<line x1="${priceX.toFixed(1)}" y1="${PT}" x2="${priceX.toFixed(1)}" y2="${H-PB}" stroke="#1d4ed8" stroke-width="2" stroke-dasharray="4,2"/>
+  <text x="${priceX.toFixed(1)}" y="${PT-3}" text-anchor="middle" font-size="8" fill="#1d4ed8" font-weight="700">▼ ${price}</text>`:"";
+  // X axis labels
+  const xTicks=[0,.25,.5,.75,1].map(f=>{
+    const v=gMin+f*gR; const x=PL+f*gW;
+    return `<text x="${x.toFixed(1)}" y="${H-5}" text-anchor="middle" font-size="7.5" fill="#94a3b8">${v.toFixed(0)}</text>`;
+  }).join("");
+  return `<div class="card">
+    <h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">⚽ Football Field de valoración</h4>
+    <div style="font-size:10px;color:#64748b;margin-bottom:8px">Rango justo por método vs precio actual (▼)</div>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;overflow:visible">
+      ${rows}${priceLine}${xTicks}
+    </svg>
+  </div>`;
+}
 function openModal(html) {
   document.getElementById("modal-box").innerHTML = html;
   document.getElementById("modal-overlay").style.display = "flex";
