@@ -2275,6 +2275,7 @@ function renderValuation() {
       resultHtml += `<div style="display:${(state._valTab||0)===3?'block':'none'}">
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
           ${footballField(result)}
+          ${weissValuationCard(result, ph)}
           ${hasData ? lineChart("🔢 P/E · P/FCF · EV/EBITDA histórico", years,
             [{label:"P/E",values:fd.pe_hist||[],color:"#2563eb"},
              {label:"P/FCF",values:fd.pfcf_hist||[],color:"#7c3aed"},
@@ -2404,29 +2405,49 @@ function _buildFundamentalsResult(years, inc, cf, bs, km, curPrice) {
 // ── Fetch via Financial Modeling Prep ─────────────────────────
 async function _fetchFMP(ticker, key) {
   const BASE = "https://financialmodelingprep.com/api/v3";
-  const opts = { signal: AbortSignal.timeout(10000) };
   const tickers = [ticker];
-  // Para tickers europeos (LOG.MC) también probar sin sufijo (LOG)
   if (ticker.includes(".")) tickers.push(ticker.split(".")[0]);
 
+  // FMP soporta CORS nativo — intentar directo primero, luego proxies
+  const wrapUrl = (url) => [
+    url,
+    `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  ];
+
   for (const t of tickers) {
-    try {
-      const [incR, cfR, bsR, kmR] = await Promise.all([
-        fetch(`${BASE}/income-statement/${t}?limit=10&apikey=${key}`, opts),
-        fetch(`${BASE}/cash-flow-statement/${t}?limit=10&apikey=${key}`, opts),
-        fetch(`${BASE}/balance-sheet-statement/${t}?limit=10&apikey=${key}`, opts),
-        fetch(`${BASE}/key-metrics/${t}?limit=10&apikey=${key}`, opts)
-      ]);
-      const [iD, cD, bD, kD] = await Promise.all([incR.json(), cfR.json(), bsR.json(), kmR.json()]);
-      const inc = Array.isArray(iD) && iD.length ? [...iD].reverse() : [];
-      const cf  = Array.isArray(cD) && cD.length ? [...cD].reverse() : [];
-      const bs  = Array.isArray(bD) && bD.length ? [...bD].reverse() : [];
-      const km  = Array.isArray(kD) && kD.length ? [...kD].reverse() : [];
-      if (!inc.length) { console.warn(`FMP: sin datos para ${t}`); continue; }
-      const years = inc.map(x => parseInt((x.calendarYear || x.date || "").slice(0,4)));
-      const r = _buildFundamentalsResult(years, inc, cf, bs, km, 0);
-      if (r) { console.log(`fetchFundamentals [FMP] OK: ${t}`, years); return r; }
-    } catch(e) { console.warn(`FMP error (${t}):`, e.message); }
+    const incUrls = wrapUrl(`${BASE}/income-statement/${t}?limit=10&apikey=${key}`);
+    for (const incUrl of incUrls) {
+      try {
+        const incR = await fetch(incUrl, { signal: AbortSignal.timeout(10000) });
+        if (!incR.ok) continue;
+        const iD = await incR.json();
+        const inc = Array.isArray(iD) && iD.length ? [...iD].reverse() : [];
+        if (!inc.length) { console.warn(`FMP (${incUrl.slice(0,40)}): sin datos para ${t}`); continue; }
+
+        // Usar el mismo proxy que funcionó para el income statement
+        const proxyType = incUrl.startsWith("https://corsproxy") ? "corsproxy"
+          : incUrl.startsWith("https://api.allorigins") ? "allorigins"
+          : "direct";
+        const wrap2 = (u) =>
+          proxyType === "corsproxy"  ? `https://corsproxy.io/?url=${encodeURIComponent(u)}`
+          : proxyType === "allorigins" ? `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
+          : u;
+
+        const [cfR, bsR, kmR] = await Promise.all([
+          fetch(wrap2(`${BASE}/cash-flow-statement/${t}?limit=10&apikey=${key}`), { signal: AbortSignal.timeout(10000) }),
+          fetch(wrap2(`${BASE}/balance-sheet-statement/${t}?limit=10&apikey=${key}`), { signal: AbortSignal.timeout(10000) }),
+          fetch(wrap2(`${BASE}/key-metrics/${t}?limit=10&apikey=${key}`), { signal: AbortSignal.timeout(10000) }),
+        ]);
+        const [cD, bD, kD] = await Promise.all([cfR.json(), bsR.json(), kmR.json()]);
+        const cf = Array.isArray(cD) && cD.length ? [...cD].reverse() : [];
+        const bs = Array.isArray(bD) && bD.length ? [...bD].reverse() : [];
+        const km = Array.isArray(kD) && kD.length ? [...kD].reverse() : [];
+        const years = inc.map(x => parseInt((x.calendarYear || x.date || "").slice(0,4)));
+        const r = _buildFundamentalsResult(years, inc, cf, bs, km, 0);
+        if (r) { console.log(`fetchFundamentals [FMP] OK: ${t}`, years); return r; }
+      } catch(e) { console.warn(`FMP error (${t}, ${incUrl.slice(0,50)}):`, e.message); }
+    }
   }
   return null;
 }
@@ -2961,6 +2982,58 @@ function barLineChart(title, years, series, unit="") {
 }
 
 // ── Football field chart ───────────────────────────────────────
+function weissValuationCard(result, ph) {
+  const price = result.metrics?.Precio_actual || result.metrics?.price || 0;
+  if (!ph?.divByYear || !ph?.yieldByYear) {
+    return `<div class="card">
+      <h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📘 Valoración Geraldine Weiss</h4>
+      <div style="font-size:11px;color:#94a3b8">Sin datos de dividendos para calcular el valor de Weiss.</div>
+    </div>`;
+  }
+  const years = Object.keys(ph.divByYear).map(Number).sort();
+  if (!years.length) return "";
+  const lastYear = years[years.length - 1];
+  const annualDiv = ph.divByYear[lastYear];
+  if (!annualDiv || annualDiv <= 0) {
+    return `<div class="card">
+      <h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📘 Valoración Geraldine Weiss</h4>
+      <div style="font-size:11px;color:#94a3b8">La empresa no paga dividendos — método Weiss no aplicable.</div>
+    </div>`;
+  }
+  const yieldVals = Object.values(ph.yieldByYear).filter(v => v != null && v > 0);
+  if (yieldVals.length < 2) return "";
+  const maxYield = Math.max(...yieldVals);
+  const minYield = Math.min(...yieldVals);
+  const avgYield = yieldVals.reduce((a,b)=>a+b,0)/yieldVals.length;
+  const buyPrice  = +(annualDiv / maxYield).toFixed(2);
+  const sellPrice = +(annualDiv / minYield).toFixed(2);
+  const fairPrice = +(annualDiv / avgYield).toFixed(2);
+  const isUnder = price > 0 && price <= buyPrice;
+  const isOver  = price > 0 && price >= sellPrice;
+  const status  = isUnder ? {label:"INFRAVALORADA", color:"#16a34a", bg:"#f0fdf4", border:"#bbf7d0"}
+    : isOver  ? {label:"SOBREVALORADA",  color:"#dc2626", bg:"#fef2f2", border:"#fecaca"}
+    :           {label:"ZONA NEUTRA",    color:"#d97706", bg:"#fffbeb", border:"#fde68a"};
+  const rows = [
+    ["📅 Div. anual (último año)", `${annualDiv.toFixed(2)}`],
+    ["📈 Yield máx. histórico (compra)", `${(maxYield*100).toFixed(1)}%`],
+    ["📉 Yield mín. histórico (venta)",  `${(minYield*100).toFixed(1)}%`],
+    ["🟢 Precio de COMPRA (Weiss)",  `${buyPrice}`],
+    ["⚖️ Precio JUSTO (yield medio)", `${fairPrice}`],
+    ["🔴 Precio de VENTA (Weiss)",   `${sellPrice}`],
+    ["💵 Precio actual",             price ? `${price}` : "—"],
+  ];
+  return `<div class="card">
+    <h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📘 Valoración Geraldine Weiss</h4>
+    <div style="background:${status.bg};border:1px solid ${status.border};border-radius:8px;padding:8px 12px;margin-bottom:10px;text-align:center">
+      <span style="font-size:13px;font-weight:800;color:${status.color}">${status.label}</span>
+    </div>
+    ${rows.map(([l,v])=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #f1f5f9;font-size:11px">
+      <span style="color:#64748b">${l}</span><span style="font-weight:700">${v}</span>
+    </div>`).join("")}
+    <div style="font-size:10px;color:#94a3b8;margin-top:6px">Basado en ${yieldVals.length} años de historial de yield. Dividendos en divisa local.</div>
+  </div>`;
+}
+
 function footballField(result) {
   const price = result.metrics?.Precio_actual || result.metrics?.price || 0;
   const methods = [
