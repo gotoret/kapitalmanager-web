@@ -719,6 +719,8 @@ async function refreshDividendYields() {
 
 function exportCarteraExcel() {
   const fecha = new Date().toISOString().slice(0, 10);
+
+  // ── Hoja 1: Cartera (posiciones actuales con precios y P&L) ──
   const posRows = state.positions.map(p => {
     const cp = state.priceCache[p.ticker];
     const di = state.divInfo?.find(d => d.ticker === p.ticker);
@@ -732,16 +734,32 @@ function exportCarteraExcel() {
       "P&L (€)": pnl, "P&L (%)": costeTotal ? +((pnl/costeTotal)*100).toFixed(2) : 0,
       "Divisa": p.currency || "EUR", "Sector": p.sector || "",
       "Yield (%)": di ? +((di.div_yield||0)*100).toFixed(2) : "",
-      "Ingreso anual": di ? +(di.annual_income||0).toFixed(2) : "",
-      "Fecha entrada": p.date || ""
+      "Ingreso anual (€)": di ? +(di.annual_income||0).toFixed(2) : "",
+      "Fecha entrada": p.date || "", "FX compra": p.fx_rate || 1
     };
   });
-  const txRows = [...(state.transactions||[])].sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(t=>({
-    "Fecha": (t.date||"").slice(0,10), "Ticker": t.ticker, "Tipo": t.type,
-    "Acciones": t.shares, "Precio": t.price, "Comisión": t.commission||0,
-    "Divisa": t.currency||"EUR", "Notas": t.notes||""
-  }));
-  const divRows = (state.divInfo||[]).map(d=>({
+
+  // ── Hoja 2: Transacciones (historial completo) ──
+  const txRows = [...(state.transactions||[])]
+    .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
+    .map(t=>({
+      "Fecha": (t.date||"").slice(0,10), "Ticker": t.ticker, "Tipo": t.type,
+      "Acciones": t.shares, "Precio": t.price, "Comisión": t.commission||0,
+      "Divisa": t.currency||"EUR", "Notas": t.notes||""
+    }));
+
+  // ── Hoja 3: Dividendos cobrados (historial real registrado) ──
+  const divCobrados = [...(state.dividends||[])]
+    .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
+    .map(d=>({
+      "Fecha": (d.date||"").slice(0,10), "Ticker": d.ticker,
+      "Acciones": d.shares, "Importe/acción": d.amount,
+      "Total cobrado": +((d.amount||0)*(d.shares||0)).toFixed(2),
+      "Divisa": d.currency||"EUR", "Notas": d.notes||""
+    }));
+
+  // ── Hoja 4: Dividendos esperados (proyección anual) ──
+  const divEsperados = (state.divInfo||[]).map(d=>({
     "Ticker": d.ticker, "Empresa": d.name||"", "Acciones": d.shares,
     "Div/acción": +((d.div_rate||0)).toFixed(4),
     "Yield (%)": +((d.div_yield||0)*100).toFixed(2),
@@ -750,21 +768,46 @@ function exportCarteraExcel() {
     "Ingreso neto anual": +((d.annual_income||0)*(1-retencionOrigenPct(d.ticker,d.currency))).toFixed(2),
     "Próx. ex-div": d.ex_date||"", "Frecuencia": d.freq||"—"
   }));
+
+  // ── Hoja oculta _BACKUP: JSON completo para restauración exacta ──
+  const backup = {
+    _version: "kapital-v2",
+    _exportDate: new Date().toISOString(),
+    positions: state.positions,
+    transactions: state.transactions,
+    dividends: state.dividends || [],
+    alerts: state.alerts || [],
+    goals: state.goals || [],
+    yieldCache: state.yieldCache || {},
+    fxCache: state.fxCache || {}
+  };
+  const backupRows = [
+    { "_BACKUP_JSON (no editar)": JSON.stringify(backup) }
+  ];
+
   const wb = XLSX.utils.book_new();
+
   const wsPos = XLSX.utils.json_to_sheet(posRows);
-  wsPos["!cols"] = [8,22,10,12,12,12,12,10,10,8,18,10,13,12].map(w=>({wch:w}));
+  wsPos["!cols"] = [8,22,10,12,12,12,12,10,10,8,18,10,14,12,8].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, wsPos, "Cartera");
-  if (txRows.length) {
-    const wsTx = XLSX.utils.json_to_sheet(txRows);
-    wsTx["!cols"] = [12,10,8,10,10,10,8,30].map(w=>({wch:w}));
-    XLSX.utils.book_append_sheet(wb, wsTx, "Transacciones");
-  }
-  if (divRows.length) {
-    const wsDiv = XLSX.utils.json_to_sheet(divRows);
-    wsDiv["!cols"] = [8,22,10,12,10,16,12,16,12,12].map(w=>({wch:w}));
-    XLSX.utils.book_append_sheet(wb, wsDiv, "Dividendos");
-  }
-  XLSX.writeFile(wb, `kapital_cartera_${fecha}.xlsx`);
+
+  const wsTx = XLSX.utils.json_to_sheet(txRows.length ? txRows : [{"Info":"Sin transacciones registradas"}]);
+  wsTx["!cols"] = [12,10,8,10,10,10,8,30].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, wsTx, "Transacciones");
+
+  const wsDivC = XLSX.utils.json_to_sheet(divCobrados.length ? divCobrados : [{"Info":"Sin dividendos cobrados registrados"}]);
+  wsDivC["!cols"] = [12,10,10,14,14,8,30].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, wsDivC, "Dividendos cobrados");
+
+  const wsDivE = XLSX.utils.json_to_sheet(divEsperados.length ? divEsperados : [{"Info":"Sin posiciones con dividendo"}]);
+  wsDivE["!cols"] = [8,22,10,12,10,16,12,16,12,12].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, wsDivE, "Dividendos esperados");
+
+  const wsBak = XLSX.utils.json_to_sheet(backupRows);
+  wsBak["!cols"] = [{wch:200}];
+  XLSX.utils.book_append_sheet(wb, wsBak, "_BACKUP");
+
+  XLSX.writeFile(wb, `KapitalManager_${fecha}.xlsx`);
 }
 
 // ─────────────────────────────────────────────
@@ -1043,7 +1086,58 @@ async function parseImportFile() {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
 
-      // Detectar si es un export propio de Kapital Manager
+      // ── Detectar si tiene hoja _BACKUP (restauración completa) ──
+      if (wb.SheetNames.includes("_BACKUP")) {
+        const bakSheet = wb.Sheets["_BACKUP"];
+        const bakRows = XLSX.utils.sheet_to_json(bakSheet, { header: 1, raw: false, defval: "" });
+        const jsonStr = bakRows[1]?.[0] || bakRows[0]?.[1] || "";
+        try {
+          const backup = JSON.parse(jsonStr);
+          if (!backup?.positions) throw new Error("JSON sin positions");
+
+          const mode = document.getElementById("import-mode")?.value || "merge";
+          const nPos = backup.positions.length;
+          const nTx  = backup.transactions?.length || 0;
+          const nDiv = backup.dividends?.length || 0;
+
+          if (!confirm(`📦 Backup de Kapital Manager detectado\n\n• ${nPos} posiciones\n• ${nTx} transacciones\n• ${nDiv} dividendos cobrados\nFecha: ${(backup._exportDate||"").slice(0,10)}\n\n${mode==="replace"?"⚠️ Se sustituirá la cartera actual.\n":"Se añadirá a la cartera actual.\n"}\n¿Restaurar?`)) return;
+
+          if (mode === "replace") {
+            state.positions    = backup.positions    || [];
+            state.transactions = backup.transactions || [];
+            state.dividends    = backup.dividends    || [];
+            state.alerts       = backup.alerts       || state.alerts;
+            state.goals        = backup.goals        || state.goals;
+            state.yieldCache   = backup.yieldCache   || {};
+            if (backup.fxCache) state.fxCache = backup.fxCache;
+          } else {
+            // Merge: añadir posiciones que no existan ya (por ticker)
+            const existingTickers = new Set(state.positions.map(p=>p.ticker));
+            (backup.positions||[]).forEach(p => { if (!existingTickers.has(p.ticker)) state.positions.push(p); });
+            // Merge transacciones (deduplicar por fecha+ticker+tipo+shares)
+            const existingTxKeys = new Set(state.transactions.map(t=>`${(t.date||"").slice(0,10)}|${t.ticker}|${t.type}|${t.shares}`));
+            (backup.transactions||[]).forEach(t => {
+              const k = `${(t.date||"").slice(0,10)}|${t.ticker}|${t.type}|${t.shares}`;
+              if (!existingTxKeys.has(k)) state.transactions.push(t);
+            });
+            // Merge dividendos cobrados
+            const existingDivKeys = new Set((state.dividends||[]).map(d=>`${(d.date||"").slice(0,10)}|${d.ticker}|${d.amount}`));
+            (backup.dividends||[]).forEach(d => {
+              const k = `${(d.date||"").slice(0,10)}|${d.ticker}|${d.amount}`;
+              if (!existingDivKeys.has(k)) { state.dividends = state.dividends||[]; state.dividends.push(d); }
+            });
+          }
+
+          buildDivInfo(); save(); renderHeader(); renderActiveTab(); closeModal(); refreshDividendYields();
+          alert(`✅ Backup restaurado: ${nPos} posiciones, ${nTx} transacciones, ${nDiv} dividendos cobrados`);
+          return;
+        } catch(e) {
+          console.warn("Error parseando _BACKUP JSON:", e);
+          // Continuar con el flujo normal si el JSON está corrupto
+        }
+      }
+
+      // ── Detectar export Kapital (sin _BACKUP, con Transacciones+Cartera) ──
       const isKapitalExport = wb.SheetNames.includes("Transacciones") && wb.SheetNames.includes("Cartera");
 
       if (isKapitalExport) {
