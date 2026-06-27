@@ -2569,31 +2569,53 @@ async function _fetchYahooTimeSeries(ticker) {
       const n = revSeries.length;
       const years = revSeries.map(x => parseInt(x.asOfDate?.slice(0,4)));
 
+      // Helper: filtrar valores fuera de rango razonable
+      const clamp = (v, min, max) => v != null && v >= min && v <= max ? v : null;
+
       const revenue     = Array.from({length:n},(_,i)=>{ const v=getTS("annualTotalRevenue",i); return v!=null?+(v/M).toFixed(0):null; });
       const ebit        = Array.from({length:n},(_,i)=>{ const v=getTS("annualOperatingIncome",i); return v!=null?+(v/M).toFixed(0):null; });
       const net_income  = Array.from({length:n},(_,i)=>{ const v=getTS("annualNetIncome",i); return v!=null?+(v/M).toFixed(0):null; });
       const ebitda_arr  = Array.from({length:n},(_,i)=>{ const v=getTS("annualEbitda",i); return v!=null?+(v/M).toFixed(0):null; });
       const cfo         = Array.from({length:n},(_,i)=>{ const v=getTS("annualOperatingCashFlow",i); return v!=null?+(v/M).toFixed(0):null; });
       const capex       = Array.from({length:n},(_,i)=>{ const v=getTS("annualCapitalExpenditure",i); return v!=null?+(v/M).toFixed(0):null; });
-      const fcf         = Array.from({length:n},(_,i)=>{ const v=getTS("annualFreeCashFlow",i); return v!=null?+(v/M).toFixed(0):null;}) ||
-                          cfo.map((c,i) => c!=null&&capex[i]!=null?+(c+capex[i]).toFixed(0):null);
-      const gross_margin= Array.from({length:n},(_,i)=>{ const v=getTS("annualGrossProfitMargin",i); return v!=null?+(v*100).toFixed(1):null; });
-      const ebit_margin = Array.from({length:n},(_,i)=>{ const v=getTS("annualOperatingIncomeMargin",i); return v!=null?+(v*100).toFixed(1):null; });
-      const net_margin  = Array.from({length:n},(_,i)=>{ const v=getTS("annualNetIncomeMargin",i); return v!=null?+(v*100).toFixed(1):null; });
+      // FCF directo o calculado desde CFO - Capex
+      const fcf_raw     = Array.from({length:n},(_,i)=>getTS("annualFreeCashFlow",i));
+      const fcf         = fcf_raw.map((v,i)=> v!=null ? +(v/M).toFixed(0) : (cfo[i]!=null&&capex[i]!=null ? +(cfo[i]+capex[i]).toFixed(0) : null));
+      const gross_margin= Array.from({length:n},(_,i)=>{ const v=getTS("annualGrossProfitMargin",i); return clamp(v!=null?+(v*100).toFixed(1):null,-10,100); });
+      const ebit_margin = Array.from({length:n},(_,i)=>{ const v=getTS("annualOperatingIncomeMargin",i); return clamp(v!=null?+(v*100).toFixed(1):null,-50,80); });
+      const net_margin  = Array.from({length:n},(_,i)=>{ const v=getTS("annualNetIncomeMargin",i); return clamp(v!=null?+(v*100).toFixed(1):null,-50,60); });
       const totalDebt   = Array.from({length:n},(_,i)=>getTS("annualTotalDebt",i));
       const cash        = Array.from({length:n},(_,i)=>getTS("annualCashAndCashEquivalents",i));
       const net_debt    = totalDebt.map((d,i)=>{ const c=cash[i]||0; return d!=null?+((d-c)/M).toFixed(0):null; });
-      const debt_ebitda = net_debt.map((nd,i)=>ebitda_arr[i]?+(nd/ebitda_arr[i]).toFixed(2):null);
-      const roe         = Array.from({length:n},(_,i)=>{ const v=getTS("annualReturnOnEquity",i); return v!=null?+(v*100).toFixed(1):null; });
+      const debt_ebitda = net_debt.map((nd,i)=>ebitda_arr[i]&&ebitda_arr[i]>0?clamp(+(nd/ebitda_arr[i]).toFixed(2),-5,20):null);
+      // ROE: Yahoo lo devuelve como ratio decimal (0.15 = 15%) — filtrar valores absurdos
+      const roe         = Array.from({length:n},(_,i)=>{ const v=getTS("annualReturnOnEquity",i); return v!=null?clamp(+(v*100).toFixed(1),-60,100):null; });
+      // ROIC: ReturnOnAssets * apalancamiento aproximado es impreciso — usar net_income/capital_empleado
+      // Capital empleado = TotalDebt + Equity ≈ estimado por EBITDA * múltiplo conservador
+      const roic        = Array.from({length:n},(_,i)=>{
+        const ni = (net_income[i]||0)*M;
+        const d  = totalDebt[i]||0;
+        const c  = cash[i]||0;
+        const netD = Math.max(0, d-c);
+        const ebitdaV = (ebitda_arr[i]||0)*M;
+        // Capital empleado: deuda neta + patrimonio estimado (EBITDA * 6 como proxy conservador del EV)
+        const capEmp = netD + Math.max(ebitdaV * 4, 1);
+        const v = ni && capEmp ? +((ni / capEmp) * 100).toFixed(1) : null;
+        return clamp(v, -30, 80);
+      });
       const eps         = Array.from({length:n},(_,i)=>{ const v=getTS("annualBasicEPS",i)??getTS("annualDilutedEPS",i); return v!=null?+v.toFixed(2):null; });
       const intExp      = Array.from({length:n},(_,i)=>getTS("annualInterestExpense",i));
-      const interest_coverage = ebit.map((e,i)=>{ const ie=Math.abs(intExp[i]||0); return e&&ie?+((e*M)/ie).toFixed(1):null; });
+      const interest_coverage = ebit.map((e,i)=>{ const ie=Math.abs(intExp[i]||0); return e!=null&&ie?clamp(+((e*M)/ie).toFixed(1),0,50):null; });
       const curP = state.priceCache[ticker]||0;
-      const fcf_per_share = fcf.map((f,i)=>{ const rev=revenue[i]; return f&&rev?+(f/rev*10).toFixed(2):null; }); // aprox
-      const pe_hist   = eps.map(e=>e&&curP&&e>0?+(curP/e).toFixed(1):null);
-      const pfcf_hist = fcf_per_share.map(f=>f&&f>0&&curP?+(curP/f).toFixed(1):null);
-      // ROIC aproximado
-      const roic = net_income.map((ni,i)=>{ const nd=Math.abs(net_debt[i]||0); const eq=revenue[i]?revenue[i]*0.3:1; return ni&&eq?+((ni/(nd+eq))*100).toFixed(1):null; });
+      // FCF por acción: FCF / (revenue / (precio * shares estimadas)) — sin shares exactas usamos ratio
+      // Mejor: si EPS disponible, FCF/acción ≈ FCF * (EPS/net_income) cuando proporcional
+      const fcf_per_share = fcf.map((f,i)=>{
+        const ni = net_income[i]; const e = eps[i];
+        if (f!=null && ni && e && Math.abs(ni)>0) return clamp(+(f * e / ni).toFixed(2), -50, 200);
+        return null;
+      });
+      const pe_hist   = eps.map(e=>e&&e>0&&curP?clamp(+(curP/e).toFixed(1),0,200):null);
+      const pfcf_hist = fcf_per_share.map(f=>f&&f>0&&curP?clamp(+(curP/f).toFixed(1),0,200):null);
 
       const result = { years, revenue, ebit, net_income, cfo, fcf, gross_margin, ebit_margin, net_margin,
         net_debt, debt_ebitda, interest_coverage, eps, fcf_per_share,
