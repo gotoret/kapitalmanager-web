@@ -331,23 +331,19 @@ const YIELD_PROXIES = [
 ];
 
 const MODULES = "incomeStatementHistory,cashflowStatementHistory,balanceSheetHistory,defaultKeyStatistics,financialData";
-const TS_TYPES = [
-  "annualTotalRevenue","annualNetIncome","annualOperatingCashFlow","annualFreeCashFlow",
-  "annualGrossProfit","annualEbit","annualEbitda","annualEarningsPerShareBasic",
-  "annualTotalDebt","annualCashAndCashEquivalents","annualTotalEquityGrossMinorityInterest",
-  "annualReturnOnEquity","annualCapitalExpenditure","annualInterestExpense"
-].join(",");
-const TS_PERIOD1 = 1388534400; // 2014-01-01
-// Proxies para el endpoint timeseries (más fiable que quoteSummary para CORS)
-const FUND_PROXIES = [
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_TYPES}&period1=${TS_PERIOD1}&period2=${Math.floor(Date.now()/1000)}`)}`,
-  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_TYPES}&period1=${TS_PERIOD1}&period2=${Math.floor(Date.now()/1000)}`)}`,
-  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_TYPES}&period1=${TS_PERIOD1}&period2=${Math.floor(Date.now()/1000)}`)}`,
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_TYPES}&period1=${TS_PERIOD1}&period2=${Math.floor(Date.now()/1000)}`)}`,
-  // Fallback: quoteSummary (cada vez más bloqueado por Yahoo)
+// 8 proxies atacando quoteSummary directamente (el endpoint timeseries está muy bloqueado)
+const QS_PROXIES = [
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
-  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
 ];
+// Alias para no romper referencias heredadas
+const FUND_PROXIES = QS_PROXIES;
 
 // ─────────────────────────────────────────────
 // STATE
@@ -2309,11 +2305,25 @@ function renderValuation() {
         </div>`;
       } else {
         const fmpKey = state.fmpKey || "";
-        resultHtml += `<div style="padding:20px;background:#fffbeb;border-radius:10px;border:1px solid #fde68a;font-size:12px;color:#92400e;line-height:1.7">
+        const dbg = state._fundsDebug;
+        const fmpErrs = dbg?.fmp ? dbg.fmp.join(" | ") : "";
+        const yfErrs  = dbg?.yahoo ? dbg.yahoo.slice(0,3).join(" | ") : "";
+        resultHtml += `<div style="padding:16px;background:#fffbeb;border-radius:10px;border:1px solid #fde68a;font-size:12px;color:#92400e;line-height:1.8">
           <strong>🔬 Datos fundamentales (P&L, Cash Flow, Balance)</strong><br>
-          ${fmpKey
-            ? "Los datos de cuenta de resultados no están disponibles para este ticker en el plan gratuito de FMP. Los tickers europeos requieren plan de pago en FMP."
-            : `Para ver estas gráficas configura una API key gratuita de <strong>Financial Modeling Prep</strong> (financialmodelingprep.com/developer) en el panel de arriba. Funciona para tickers de bolsas USA. Las pestañas Precio y Dividendos siempre funcionan para todos los tickers.`}
+          ${!fmpKey
+            ? `Para ver estas gráficas configura una API key gratuita de <strong>Financial Modeling Prep</strong>
+               (<a href="https://financialmodelingprep.com/developer" target="_blank" style="color:#2563eb">financialmodelingprep.com/developer</a>) en el panel de arriba.
+               Funciona para tickers de bolsas USA. Las pestañas <strong>Precio</strong> y <strong>Dividendos</strong> siempre funcionan sin clave.`
+            : `No se pudieron cargar los datos. La app intentó 11 fuentes distintas y todas fallaron.
+               <br><br>
+               <strong>Diagnóstico FMP:</strong> ${fmpErrs || "sin respuesta"}<br>
+               <strong>Diagnóstico Yahoo QS:</strong> ${yfErrs || "sin respuesta"}<br><br>
+               <strong>Posibles causas:</strong><br>
+               • Tu clave FMP puede haber llegado al límite diario (250 llamadas/día en plan gratuito)<br>
+               • Yahoo Finance bloquea peticiones desde proxies CORS (habitual en 2025)<br>
+               • Prueba de nuevo en unos minutos — los proxies tienen rate limiting propio<br><br>
+               <button onclick="state._fundsDebug=null;analyzeValuation()" style="background:#2563eb;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:11px;cursor:pointer;margin-right:6px">🔄 Reintentar</button>
+               <a href="https://financialmodelingprep.com/developer/docs/dashboard" target="_blank" style="font-size:11px;color:#2563eb">Comprobar clave FMP</a>`}
         </div>`;
       }
       resultHtml += `</div>`;
@@ -2415,20 +2425,24 @@ async function _fetchFMP(ticker, key) {
     `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   ];
 
+  const errors = [];
   for (const t of tickers) {
     const incUrls = wrapUrl(`${BASE}/income-statement/${t}?limit=10&apikey=${key}`);
     for (const incUrl of incUrls) {
       try {
         const incR = await fetch(incUrl, { signal: AbortSignal.timeout(10000) });
-        if (!incR.ok) continue;
+        if (!incR.ok) { errors.push(`HTTP ${incR.status} @ ${incUrl.slice(0,50)}`); continue; }
         const iD = await incR.json();
+        // FMP devuelve {"Error Message":"..."} en cuentas bloqueadas/key inválida
+        if (iD?.["Error Message"]) {
+          errors.push(`FMP clave/plan: ${iD["Error Message"].slice(0,80)}`);
+          break; // no hay punto de intentar proxies si la clave falla
+        }
         const inc = Array.isArray(iD) && iD.length ? [...iD].reverse() : [];
-        if (!inc.length) { console.warn(`FMP (${incUrl.slice(0,40)}): sin datos para ${t}`); continue; }
+        if (!inc.length) { errors.push(`FMP: sin datos para ${t} @ ${incUrl.slice(0,50)}`); continue; }
 
-        // Usar el mismo proxy que funcionó para el income statement
         const proxyType = incUrl.startsWith("https://corsproxy") ? "corsproxy"
-          : incUrl.startsWith("https://api.allorigins") ? "allorigins"
-          : "direct";
+          : incUrl.startsWith("https://api.allorigins") ? "allorigins" : "direct";
         const wrap2 = (u) =>
           proxyType === "corsproxy"  ? `https://corsproxy.io/?url=${encodeURIComponent(u)}`
           : proxyType === "allorigins" ? `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
@@ -2446,131 +2460,94 @@ async function _fetchFMP(ticker, key) {
         const years = inc.map(x => parseInt((x.calendarYear || x.date || "").slice(0,4)));
         const r = _buildFundamentalsResult(years, inc, cf, bs, km, 0);
         if (r) { console.log(`fetchFundamentals [FMP] OK: ${t}`, years); return r; }
-      } catch(e) { console.warn(`FMP error (${t}, ${incUrl.slice(0,50)}):`, e.message); }
+        errors.push(`FMP: _buildFundamentalsResult vacío para ${t}`);
+      } catch(e) { errors.push(`${e.message} @ ${incUrl.slice(0,50)}`); }
     }
   }
-  return null;
+  return { _errors: errors, _failed: true };
 }
 
 // ── Fetch via Yahoo Finance timeseries (fallback universal) ────
-async function _fetchYahooTimeseries(ticker) {
+// ── Yahoo quoteSummary: parsear y devolver datos estructurados ─
+function _parseQS(json, ticker) {
   const M = 1e6;
-  for (const proxyFn of FUND_PROXIES.slice(0, 4)) {
-    try {
-      const res = await fetch(proxyFn(ticker), { signal: AbortSignal.timeout(12000) });
-      if (!res.ok) continue;
-      const json = await res.json();
-      const results = json?.timeseries?.result;
-      if (!Array.isArray(results) || !results.length) continue;
-
-      const yearMap = {};
-      for (const entry of results) {
-        const type = entry.type;
-        if (!type) continue;
-        const items = entry[type] || [];
-        for (const item of items) {
-          const yr = parseInt((item.date || "").slice(0, 4));
-          if (!yr) continue;
-          if (!yearMap[yr]) yearMap[yr] = {};
-          yearMap[yr][type] = item.reportedValue?.raw ?? null;
-        }
-      }
-      const years = Object.keys(yearMap).map(Number).sort();
-      if (!years.length) continue;
-
-      const g  = (yr, t) => yearMap[yr]?.[t] ?? null;
-      const gM = (yr, t) => { const v=g(yr,t); return v!=null ? +(v/M).toFixed(0) : null; };
-
-      const revenue    = years.map(yr => gM(yr, "annualTotalRevenue"));
-      const ebit       = years.map(yr => gM(yr, "annualEbit"));
-      const net_income = years.map(yr => gM(yr, "annualNetIncome"));
-      const ebitda_arr = years.map(yr => gM(yr, "annualEbitda"));
-      const cfo        = years.map(yr => gM(yr, "annualOperatingCashFlow"));
-      const fcf        = years.map(yr => gM(yr, "annualFreeCashFlow"));
-      const capex      = years.map(yr => gM(yr, "annualCapitalExpenditure"));
-      // FCF = free cash flow directo, o cfo-capex si no existe
-      const fcf_f      = fcf.map((f,i) => f ?? (cfo[i]!=null&&capex[i]!=null ? +(cfo[i]+capex[i]).toFixed(0) : null));
-      const gp         = years.map(yr => g(yr, "annualGrossProfit"));
-      const debt       = years.map(yr => g(yr, "annualTotalDebt") ?? 0);
-      const cash       = years.map(yr => g(yr, "annualCashAndCashEquivalents") ?? 0);
-      const equity     = years.map(yr => g(yr, "annualTotalEquityGrossMinorityInterest") ?? 0);
-      const roe_r      = years.map(yr => g(yr, "annualReturnOnEquity"));
-      const ie         = years.map(yr => g(yr, "annualInterestExpense") ?? 0);
-      const eps        = years.map(yr => { const v=g(yr,"annualEarningsPerShareBasic"); return v!=null?+v.toFixed(2):null; });
-
-      const gross_margin = years.map((_,i) => gp[i]&&revenue[i] ? +((gp[i]/(revenue[i]*M))*100).toFixed(1) : null);
-      const ebit_margin  = years.map((_,i) => ebit[i]&&revenue[i] ? +((ebit[i]/revenue[i])*100).toFixed(1) : null);
-      const net_margin   = years.map((_,i) => net_income[i]&&revenue[i] ? +((net_income[i]/revenue[i])*100).toFixed(1) : null);
-      const net_debt     = years.map((_,i) => +((debt[i]-cash[i])/M).toFixed(0));
-      const debt_ebitda  = net_debt.map((nd,i) => ebitda_arr[i] ? +(nd/ebitda_arr[i]).toFixed(2) : null);
-      const interest_coverage = years.map((_,i) => { const a=Math.abs(ie[i]); return ebit[i]&&a ? +((ebit[i]*M)/a).toFixed(1):null; });
-      const roe  = roe_r.map(v => v!=null ? +(v*100).toFixed(1) : null);
-      const roic = years.map((_,i) => { const ic=(equity[i]+debt[i]); const n=(ebit[i]||0)*M*0.75; return ic>0?+((n/ic)*100).toFixed(1):null; });
-      const fcf_per_share = years.map(() => null);
-      const pe_hist = years.map(()=>null);
-      const pfcf_hist = years.map(()=>null);
-      const ev_ebitda_hist = years.map(()=>null);
-      const price_hist = years.map((_,i) => i===years.length-1 ? (state.priceCache[ticker]||0) : null);
-
-      console.log(`fetchFundamentals [Yahoo TS] OK: ${ticker}`, years);
-      return { years, revenue, ebit, net_income, cfo, fcf:fcf_f, gross_margin, ebit_margin, net_margin,
-               net_debt, debt_ebitda, interest_coverage, eps, fcf_per_share, price_hist,
-               pe_hist, pfcf_hist, ev_ebitda_hist, roe, roic };
-    } catch(e) { console.warn("Yahoo timeseries error:", e.message); }
-  }
-  // Fallback: quoteSummary
-  for (const proxyFn of FUND_PROXIES.slice(4)) {
-    try {
-      const res = await fetch(proxyFn(ticker), { signal: AbortSignal.timeout(10000) });
-      if (!res.ok) continue;
-      const json = await res.json();
-      const r = json?.quoteSummary?.result?.[0];
-      if (!r) continue;
-      const getV = (obj,...keys) => { for(const k of keys){const v=obj?.[k]?.raw; if(v!=null)return +v;} return null; };
-      const inc=[...(r.incomeStatementHistory?.incomeStatementHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
-      const cf =[...(r.cashflowStatementHistory?.cashflowStatementHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
-      const bs =[...(r.balanceSheetHistory?.balanceSheetHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
-      const ks =r.defaultKeyStatistics||{};
-      const years=inc.map(x=>new Date((x.endDate?.raw||0)*1000).getFullYear());
-      if(!years.length) continue;
-      const revenue   =inc.map(x=>{const v=getV(x,"totalRevenue");return v!=null?+(v/M).toFixed(0):null;});
-      const ebit      =inc.map(x=>{const v=getV(x,"ebit","operatingIncome");return v!=null?+(v/M).toFixed(0):null;});
-      const net_income=inc.map(x=>{const v=getV(x,"netIncome");return v!=null?+(v/M).toFixed(0):null;});
-      const cfo       =cf.map(x=>{const v=getV(x,"totalCashFromOperatingActivities");return v!=null?+(v/M).toFixed(0):null;});
-      const capex     =cf.map(x=>{const v=getV(x,"capitalExpenditures");return v!=null?+(v/M).toFixed(0):null;});
-      const fcf       =cfo.map((c,i)=>c!=null&&capex[i]!=null?+(c+capex[i]).toFixed(0):null);
-      const gm        =inc.map(x=>{const g=getV(x,"grossProfit"),rv=getV(x,"totalRevenue");return g&&rv?+((g/rv)*100).toFixed(1):null;});
-      const ebitda_arr=inc.map((x,i)=>{const e=(ebit[i]||0)*M;const da=Math.abs(getV(x,"depreciationAndAmortization")||0);return e+da>0?+((e+da)/M).toFixed(0):null;});
-      const nd        =bs.map(x=>{const d=getV(x,"longTermDebt","totalDebt")||0;const c=getV(x,"cash","cashAndCashEquivalents")||0;return +((d-c)/M).toFixed(0);});
-      const eps       =inc.map(x=>{const v=getV(x,"basicEPS","dilutedEPS");return v!=null?+v.toFixed(2):null;});
-      const shares    =getV(ks,"sharesOutstanding")||1;
-      const fsh       =fcf.map(f=>f!=null?+((f*M)/shares).toFixed(2):null);
-      const curP      =state.priceCache[ticker]||0;
-      const roe_r     =bs.map((x,i)=>{const eq=getV(x,"totalStockholderEquity");return eq&&net_income[i]?+((net_income[i]*M/eq)*100).toFixed(1):null;});
-      const roic_r    =bs.map((x,i)=>{const eq=getV(x,"totalStockholderEquity")||0;const d=getV(x,"longTermDebt")||0;const ic=eq+d;const n=(ebit[i]||0)*M*0.75;return ic>0?+((n/ic)*100).toFixed(1):null;});
-      console.log(`fetchFundamentals [Yahoo QS] OK: ${ticker}`, years);
-      return {years,revenue,ebit,net_income,cfo,fcf,gross_margin:gm,
-              ebit_margin:inc.map((_,i)=>revenue[i]&&ebit[i]?+((ebit[i]/revenue[i])*100).toFixed(1):null),
-              net_margin:inc.map((_,i)=>revenue[i]&&net_income[i]?+((net_income[i]/revenue[i])*100).toFixed(1):null),
-              net_debt:nd,debt_ebitda:nd.map((d,i)=>ebitda_arr[i]?+(d/ebitda_arr[i]).toFixed(2):null),
-              interest_coverage:inc.map((x,i)=>{const ie=Math.abs(getV(x,"interestExpense")||0);return ebit[i]&&ie?+((ebit[i]*M)/ie).toFixed(1):null;}),
-              eps,fcf_per_share:fsh,price_hist:years.map((_,i)=>i===years.length-1?curP:null),
-              pe_hist:eps.map(e=>e&&curP?+(curP/e).toFixed(1):null),
-              pfcf_hist:fsh.map(f=>f&&f>0&&curP?+(curP/f).toFixed(1):null),
-              ev_ebitda_hist:years.map(()=>null),roe:roe_r,roic:roic_r};
-    } catch(e) { console.warn("Yahoo QS error:", e.message); }
-  }
-  return null;
+  const r = json?.quoteSummary?.result?.[0];
+  if (!r) return null;
+  const getV = (obj,...keys) => { for(const k of keys){const v=obj?.[k]?.raw; if(v!=null)return +v;} return null; };
+  const inc=[...(r.incomeStatementHistory?.incomeStatementHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
+  const cf =[...(r.cashflowStatementHistory?.cashflowStatementHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
+  const bs =[...(r.balanceSheetHistory?.balanceSheetHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
+  const ks =r.defaultKeyStatistics||{};
+  const years=inc.map(x=>new Date((x.endDate?.raw||0)*1000).getFullYear());
+  if(!years.length) return null;
+  const revenue   =inc.map(x=>{const v=getV(x,"totalRevenue");return v!=null?+(v/M).toFixed(0):null;});
+  const ebit      =inc.map(x=>{const v=getV(x,"ebit","operatingIncome");return v!=null?+(v/M).toFixed(0):null;});
+  const net_income=inc.map(x=>{const v=getV(x,"netIncome");return v!=null?+(v/M).toFixed(0):null;});
+  const cfo       =cf.map(x=>{const v=getV(x,"totalCashFromOperatingActivities");return v!=null?+(v/M).toFixed(0):null;});
+  const capex     =cf.map(x=>{const v=getV(x,"capitalExpenditures");return v!=null?+(v/M).toFixed(0):null;});
+  const fcf       =cfo.map((c,i)=>c!=null&&capex[i]!=null?+(c+capex[i]).toFixed(0):null);
+  const gm        =inc.map(x=>{const g=getV(x,"grossProfit"),rv=getV(x,"totalRevenue");return g&&rv?+((g/rv)*100).toFixed(1):null;});
+  const ebitda_arr=inc.map((x,i)=>{const e=(ebit[i]||0)*M;const da=Math.abs(getV(x,"depreciationAndAmortization")||0);return e+da>0?+((e+da)/M).toFixed(0):null;});
+  const nd        =bs.map(x=>{const d=getV(x,"longTermDebt","totalDebt")||0;const c=getV(x,"cash","cashAndCashEquivalents")||0;return +((d-c)/M).toFixed(0);});
+  const eps       =inc.map(x=>{const v=getV(x,"basicEPS","dilutedEPS");return v!=null?+v.toFixed(2):null;});
+  const shares    =getV(ks,"sharesOutstanding")||1;
+  const fsh       =fcf.map(f=>f!=null?+((f*M)/shares).toFixed(2):null);
+  const curP      =state.priceCache[ticker]||0;
+  const roe_r     =bs.map((x,i)=>{const eq=getV(x,"totalStockholderEquity");return eq&&net_income[i]?+((net_income[i]*M/eq)*100).toFixed(1):null;});
+  const roic_r    =bs.map((x,i)=>{const eq=getV(x,"totalStockholderEquity")||0;const d=getV(x,"longTermDebt")||0;const ic=eq+d;const n=(ebit[i]||0)*M*0.75;return ic>0?+((n/ic)*100).toFixed(1):null;});
+  return {years,revenue,ebit,net_income,cfo,fcf,gross_margin:gm,
+    ebit_margin:inc.map((_,i)=>revenue[i]&&ebit[i]?+((ebit[i]/revenue[i])*100).toFixed(1):null),
+    net_margin:inc.map((_,i)=>revenue[i]&&net_income[i]?+((net_income[i]/revenue[i])*100).toFixed(1):null),
+    net_debt:nd,debt_ebitda:nd.map((d,i)=>ebitda_arr[i]?+(d/ebitda_arr[i]).toFixed(2):null),
+    interest_coverage:inc.map((x,i)=>{const ie=Math.abs(getV(x,"interestExpense")||0);return ebit[i]&&ie?+((ebit[i]*M)/ie).toFixed(1):null;}),
+    eps,fcf_per_share:fsh,price_hist:years.map((_,i)=>i===years.length-1?curP:null),
+    pe_hist:eps.map(e=>e&&curP?+(curP/e).toFixed(1):null),
+    pfcf_hist:fsh.map(f=>f&&f>0&&curP?+(curP/f).toFixed(1):null),
+    ev_ebitda_hist:years.map(()=>null),roe:roe_r,roic:roic_r};
 }
 
-// ── Punto de entrada: FMP primero, luego Yahoo como fallback ───
+async function _fetchYahooQS(ticker) {
+  const errors = [];
+  for (const proxyFn of QS_PROXIES) {
+    const url = proxyFn(ticker);
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
+      if (!res.ok) { errors.push(`HTTP ${res.status} @ ${url.slice(0,60)}`); continue; }
+      const json = await res.json();
+      // Yahoo devuelve error en quoteSummary.error
+      if (json?.quoteSummary?.error) {
+        errors.push(`YF error: ${json.quoteSummary.error.description||"unknown"}`);
+        continue;
+      }
+      const r = _parseQS(json, ticker);
+      if (r) { console.log(`fetchFundamentals [Yahoo QS] OK: ${ticker} via ${url.slice(0,60)}`); return r; }
+      errors.push(`QS vacío @ ${url.slice(0,60)}`);
+    } catch(e) { errors.push(`${e.message} @ ${url.slice(0,50)}`); }
+  }
+  console.warn("Yahoo QS todos fallaron:", errors);
+  return { _errors: errors, _failed: true };
+}
+
+// ── Punto de entrada: FMP primero, luego Yahoo QS como fallback ─
 async function fetchFundamentals(ticker) {
+  state._fundsDebug = null;
+  const debug = { fmp: null, yahoo: null };
+
   if (state.fmpKey) {
     const r = await _fetchFMP(ticker, state.fmpKey);
-    if (r) return r;
-    console.warn("FMP no devolvió datos — usando Yahoo Finance como fallback");
+    if (r && !r._failed) return r;
+    debug.fmp = r?._errors || ["FMP no devolvió datos"];
+    console.warn("FMP falló, probando Yahoo QS...", debug.fmp);
   }
-  return await _fetchYahooTimeseries(ticker);
+
+  const r2 = await _fetchYahooQS(ticker);
+  if (r2 && !r2._failed) return r2;
+  debug.yahoo = r2?._errors || ["Yahoo QS no devolvió datos"];
+
+  // Guardar diagnóstico para mostrarlo en UI
+  state._fundsDebug = debug;
+  console.warn("fetchFundamentals: todos los métodos fallaron", debug);
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
