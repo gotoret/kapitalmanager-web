@@ -331,21 +331,10 @@ const YIELD_PROXIES = [
 ];
 
 const MODULES = "incomeStatementHistory,cashflowStatementHistory,balanceSheetHistory,defaultKeyStatistics,financialData";
-const TS_TYPES = [
-  "annualTotalRevenue","annualNetIncome","annualOperatingCashFlow","annualFreeCashFlow",
-  "annualGrossProfit","annualEbit","annualEbitda","annualEarningsPerShareBasic",
-  "annualTotalDebt","annualCashAndCashEquivalents","annualTotalEquityGrossMinorityInterest",
-  "annualReturnOnEquity","annualCapitalExpenditure","annualInterestExpense"
-].join(",");
-const TS_PERIOD1 = 1388534400; // 2014-01-01
-// Proxies para el endpoint timeseries (más fiable que quoteSummary para CORS)
 const FUND_PROXIES = [
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_TYPES}&period1=${TS_PERIOD1}&period2=${Math.floor(Date.now()/1000)}`)}`,
-  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_TYPES}&period1=${TS_PERIOD1}&period2=${Math.floor(Date.now()/1000)}`)}`,
-  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_TYPES}&period1=${TS_PERIOD1}&period2=${Math.floor(Date.now()/1000)}`)}`,
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_TYPES}&period1=${TS_PERIOD1}&period2=${Math.floor(Date.now()/1000)}`)}`,
-  // Fallback: quoteSummary (cada vez más bloqueado por Yahoo)
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}&corsDomain=finance.yahoo.com`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}&crumb=`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
 ];
 
@@ -364,9 +353,9 @@ let state = {
   alerts: ls.get("km_alerts", []),
   dividends: ls.get("km_dividends", []),
   transactions: ls.get("km_transactions", []),
-  priceCache: {},
-  fxCache: {},
-  yieldCache: {},
+  priceCache: {},       // ticker -> precio en divisa original
+  fxCache: {},          // "EURUSD=X" -> tasa
+  yieldCache: {},        // ticker -> {yield, rate, exDate} reales de Yahoo Finance
   divInfo: [],
   activeTab: 0,
   sortCol: null,
@@ -374,15 +363,14 @@ let state = {
   selectedTicker: null,
   countdown: 60,
   lastUpdate: null,
-  livePrices: false,
-  authUser: null,
-  authUserId: null,
-  _appStarted: false,
-  fmpKey: ls.get("km_fmp_key", ""),   // API key de Financial Modeling Prep (gratuita)
-  importPreview: [],
-  importMap: null,
-  importHeaders: [],
-  importFileName: "",
+  livePrices: false,    // true si al menos un precio real fue obtenido
+  authUser: null,        // email del usuario logueado
+  authUserId: null,      // id de Supabase del usuario logueado
+  _appStarted: false,    // evita reiniciar precios/contador en cada login
+importPreview: [],
+importMap: null,
+importHeaders: [],
+importFileName: "",
 };
 
 const save = () => {
@@ -1797,20 +1785,25 @@ const TICKER_DOMAIN = {
 };
 
 function logoImg(ticker, name, size=28) {
-  const abbr = ticker.replace(/\.(MC|L|PA|DE|AS|MI|SW)$/i,"").slice(0,4).toUpperCase();
-  const colors = ["#2563eb","#16a34a","#dc2626","#d97706","#7c3aed","#0891b2","#be185d","#065f46"];
-  const color = colors[abbr.charCodeAt(0) % colors.length];
-  const domain = TICKER_DOMAIN[ticker] ||
-    ticker.replace(/\.(MC|L|PA|DE|AS|MI|SW)$/i,"").toLowerCase() + ".com";
-  const s = size, fs = Math.round(s * 0.34);
-  // Usamos icon.horse — servicio gratuito sin CORS que devuelve logos de empresas
-  const url = `https://icon.horse/icon/${domain}`;
-  // NOTA: el onerror NO puede contener comillas dobles (romperían el atributo HTML).
-  // Solución: el span fallback ya está en el DOM como hermano siguiente del img.
-  return `<div style="width:${s}px;height:${s}px;border-radius:50%;overflow:hidden;background:#fff;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1.5px solid #e2e8f0;box-shadow:0 1px 3px #0001" title="${esc(name||ticker)}">
-    <img src="${url}" width="${s}" height="${s}" style="object-fit:contain;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/>
-    <span style="display:none;font-size:${fs}px;font-weight:800;color:${color};line-height:1;width:100%;height:100%;align-items:center;justify-content:center;text-align:center">${abbr.slice(0,3)}</span>
-  </div>`;
+  const abbr = ticker.replace(/\.(MC|L|PA|DE|AS|MI|SW|DE|F|BE|MU|DU|NX|VX|AS|MI|LS|CO|ST|HE|OL)$/i,"").slice(0,4).toUpperCase();
+  // Colores por letra inicial — paleta profesional
+  const PALETTES = [
+    ["#1e40af","#dbeafe"],["#166534","#dcfce7"],["#991b1b","#fee2e2"],
+    ["#92400e","#fef3c7"],["#5b21b6","#ede9fe"],["#155e75","#cffafe"],
+    ["#9d174d","#fce7f3"],["#064e3b","#d1fae5"],["#1e3a5f","#e0f2fe"],
+    ["#44403c","#f5f5f4"],["#3730a3","#e0e7ff"],["#7f1d1d","#fef2f2"],
+  ];
+  const [fg, bg] = PALETTES[abbr.charCodeAt(0) % PALETTES.length];
+  const r = size / 2;
+  const fs = size <= 22 ? size * 0.38 : size <= 30 ? size * 0.35 : size * 0.32;
+  const label = abbr.length > 3 ? abbr.slice(0,3) : abbr;
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${size}' height='${size}' viewBox='0 0 ${size} ${size}'>
+    <circle cx='${r}' cy='${r}' r='${r}' fill='${bg}'/>
+    <text x='${r}' y='${r}' dominant-baseline='central' text-anchor='middle'
+      font-family='system-ui,sans-serif' font-size='${fs.toFixed(1)}' font-weight='800' fill='${fg}'>${label}</text>
+  </svg>`;
+  const encoded = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  return `<img src="${encoded}" width="${size}" height="${size}" style="border-radius:50%;display:block;flex-shrink:0" title="${esc(name||ticker)}"/>`;
 }
 
 function renderDonutByPosition(totalVal) {
@@ -2115,69 +2108,6 @@ function renderValuation() {
     const years = fd.years || [];
     const hasData = years.length > 0;
 
-    const chartHtml = hasData ? `
-      <div style="margin-top:16px">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
-
-          <!-- 1. Ingresos + EBIT + Beneficio neto -->
-          ${barLineChart("📈 Crecimiento: Ingresos · EBIT · Beneficio neto", years,
-            [
-              {label:"Ingresos", values: fd.revenue||[], color:"#2563eb"},
-              {label:"EBIT",     values: fd.ebit||[],    color:"#16a34a"},
-              {label:"Bº neto",  values: fd.net_income||[], color:"#f59e0b"}
-            ], "M€")}
-
-          <!-- 2. FCF vs Flujo operativo -->
-          ${barLineChart("💵 Calidad: Flujo operativo · Free Cash Flow", years,
-            [
-              {label:"Flujo op.", values: fd.cfo||[],  color:"#0891b2"},
-              {label:"FCF",       values: fd.fcf||[],  color:"#16a34a"}
-            ], "M€")}
-
-          <!-- 3. Márgenes -->
-          ${lineChart("📊 Márgenes: Bruto · Operativo · Neto", years,
-            [
-              {label:"Mg. Bruto",  values: fd.gross_margin||[],  color:"#2563eb"},
-              {label:"Mg. Operat.",values: fd.ebit_margin||[],   color:"#16a34a"},
-              {label:"Mg. Neto",   values: fd.net_margin||[],    color:"#f59e0b"}
-            ], "%")}
-
-          <!-- 4. ROIC + ROE -->
-          ${lineChart("🏆 Retorno sobre capital: ROIC · ROE", years,
-            [
-              {label:"ROIC", values: fd.roic||[], color:"#7c3aed"},
-              {label:"ROE",  values: fd.roe||[],  color:"#dc2626"}
-            ], "%")}
-
-          <!-- 5. Deuda neta / EBITDA -->
-          ${barLineChart("🏦 Balance: Deuda neta · Deuda/EBITDA", years,
-            [
-              {label:"Deuda neta", values: fd.net_debt||[], color:"#dc2626"},
-              {label:"D/EBITDA",   values: fd.debt_ebitda||[], color:"#f59e0b", axis:"right"}
-            ], "M€")}
-
-          <!-- 6. Precio vs FCF/acción vs EPS -->
-          ${lineChart("📉 Precio vs Fundamental: Precio · EPS · FCF/acc", years,
-            [
-              {label:"Precio",   values: fd.price_hist||[], color:"#1d4ed8"},
-              {label:"EPS",      values: fd.eps||[],        color:"#16a34a"},
-              {label:"FCF/acc",  values: fd.fcf_per_share||[], color:"#f59e0b"}
-            ], "€/$")}
-
-          <!-- 7. Múltiplos históricos -->
-          ${lineChart("🔢 Múltiplos históricos: P/E · P/FCF · EV/EBITDA", years,
-            [
-              {label:"P/E",       values: fd.pe_hist||[],        color:"#2563eb"},
-              {label:"P/FCF",     values: fd.pfcf_hist||[],      color:"#7c3aed"},
-              {label:"EV/EBITDA", values: fd.ev_ebitda_hist||[], color:"#f59e0b"}
-            ], "x")}
-
-          <!-- 8. Football field -->
-          ${footballField(result)}
-        </div>
-      </div>` : `<div style="margin-top:12px;padding:14px;background:#fafafa;border-radius:10px;border:1px solid #e2e8f0;text-align:center;color:#94a3b8;font-size:12px">
-        📊 Datos históricos no disponibles para este análisis. La IA no devolvió series temporales.
-      </div>`;
 
     resultHtml=`
       <div style="background:#f0f7ff;border-radius:14px;border:1px solid #bfdbfe;padding:16px;margin-bottom:12px">
@@ -2275,238 +2205,75 @@ function renderValuation() {
       </div>`;
   }
 
-  const fmpKey = state.fmpKey || "";
-  const fmpPanel = `
-    <div style="background:${fmpKey?"#f0fdf4":"#fffbeb"};border:1px solid ${fmpKey?"#bbf7d0":"#fde68a"};border-radius:10px;padding:12px 14px;margin-bottom:14px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <span style="font-size:13px;font-weight:700;color:${fmpKey?"#15803d":"#92400e"}">${fmpKey?"✅ Datos fundamentales: Financial Modeling Prep conectado":"⚙️ Configura la fuente de datos fundamentales"}</span>
-      </div>
-      ${fmpKey
-        ? `<div style="font-size:11px;color:#15803d">Clave activa — las gráficas de Crecimiento, Calidad, Balance y Valoración funcionan para cualquier empresa.</div>
-           <button onclick="state.fmpKey='';ls.set('km_fmp_key','');renderActiveTab()" style="margin-top:6px;font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;text-decoration:underline">Cambiar clave</button>`
-        : `<div style="font-size:11px;color:#92400e;margin-bottom:8px;line-height:1.5">
-             Las gráficas de análisis necesitan una API key gratuita de <strong>Financial Modeling Prep</strong>.<br>
-             1. Regístrate gratis en <strong>financialmodelingprep.com/developer</strong><br>
-             2. Copia tu API key y pégala aquí — se guarda en tu navegador.
-           </div>
-           <div style="display:flex;gap:6px">
-             <input id="fmp-key-input" class="inp-sm" placeholder="Pega tu API key de FMP aquí..." style="flex:1;font-size:12px" onkeydown="if(event.key==='Enter')saveFmpKey()">
-             <button class="btn" onclick="saveFmpKey()" style="padding:5px 12px;font-size:12px">Guardar</button>
-           </div>`
-      }
-    </div>`;
-
   return `<div style="padding:14px">
-    <div style="background:#f0f7ff;border-radius:12px;border:1px solid #bfdbfe;padding:16px;margin-bottom:14px">
-      <h4 style="font-size:14px;font-weight:700;color:#1d4ed8;margin-bottom:10px">📐 Análisis de Valoración</h4>
+    <div style="background:#f0f7ff;border-radius:12px;border:1px solid #bfdbfe;padding:16px;margin-bottom:16px">
+      <h4 style="font-size:14px;font-weight:700;color:#1d4ed8;margin-bottom:10px">📐 Análisis de Valoración (IA)</h4>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <div class="ac-wrap" style="flex:1;max-width:340px">
-          <input id="val-ticker" class="inp-sm" placeholder="Empresa o ticker: Iberdrola, GOOGL, KO..." style="width:100%;background:#fff" value="${esc(ticker)}" onkeydown="if(event.key==='Enter')analyzeValuation()">
+          <input id="val-ticker" class="inp-sm" placeholder="Escribe empresa o ticker: Iberdrola, KO, MSFT..." style="width:100%;background:#fff" value="${esc(ticker)}" onkeydown="if(event.key==='Enter')analyzeValuation()">
         </div>
         <button class="btn" onclick="analyzeValuation()" ${loading?"disabled":""} style="padding:6px 16px">${loading?`<span class="spinner"></span> Analizando...`:"🔍 Analizar"}</button>
       </div>
       ${error?`<div style="color:#dc2626;margin-top:10px;font-size:12px">⚠️ ${esc(error)}</div>`:""}
-      <div style="margin-top:8px;font-size:11px;color:#64748b">Autocompletado activo con Yahoo Finance. El análisis IA requiere conexión a internet.</div>
+      <div style="margin-top:8px;font-size:11px;color:#64748b">Escribe el nombre o ticker. Autocompletado activo con Yahoo Finance. Requiere conexión a internet.</div>
     </div>
-    ${fmpPanel}
     ${resultHtml}
   </div>`;
 }
 
-// ── Guardar/cargar clave FMP ───────────────────────────────────
-function saveFmpKey() {
-  const inp = document.getElementById("fmp-key-input");
-  if (!inp) return;
-  const k = inp.value.trim();
-  state.fmpKey = k;
-  ls.set("km_fmp_key", k);
-  renderActiveTab();
-}
-
-// ── Helpers compartidos ────────────────────────────────────────
-function _buildFundamentalsResult(years, inc, cf, bs, km, curPrice) {
-  const M = 1e6;
-  // FMP campos
-  if (inc[0] && "revenue" in inc[0]) {
-    const revenue    = inc.map(x => x.revenue    != null ? +(x.revenue    / M).toFixed(0) : null);
-    const ebit       = inc.map(x => x.operatingIncome != null ? +(x.operatingIncome / M).toFixed(0) : null);
-    const net_income = inc.map(x => x.netIncome  != null ? +(x.netIncome  / M).toFixed(0) : null);
-    const eps        = inc.map(x => x.eps        != null ? +x.eps.toFixed(2)               : null);
-    const ebitda_arr = inc.map(x => x.ebitda     != null ? +(x.ebitda     / M).toFixed(0) : null);
-    const gross_margin = inc.map(x => x.grossProfitRatio    != null ? +(x.grossProfitRatio    * 100).toFixed(1) : null);
-    const ebit_margin  = inc.map(x => x.operatingIncomeRatio!= null ? +(x.operatingIncomeRatio* 100).toFixed(1) : null);
-    const net_margin   = inc.map(x => x.netIncomeRatio      != null ? +(x.netIncomeRatio      * 100).toFixed(1) : null);
-    const cfo = cf.map(x => x.operatingCashFlow != null ? +(x.operatingCashFlow / M).toFixed(0) : null);
-    const fcf = cf.map(x => x.freeCashFlow      != null ? +(x.freeCashFlow      / M).toFixed(0) : null);
-    const fcf_per_share = cf.map((x,i) => x.freeCashFlow != null && inc[i]?.weightedAverageShsOut
-      ? +(x.freeCashFlow / inc[i].weightedAverageShsOut).toFixed(2) : null);
-    const net_debt    = bs.map(x => { const d=x.totalDebt??x.longTermDebt??0; const c=x.cashAndCashEquivalents??0; return +((d-c)/M).toFixed(0); });
-    const debt_ebitda = net_debt.map((nd, i) => ebitda_arr[i] ? +(nd / ebitda_arr[i]).toFixed(2) : null);
-    const interest_coverage = km.map(x => x.interestCoverage != null ? +x.interestCoverage.toFixed(1) : null);
-    const roe  = km.map(x => x.roe  != null ? +(x.roe  * 100).toFixed(1) : null);
-    const roic = km.map(x => x.roic != null ? +(x.roic * 100).toFixed(1) : null);
-    const pe_hist        = km.map(x => x.peRatio    != null && x.peRatio > 0    && x.peRatio < 500  ? +x.peRatio.toFixed(1)    : null);
-    const pfcf_hist      = km.map(x => x.pfcfRatio  != null && x.pfcfRatio > 0  && x.pfcfRatio < 500? +x.pfcfRatio.toFixed(1)  : null);
-    const ev_ebitda_hist = km.map(x => x.evToEbitda != null && x.evToEbitda > 0 && x.evToEbitda < 200? +x.evToEbitda.toFixed(1): null);
-    const price_hist = years.map((_, i) => i === years.length - 1 ? curPrice : null);
-    return { years, revenue, ebit, net_income, cfo, fcf, gross_margin, ebit_margin, net_margin,
-             net_debt, debt_ebitda, interest_coverage, eps, fcf_per_share, price_hist,
-             pe_hist, pfcf_hist, ev_ebitda_hist, roe, roic };
-  }
-  return null;
-}
-
-// ── Fetch via Financial Modeling Prep ─────────────────────────
-async function _fetchFMP(ticker, key) {
-  const BASE = "https://financialmodelingprep.com/api/v3";
-  const opts = { signal: AbortSignal.timeout(10000) };
-  const tickers = [ticker];
-  // Para tickers europeos (LOG.MC) también probar sin sufijo (LOG)
-  if (ticker.includes(".")) tickers.push(ticker.split(".")[0]);
-
-  for (const t of tickers) {
-    try {
-      const [incR, cfR, bsR, kmR] = await Promise.all([
-        fetch(`${BASE}/income-statement/${t}?limit=10&apikey=${key}`, opts),
-        fetch(`${BASE}/cash-flow-statement/${t}?limit=10&apikey=${key}`, opts),
-        fetch(`${BASE}/balance-sheet-statement/${t}?limit=10&apikey=${key}`, opts),
-        fetch(`${BASE}/key-metrics/${t}?limit=10&apikey=${key}`, opts)
-      ]);
-      const [iD, cD, bD, kD] = await Promise.all([incR.json(), cfR.json(), bsR.json(), kmR.json()]);
-      const inc = Array.isArray(iD) && iD.length ? [...iD].reverse() : [];
-      const cf  = Array.isArray(cD) && cD.length ? [...cD].reverse() : [];
-      const bs  = Array.isArray(bD) && bD.length ? [...bD].reverse() : [];
-      const km  = Array.isArray(kD) && kD.length ? [...kD].reverse() : [];
-      if (!inc.length) { console.warn(`FMP: sin datos para ${t}`); continue; }
-      const years = inc.map(x => parseInt((x.calendarYear || x.date || "").slice(0,4)));
-      const r = _buildFundamentalsResult(years, inc, cf, bs, km, 0);
-      if (r) { console.log(`fetchFundamentals [FMP] OK: ${t}`, years); return r; }
-    } catch(e) { console.warn(`FMP error (${t}):`, e.message); }
-  }
-  return null;
-}
-
-// ── Fetch via Yahoo Finance timeseries (fallback universal) ────
-async function _fetchYahooTimeseries(ticker) {
-  const M = 1e6;
-  for (const proxyFn of FUND_PROXIES.slice(0, 4)) {
-    try {
-      const res = await fetch(proxyFn(ticker), { signal: AbortSignal.timeout(12000) });
-      if (!res.ok) continue;
-      const json = await res.json();
-      const results = json?.timeseries?.result;
-      if (!Array.isArray(results) || !results.length) continue;
-
-      const yearMap = {};
-      for (const entry of results) {
-        const type = entry.type;
-        if (!type) continue;
-        const items = entry[type] || [];
-        for (const item of items) {
-          const yr = parseInt((item.date || "").slice(0, 4));
-          if (!yr) continue;
-          if (!yearMap[yr]) yearMap[yr] = {};
-          yearMap[yr][type] = item.reportedValue?.raw ?? null;
-        }
-      }
-      const years = Object.keys(yearMap).map(Number).sort();
-      if (!years.length) continue;
-
-      const g  = (yr, t) => yearMap[yr]?.[t] ?? null;
-      const gM = (yr, t) => { const v=g(yr,t); return v!=null ? +(v/M).toFixed(0) : null; };
-
-      const revenue    = years.map(yr => gM(yr, "annualTotalRevenue"));
-      const ebit       = years.map(yr => gM(yr, "annualEbit"));
-      const net_income = years.map(yr => gM(yr, "annualNetIncome"));
-      const ebitda_arr = years.map(yr => gM(yr, "annualEbitda"));
-      const cfo        = years.map(yr => gM(yr, "annualOperatingCashFlow"));
-      const fcf        = years.map(yr => gM(yr, "annualFreeCashFlow"));
-      const capex      = years.map(yr => gM(yr, "annualCapitalExpenditure"));
-      // FCF = free cash flow directo, o cfo-capex si no existe
-      const fcf_f      = fcf.map((f,i) => f ?? (cfo[i]!=null&&capex[i]!=null ? +(cfo[i]+capex[i]).toFixed(0) : null));
-      const gp         = years.map(yr => g(yr, "annualGrossProfit"));
-      const debt       = years.map(yr => g(yr, "annualTotalDebt") ?? 0);
-      const cash       = years.map(yr => g(yr, "annualCashAndCashEquivalents") ?? 0);
-      const equity     = years.map(yr => g(yr, "annualTotalEquityGrossMinorityInterest") ?? 0);
-      const roe_r      = years.map(yr => g(yr, "annualReturnOnEquity"));
-      const ie         = years.map(yr => g(yr, "annualInterestExpense") ?? 0);
-      const eps        = years.map(yr => { const v=g(yr,"annualEarningsPerShareBasic"); return v!=null?+v.toFixed(2):null; });
-
-      const gross_margin = years.map((_,i) => gp[i]&&revenue[i] ? +((gp[i]/(revenue[i]*M))*100).toFixed(1) : null);
-      const ebit_margin  = years.map((_,i) => ebit[i]&&revenue[i] ? +((ebit[i]/revenue[i])*100).toFixed(1) : null);
-      const net_margin   = years.map((_,i) => net_income[i]&&revenue[i] ? +((net_income[i]/revenue[i])*100).toFixed(1) : null);
-      const net_debt     = years.map((_,i) => +((debt[i]-cash[i])/M).toFixed(0));
-      const debt_ebitda  = net_debt.map((nd,i) => ebitda_arr[i] ? +(nd/ebitda_arr[i]).toFixed(2) : null);
-      const interest_coverage = years.map((_,i) => { const a=Math.abs(ie[i]); return ebit[i]&&a ? +((ebit[i]*M)/a).toFixed(1):null; });
-      const roe  = roe_r.map(v => v!=null ? +(v*100).toFixed(1) : null);
-      const roic = years.map((_,i) => { const ic=(equity[i]+debt[i]); const n=(ebit[i]||0)*M*0.75; return ic>0?+((n/ic)*100).toFixed(1):null; });
-      const fcf_per_share = years.map(() => null);
-      const pe_hist = years.map(()=>null);
-      const pfcf_hist = years.map(()=>null);
-      const ev_ebitda_hist = years.map(()=>null);
-      const price_hist = years.map((_,i) => i===years.length-1 ? (state.priceCache[ticker]||0) : null);
-
-      console.log(`fetchFundamentals [Yahoo TS] OK: ${ticker}`, years);
-      return { years, revenue, ebit, net_income, cfo, fcf:fcf_f, gross_margin, ebit_margin, net_margin,
-               net_debt, debt_ebitda, interest_coverage, eps, fcf_per_share, price_hist,
-               pe_hist, pfcf_hist, ev_ebitda_hist, roe, roic };
-    } catch(e) { console.warn("Yahoo timeseries error:", e.message); }
-  }
-  // Fallback: quoteSummary
-  for (const proxyFn of FUND_PROXIES.slice(4)) {
+async function fetchFundamentals(ticker) {
+  for (const proxyFn of FUND_PROXIES) {
     try {
       const res = await fetch(proxyFn(ticker), { signal: AbortSignal.timeout(10000) });
       if (!res.ok) continue;
       const json = await res.json();
       const r = json?.quoteSummary?.result?.[0];
       if (!r) continue;
-      const getV = (obj,...keys) => { for(const k of keys){const v=obj?.[k]?.raw; if(v!=null)return +v;} return null; };
-      const inc=[...(r.incomeStatementHistory?.incomeStatementHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
-      const cf =[...(r.cashflowStatementHistory?.cashflowStatementHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
-      const bs =[...(r.balanceSheetHistory?.balanceSheetHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
-      const ks =r.defaultKeyStatistics||{};
-      const years=inc.map(x=>new Date((x.endDate?.raw||0)*1000).getFullYear());
-      if(!years.length) continue;
-      const revenue   =inc.map(x=>{const v=getV(x,"totalRevenue");return v!=null?+(v/M).toFixed(0):null;});
-      const ebit      =inc.map(x=>{const v=getV(x,"ebit","operatingIncome");return v!=null?+(v/M).toFixed(0):null;});
-      const net_income=inc.map(x=>{const v=getV(x,"netIncome");return v!=null?+(v/M).toFixed(0):null;});
-      const cfo       =cf.map(x=>{const v=getV(x,"totalCashFromOperatingActivities");return v!=null?+(v/M).toFixed(0):null;});
-      const capex     =cf.map(x=>{const v=getV(x,"capitalExpenditures");return v!=null?+(v/M).toFixed(0):null;});
-      const fcf       =cfo.map((c,i)=>c!=null&&capex[i]!=null?+(c+capex[i]).toFixed(0):null);
-      const gm        =inc.map(x=>{const g=getV(x,"grossProfit"),rv=getV(x,"totalRevenue");return g&&rv?+((g/rv)*100).toFixed(1):null;});
-      const ebitda_arr=inc.map((x,i)=>{const e=(ebit[i]||0)*M;const da=Math.abs(getV(x,"depreciationAndAmortization")||0);return e+da>0?+((e+da)/M).toFixed(0):null;});
-      const nd        =bs.map(x=>{const d=getV(x,"longTermDebt","totalDebt")||0;const c=getV(x,"cash","cashAndCashEquivalents")||0;return +((d-c)/M).toFixed(0);});
-      const eps       =inc.map(x=>{const v=getV(x,"basicEPS","dilutedEPS");return v!=null?+v.toFixed(2):null;});
-      const shares    =getV(ks,"sharesOutstanding")||1;
-      const fsh       =fcf.map(f=>f!=null?+((f*M)/shares).toFixed(2):null);
-      const curP      =state.priceCache[ticker]||0;
-      const roe_r     =bs.map((x,i)=>{const eq=getV(x,"totalStockholderEquity");return eq&&net_income[i]?+((net_income[i]*M/eq)*100).toFixed(1):null;});
-      const roic_r    =bs.map((x,i)=>{const eq=getV(x,"totalStockholderEquity")||0;const d=getV(x,"longTermDebt")||0;const ic=eq+d;const n=(ebit[i]||0)*M*0.75;return ic>0?+((n/ic)*100).toFixed(1):null;});
-      console.log(`fetchFundamentals [Yahoo QS] OK: ${ticker}`, years);
-      return {years,revenue,ebit,net_income,cfo,fcf,gross_margin:gm,
-              ebit_margin:inc.map((_,i)=>revenue[i]&&ebit[i]?+((ebit[i]/revenue[i])*100).toFixed(1):null),
-              net_margin:inc.map((_,i)=>revenue[i]&&net_income[i]?+((net_income[i]/revenue[i])*100).toFixed(1):null),
-              net_debt:nd,debt_ebitda:nd.map((d,i)=>ebitda_arr[i]?+(d/ebitda_arr[i]).toFixed(2):null),
-              interest_coverage:inc.map((x,i)=>{const ie=Math.abs(getV(x,"interestExpense")||0);return ebit[i]&&ie?+((ebit[i]*M)/ie).toFixed(1):null;}),
-              eps,fcf_per_share:fsh,price_hist:years.map((_,i)=>i===years.length-1?curP:null),
-              pe_hist:eps.map(e=>e&&curP?+(curP/e).toFixed(1):null),
-              pfcf_hist:fsh.map(f=>f&&f>0&&curP?+(curP/f).toFixed(1):null),
-              ev_ebitda_hist:years.map(()=>null),roe:roe_r,roic:roic_r};
-    } catch(e) { console.warn("Yahoo QS error:", e.message); }
+
+      const getV = (obj, ...keys) => { for (const k of keys) { const v=obj?.[k]?.raw; if (v!=null) return +v; } return null; };
+
+      const inc = [...(r.incomeStatementHistory?.incomeStatementHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
+      const cf  = [...(r.cashflowStatementHistory?.cashflowStatementHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
+      const bs  = [...(r.balanceSheetHistory?.balanceSheetHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
+      const ks  = r.defaultKeyStatistics || {};
+
+      const years      = inc.map(x => new Date((x.endDate?.raw||0)*1000).getFullYear());
+      const revenue    = inc.map(x => { const v=getV(x,"totalRevenue"); return v!=null?+(v/1e6).toFixed(0):null; });
+      const ebit       = inc.map(x => { const v=getV(x,"ebit","operatingIncome"); return v!=null?+(v/1e6).toFixed(0):null; });
+      const net_income = inc.map(x => { const v=getV(x,"netIncome"); return v!=null?+(v/1e6).toFixed(0):null; });
+      const cfo        = cf.map(x  => { const v=getV(x,"totalCashFromOperatingActivities"); return v!=null?+(v/1e6).toFixed(0):null; });
+      const capex      = cf.map(x  => { const v=getV(x,"capitalExpenditures"); return v!=null?+(v/1e6).toFixed(0):null; });
+      const fcf        = cfo.map((c,i) => c!=null&&capex[i]!=null ? +(c+capex[i]).toFixed(0) : null);
+
+      const gross_margin  = inc.map(x => { const g=getV(x,"grossProfit"),rv=getV(x,"totalRevenue"); return g&&rv?+((g/rv)*100).toFixed(1):null; });
+      const ebit_margin   = inc.map((_,i) => revenue[i]&&ebit[i]?+((ebit[i]/revenue[i])*100).toFixed(1):null);
+      const net_margin    = inc.map((_,i) => revenue[i]&&net_income[i]?+((net_income[i]/revenue[i])*100).toFixed(1):null);
+
+      const net_debt     = bs.map(x  => { const d=getV(x,"longTermDebt","totalDebt")||0; const c=getV(x,"cash","cashAndCashEquivalents")||0; return +((d-c)/1e6).toFixed(0); });
+      const ebitda_arr   = inc.map((x,i) => { const e=(ebit[i]||0)*1e6; const da=Math.abs(getV(x,"depreciationAndAmortization")||0); return e+da>0?+((e+da)/1e6).toFixed(0):null; });
+      const debt_ebitda  = net_debt.map((d,i) => ebitda_arr[i]?+(d/ebitda_arr[i]).toFixed(2):null);
+      const interest_coverage = inc.map((x,i) => { const ie=Math.abs(getV(x,"interestExpense")||0); return ebit[i]&&ie?+((ebit[i]*1e6)/ie).toFixed(1):null; });
+
+      const shares = getV(ks,"sharesOutstanding")||1;
+      const eps    = inc.map(x => { const v=getV(x,"basicEPS","dilutedEPS"); return v!=null?+v.toFixed(2):null; });
+      const fcf_per_share = fcf.map(f => f!=null?+((f*1e6)/shares).toFixed(2):null);
+      const curPrice = state.priceCache[ticker]||0;
+      const pe_hist   = eps.map(e => e&&curPrice?+((curPrice/e)).toFixed(1):null);
+      const pfcf_hist = fcf_per_share.map(f => f&&f>0&&curPrice?+(curPrice/f).toFixed(1):null);
+
+      const roe  = bs.map((x,i) => { const eq=getV(x,"totalStockholderEquity"); return eq&&net_income[i]?+((net_income[i]*1e6/eq)*100).toFixed(1):null; });
+      const roic = bs.map((x,i) => { const eq=getV(x,"totalStockholderEquity")||0; const d=getV(x,"longTermDebt")||0; const ic=eq+d; const nopat=(ebit[i]||0)*1e6*0.75; return ic>0?+((nopat/ic)*100).toFixed(1):null; });
+
+      const price_hist = years.map((_,i) => i===years.length-1?curPrice:null);
+      const ev_ebitda_hist = years.map(()=>null);
+
+      if (!years.length) continue;
+      return { years, revenue, ebit, net_income, cfo, fcf, gross_margin, ebit_margin, net_margin,
+               net_debt, debt_ebitda, interest_coverage, eps, fcf_per_share, price_hist,
+               pe_hist, pfcf_hist, ev_ebitda_hist, roe, roic };
+    } catch(e) { console.warn("fetchFundamentals error:", e.message); }
   }
   return null;
-}
-
-// ── Punto de entrada: FMP primero, luego Yahoo como fallback ───
-async function fetchFundamentals(ticker) {
-  // 1) Si hay clave FMP, intentar con ella (US + internacionales)
-  if (state.fmpKey) {
-    const r = await _fetchFMP(ticker, state.fmpKey);
-    if (r) return r;
-    console.warn("FMP no devolvió datos — usando Yahoo Finance como fallback");
-  }
-  // 2) Fallback universal: Yahoo Finance timeseries / quoteSummary
-  return await _fetchYahooTimeseries(ticker);
 }
 
 async function analyzeValuation() {
@@ -2524,8 +2291,14 @@ async function analyzeValuation() {
   const [livePrice, divData, fundamentals] = await Promise.all([
     fetchWithProxy(PROXIES, ticker),
     fetchDividendData(ticker),
-    fetchFundamentals(ticker)
+    fetchFundamentals(ticker).catch(e => { console.warn("Fundamentals failed:", e); return null; })
   ]);
+
+  if (fundamentals) {
+    state._fundError = null;
+  } else {
+    state._fundError = "No se pudieron obtener datos históricos de Yahoo Finance para este ticker.";
+  }
 
   try {
     const { data, error } = await supabaseClient.functions.invoke('valuation', {
@@ -2543,29 +2316,7 @@ async function analyzeValuation() {
     state._valError = "";
   } catch(e) {
     console.error('Error análisis IA:', e);
-    // Si la IA falla pero tenemos fundamentales de Yahoo, mostrarlos igualmente
-    if (fundamentals) {
-      state._valResult = {
-        ticker,
-        name: ticker,
-        sector: "",
-        description: "Análisis IA no disponible. Mostrando datos fundamentales de Yahoo Finance.",
-        scores: {},
-        metrics: {
-          Precio_actual: livePrice || null,
-          Yield_pct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null
-        },
-        ranges: {},
-        recommendation: "Sin análisis IA",
-        rec_color: "#94a3b8",
-        weiss_verdict: "Análisis IA no disponible",
-        weiss_color: "#94a3b8",
-        fundamentals
-      };
-      state._valError = "⚠️ Análisis IA no disponible, pero se muestran los datos fundamentales de Yahoo Finance.";
-    } else {
-      state._valError = "No se pudo conectar con el análisis IA. Comprueba tu conexión a internet.";
-    }
+    state._valError = "No se pudo conectar con el análisis IA. Comprueba tu conexión a internet.";
   }
   state._valLoading = false;
 
@@ -2589,8 +2340,12 @@ function setValTab(i) {
 }
 
 function noDataMsg() {
-  return `<div style="padding:24px;text-align:center;color:#94a3b8;font-size:12px;background:#fafafa;border-radius:10px;border:1px solid #e2e8f0">
-    📊 Datos históricos no disponibles para este ticker.<br>La IA no devolvió series temporales.
+  const err = state._fundError || "No se pudieron obtener datos históricos de Yahoo Finance.";
+  return `<div style="padding:20px;text-align:center;background:#fafafa;border-radius:10px;border:1px solid #e2e8f0">
+    <div style="font-size:24px;margin-bottom:8px">📊</div>
+    <div style="font-size:12px;font-weight:600;color:#475569;margin-bottom:4px">Datos históricos no disponibles</div>
+    <div style="font-size:11px;color:#94a3b8">${err}</div>
+    <div style="font-size:10px;color:#cbd5e1;margin-top:6px">Yahoo Finance puede requerir sesión activa. Prueba desde finance.yahoo.com primero.</div>
   </div>`;
 }
 
