@@ -331,14 +331,22 @@ const YIELD_PROXIES = [
 ];
 
 const MODULES = "incomeStatementHistory,cashflowStatementHistory,balanceSheetHistory,defaultKeyStatistics,financialData";
+const TS_TYPES = [
+  "annualRevenue","annualNetIncome","annualOperatingCashFlow","annualFreeCashFlow",
+  "annualGrossProfit","annualEbit","annualEbitda","annualEarningsPerShareBasic",
+  "annualTotalDebt","annualCashAndCashEquivalents","annualTotalEquity","annualReturnOnEquity",
+  "annualCapitalExpenditure","annualInterestExpense"
+].join(",");
+const TS_PERIOD1 = 1388534400; // 2014-01-01
+// Proxies para el endpoint timeseries (más fiable que quoteSummary para CORS)
 const FUND_PROXIES = [
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_TYPES}&period1=${TS_PERIOD1}&period2=${Math.floor(Date.now()/1000)}`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_TYPES}&period1=${TS_PERIOD1}&period2=${Math.floor(Date.now()/1000)}`)}`,
+  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_TYPES}&period1=${TS_PERIOD1}&period2=${Math.floor(Date.now()/1000)}`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_TYPES}&period1=${TS_PERIOD1}&period2=${Math.floor(Date.now()/1000)}`)}`,
+  // Fallback: quoteSummary (cada vez más bloqueado por Yahoo)
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
-  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
-  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
-  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
-  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
 ];
 
 // ─────────────────────────────────────────────
@@ -2283,7 +2291,97 @@ function renderValuation() {
 }
 
 async function fetchFundamentals(ticker) {
-  for (const proxyFn of FUND_PROXIES) {
+  // ── Intento 1: Yahoo Finance Timeseries API (más fiable con CORS proxies) ──
+  const tsProxies = FUND_PROXIES.slice(0, 4); // los 4 primeros son timeseries
+  for (const proxyFn of tsProxies) {
+    try {
+      const res = await fetch(proxyFn(ticker), { signal: AbortSignal.timeout(12000) });
+      if (!res.ok) continue;
+      const json = await res.json();
+      const results = json?.timeseries?.result;
+      if (!results?.length) continue;
+
+      // Construir mapa: año -> { tipo: valor_raw }
+      const yearMap = {};
+      for (const entry of results) {
+        const type = entry.type;
+        if (!type) continue;
+        const items = entry[type] || [];
+        for (const item of items) {
+          const yr = parseInt((item.date || "").slice(0, 4));
+          if (!yr) continue;
+          if (!yearMap[yr]) yearMap[yr] = {};
+          yearMap[yr][type] = item.reportedValue?.raw ?? null;
+        }
+      }
+
+      const years = Object.keys(yearMap).map(Number).sort();
+      if (!years.length) continue;
+
+      const M = 1e6;
+      const get  = (yr, t)  => yearMap[yr]?.[t] ?? null;
+      const getM = (yr, t)  => { const v = get(yr, t); return v != null ? +(v / M).toFixed(0) : null; };
+
+      const revenue    = years.map(yr => getM(yr, "annualRevenue"));
+      const net_income = years.map(yr => getM(yr, "annualNetIncome"));
+      const cfo        = years.map(yr => getM(yr, "annualOperatingCashFlow"));
+      const fcf_raw    = years.map(yr => getM(yr, "annualFreeCashFlow"));
+      const capex_raw  = years.map(yr => getM(yr, "annualCapitalExpenditure"));
+      // FCF = operativo + capex (capex viene negativo en Yahoo)
+      const fcf = fcf_raw.map((f, i) =>
+        f != null ? f : (cfo[i] != null && capex_raw[i] != null ? +(cfo[i] + capex_raw[i]).toFixed(0) : null)
+      );
+      const ebit        = years.map(yr => getM(yr, "annualEbit"));
+      const ebitda_arr  = years.map(yr => getM(yr, "annualEbitda"));
+      const eps         = years.map(yr => { const v = get(yr, "annualEarningsPerShareBasic"); return v != null ? +v.toFixed(2) : null; });
+      const gp_raw      = years.map(yr => get(yr, "annualGrossProfit"));
+      const debt_raw    = years.map(yr => get(yr, "annualTotalDebt") ?? 0);
+      const cash_raw    = years.map(yr => get(yr, "annualCashAndCashEquivalents") ?? 0);
+      const equity_raw  = years.map(yr => get(yr, "annualTotalEquity") ?? 0);
+      const roe_raw     = years.map(yr => get(yr, "annualReturnOnEquity"));
+      const ie_raw      = years.map(yr => get(yr, "annualInterestExpense"));
+
+      const gross_margin = years.map((_, i) =>
+        gp_raw[i] != null && revenue[i] ? +((gp_raw[i] / (revenue[i] * M)) * 100).toFixed(1) : null
+      );
+      const ebit_margin = years.map((_, i) =>
+        ebit[i] != null && revenue[i] ? +((ebit[i] / revenue[i]) * 100).toFixed(1) : null
+      );
+      const net_margin = years.map((_, i) =>
+        net_income[i] != null && revenue[i] ? +((net_income[i] / revenue[i]) * 100).toFixed(1) : null
+      );
+
+      const net_debt    = years.map((_, i) => debt_raw[i] != null ? +((debt_raw[i] - cash_raw[i]) / M).toFixed(0) : null);
+      const debt_ebitda = net_debt.map((nd, i) => nd != null && ebitda_arr[i] ? +(nd / ebitda_arr[i]).toFixed(2) : null);
+      const interest_coverage = years.map((_, i) => {
+        const ie = Math.abs(ie_raw[i] || 0);
+        return ebit[i] && ie ? +((ebit[i] * M) / ie).toFixed(1) : null;
+      });
+
+      const roe  = roe_raw.map(v => v != null ? +(v * 100).toFixed(1) : null);
+      const roic = years.map((_, i) => {
+        const ic = equity_raw[i] + debt_raw[i];
+        const nopat = (ebit[i] || 0) * M * 0.75;
+        return ic > 0 ? +((nopat / ic) * 100).toFixed(1) : null;
+      });
+
+      const curPrice = state.priceCache[ticker] || 0;
+      const pe_hist   = eps.map(e => e && e > 0 && curPrice ? +(curPrice / e).toFixed(1) : null);
+      const pfcf_hist = years.map(() => null);
+      const fcf_per_share = years.map(() => null);
+      const price_hist = years.map((_, i) => i === years.length - 1 ? curPrice : null);
+      const ev_ebitda_hist = years.map(() => null);
+
+      console.log(`fetchFundamentals [timeseries] OK: ${ticker}, años:`, years);
+      return { years, revenue, ebit, net_income, cfo, fcf, gross_margin, ebit_margin, net_margin,
+               net_debt, debt_ebitda, interest_coverage, eps, fcf_per_share, price_hist,
+               pe_hist, pfcf_hist, ev_ebitda_hist, roe, roic };
+    } catch(e) { console.warn("fetchFundamentals [timeseries] error:", e.message); }
+  }
+
+  // ── Intento 2: quoteSummary clásico (fallback, crecientemente bloqueado por Yahoo) ──
+  const qsProxies = FUND_PROXIES.slice(4); // los últimos 2 son quoteSummary
+  for (const proxyFn of qsProxies) {
     try {
       const res = await fetch(proxyFn(ticker), { signal: AbortSignal.timeout(10000) });
       if (!res.ok) continue;
@@ -2292,7 +2390,6 @@ async function fetchFundamentals(ticker) {
       if (!r) continue;
 
       const getV = (obj, ...keys) => { for (const k of keys) { const v=obj?.[k]?.raw; if (v!=null) return +v; } return null; };
-
       const inc = [...(r.incomeStatementHistory?.incomeStatementHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
       const cf  = [...(r.cashflowStatementHistory?.cashflowStatementHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
       const bs  = [...(r.balanceSheetHistory?.balanceSheetHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
@@ -2305,35 +2402,33 @@ async function fetchFundamentals(ticker) {
       const cfo        = cf.map(x  => { const v=getV(x,"totalCashFromOperatingActivities"); return v!=null?+(v/1e6).toFixed(0):null; });
       const capex      = cf.map(x  => { const v=getV(x,"capitalExpenditures"); return v!=null?+(v/1e6).toFixed(0):null; });
       const fcf        = cfo.map((c,i) => c!=null&&capex[i]!=null ? +(c+capex[i]).toFixed(0) : null);
-
       const gross_margin  = inc.map(x => { const g=getV(x,"grossProfit"),rv=getV(x,"totalRevenue"); return g&&rv?+((g/rv)*100).toFixed(1):null; });
       const ebit_margin   = inc.map((_,i) => revenue[i]&&ebit[i]?+((ebit[i]/revenue[i])*100).toFixed(1):null);
       const net_margin    = inc.map((_,i) => revenue[i]&&net_income[i]?+((net_income[i]/revenue[i])*100).toFixed(1):null);
-
-      const net_debt     = bs.map(x  => { const d=getV(x,"longTermDebt","totalDebt")||0; const c=getV(x,"cash","cashAndCashEquivalents")||0; return +((d-c)/1e6).toFixed(0); });
-      const ebitda_arr   = inc.map((x,i) => { const e=(ebit[i]||0)*1e6; const da=Math.abs(getV(x,"depreciationAndAmortization")||0); return e+da>0?+((e+da)/1e6).toFixed(0):null; });
-      const debt_ebitda  = net_debt.map((d,i) => ebitda_arr[i]?+(d/ebitda_arr[i]).toFixed(2):null);
+      const net_debt      = bs.map(x  => { const d=getV(x,"longTermDebt","totalDebt")||0; const c=getV(x,"cash","cashAndCashEquivalents")||0; return +((d-c)/1e6).toFixed(0); });
+      const ebitda_arr    = inc.map((x,i) => { const e=(ebit[i]||0)*1e6; const da=Math.abs(getV(x,"depreciationAndAmortization")||0); return e+da>0?+((e+da)/1e6).toFixed(0):null; });
+      const debt_ebitda   = net_debt.map((d,i) => ebitda_arr[i]?+(d/ebitda_arr[i]).toFixed(2):null);
       const interest_coverage = inc.map((x,i) => { const ie=Math.abs(getV(x,"interestExpense")||0); return ebit[i]&&ie?+((ebit[i]*1e6)/ie).toFixed(1):null; });
-
       const shares = getV(ks,"sharesOutstanding")||1;
       const eps    = inc.map(x => { const v=getV(x,"basicEPS","dilutedEPS"); return v!=null?+v.toFixed(2):null; });
       const fcf_per_share = fcf.map(f => f!=null?+((f*1e6)/shares).toFixed(2):null);
       const curPrice = state.priceCache[ticker]||0;
       const pe_hist   = eps.map(e => e&&curPrice?+((curPrice/e)).toFixed(1):null);
       const pfcf_hist = fcf_per_share.map(f => f&&f>0&&curPrice?+(curPrice/f).toFixed(1):null);
-
       const roe  = bs.map((x,i) => { const eq=getV(x,"totalStockholderEquity"); return eq&&net_income[i]?+((net_income[i]*1e6/eq)*100).toFixed(1):null; });
       const roic = bs.map((x,i) => { const eq=getV(x,"totalStockholderEquity")||0; const d=getV(x,"longTermDebt")||0; const ic=eq+d; const nopat=(ebit[i]||0)*1e6*0.75; return ic>0?+((nopat/ic)*100).toFixed(1):null; });
-
       const price_hist = years.map((_,i) => i===years.length-1?curPrice:null);
       const ev_ebitda_hist = years.map(()=>null);
 
       if (!years.length) continue;
+      console.log(`fetchFundamentals [quoteSummary] OK: ${ticker}, años:`, years);
       return { years, revenue, ebit, net_income, cfo, fcf, gross_margin, ebit_margin, net_margin,
                net_debt, debt_ebitda, interest_coverage, eps, fcf_per_share, price_hist,
                pe_hist, pfcf_hist, ev_ebitda_hist, roe, roic };
-    } catch(e) { console.warn("fetchFundamentals error:", e.message); }
+    } catch(e) { console.warn("fetchFundamentals [quoteSummary] error:", e.message); }
   }
+
+  console.warn(`fetchFundamentals: no data for ${ticker}`);
   return null;
 }
 
