@@ -263,7 +263,7 @@ async function saveCloud() {
 }
 
 
-//const TABS = ['Cartera','Alertas','Dividendos','Transacciones','Gráficos','Objetivos','Valoración IA'];
+//const TABS = ['Cartera','Alertas','Dividendos','Transacciones','Gráficos','Objetivos','Valoración IA','Radar'];
 
 //const API = {
   //valuation: '/.netlify/functions/valuation',
@@ -319,7 +319,6 @@ const PROXIES = [
 ];
 
 const SEARCH_PROXIES = [
-  q => `${API.search}?q=${encodeURIComponent(q)}`,
   q => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
   q => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
 ];
@@ -518,27 +517,20 @@ async function fetchWithProxy(proxies, ticker) {
 }
 
 async function fetchYahooSearch(query) {
-  const q = String(query || "").trim();
-  if (!q || q.length < 2) return [];
-
   for (const proxyFn of SEARCH_PROXIES) {
     try {
-      const url = proxyFn(q);
-      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      const url = proxyFn(query);
+      const res = await fetch(url, {signal: AbortSignal.timeout(6000)});
       if (!res.ok) continue;
       const data = await res.json();
-      const quotes = Array.isArray(data?.quotes) ? data.quotes : Array.isArray(data) ? data : [];
-      const cleaned = quotes
-        .filter(x => x && (x.quoteType === "EQUITY" || x.quoteType === "ETF" || x.symbol))
-        .map(x => ({
-          ticker: x.symbol || x.ticker || "",
-          name: x.longname || x.shortname || x.name || x.symbol || "",
-          exchange: x.exchange || x.exchDisp || "",
-          type: x.quoteType || x.type || ""
-        }))
-        .filter(x => x.ticker);
-      if (cleaned.length) return cleaned.slice(0, 8);
-    } catch (e) { }
+      const quotes = data?.quotes || [];
+      return quotes.filter(q => q.quoteType === "EQUITY" || q.quoteType === "ETF").map(q => ({
+        ticker: q.symbol,
+        name: q.longname || q.shortname || q.symbol,
+        exchange: q.exchange || "",
+        type: q.quoteType || ""
+      }));
+    } catch(e) { /* try next */ }
   }
   return [];
 }
@@ -760,6 +752,7 @@ function renderActiveTab() {
     case 5: el.innerHTML = renderGoals(); break;
     case 6: el.innerHTML = renderValuation(); break;
     case 7: el.innerHTML = renderRenta(); break;
+    case 8: el.innerHTML = renderRadar(); break;
   }
 }
 
@@ -1846,3 +1839,42 @@ init();
 </script>
 </body>
 </html>
+
+
+// ─────────────────────────────────────────────
+// TAB 8 — RADAR
+// ─────────────────────────────────────────────
+function renderRadar() {
+  const filtered = state.positions
+    .map(p => {
+      const cp = state.priceCache[p.ticker];
+      const val = cp ? posToEUR(p.shares * cp, p) : posToEUR(p.shares * p.avg_cost, p);
+      return { ...p, val };
+    })
+    .filter(p => p.val > 0)
+    .sort((a, b) => b.val - a.val)
+    .slice(0, 30);
+
+  if (!filtered.length) {
+    return `<div style="padding:20px;color:#64748b">No hay posiciones para mostrar en el radar.</div>`;
+  }
+
+  const total = filtered.reduce((s, p) => s + p.val, 0);
+  const rows = filtered.map(p => {
+    const pct = (p.val / total) * 100;
+    return `<tr><td style="padding:6px 8px;color:#1d4ed8;font-weight:700">${esc(p.ticker)}</td><td style="padding:6px 8px">${esc(p.name || p.ticker)}</td><td style="padding:6px 8px;text-align:right">${fmtEUR(p.val)}</td><td style="padding:6px 8px;text-align:right">${fmtPct(pct)}</td></tr>`;
+  }).join('');
+
+  return `<div style="padding:14px">
+    <div class="card" style="margin-bottom:12px">
+      <div style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:6px">Radar de cartera</div>
+      <div style="font-size:12px;color:#64748b">Si no ves los logos, el radar sigue funcionando con la posición y el valor de cada empresa.</div>
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <table style="min-width:700px;width:100%">
+        <thead><tr><th style="padding:8px">Ticker</th><th style="padding:8px">Empresa</th><th style="padding:8px;text-align:right">Valor</th><th style="padding:8px;text-align:right">Peso</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
