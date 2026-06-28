@@ -304,7 +304,7 @@ const DEFAULT_PORTFOLIO = [
 
 const FX_FALLBACK = {USD:0.92,GBP:1.17,JPY:0.0062,CHF:1.02,CAD:0.68,AUD:0.60,EUR:1.0};
 const PIE_COLORS = ["#4ade80","#60a5fa","#f59e0b","#f87171","#a78bfa","#34d399","#fb923c","#38bdf8","#e879f9","#94a3b8","#fbbf24","#6366f1"];
-const TABS = ["📋 Cartera","🔔 Alertas","💰 Dividendos","📝 Transacciones","📊 Gráficos","🎯 Objetivos","📐 Valoración","🧾 Renta"];
+const TABS = ["📋 Cartera","🔔 Alertas","💰 Dividendos","📝 Transacciones","📊 Gráficos","🎯 Objetivos","📐 Valoración","🧾 Renta","🔭 Radar"];
 const CURRENCIES = ["EUR","USD","GBP","CHF","CAD","AUD","JPY"];
 const SECTORS = ["Tecnología","Servicios Financieros","Salud","Consumo Cíclico","Consumo Defensivo","Energía","Materiales Básicos","Industria","Utilities","Inmobiliario","Comunicaciones"];
 const API = {
@@ -1570,6 +1570,7 @@ function renderActiveTab() {
       case 5: el.innerHTML = renderGoals(); break;
       case 6: el.innerHTML = renderValuation(); break;
       case 7: el.innerHTML = renderRenta(); break;
+      case 8: el.innerHTML = renderRadar(); break;
     }
   } catch(e) {
     console.error("Error en renderActiveTab (tab "+state.activeTab+"):", e);
@@ -3889,10 +3890,309 @@ async function startAppIfNeeded() {
   startCountdown();
 }
 
+// ═══════════════════════════════════════════════════════════════
+// TAB 8 — RADAR (Screener de acciones)
+// ═══════════════════════════════════════════════════════════════
+const RADAR_SECTORS = ["Todos","Tecnología","Consumo Defensivo","Consumo Cíclico","Salud","Financiero","Servicios Financieros","Energía","Utilities","Industria","Materiales Básicos","Inmobiliario","Comunicaciones","Otros"];
+const RADAR_REGIONS = ["Todos","España","Europa","EE.UU.","Reino Unido","Asia","Global"];
+const RADAR_CURRENCIES = ["Todas","EUR","USD","GBP","CAD","AUD","JPY"];
+
+// Estado del radar
+if (!state.radar) state.radar = {
+  // Universo
+  region: "Todos", sector: "Todos", currency: "Todas", exchange: "",
+  // Valoración
+  per_max: "", evEbitda_max: "", pb_max: "", ps_max: "", yield_min: "", payout_max: "",
+  // Crecimiento
+  revGrowth_min: "", epsGrowth_min: "", divGrowth_min: "",
+  // Calidad
+  margin_min: "", roe_min: "", roic_min: "", fcf_min: "",
+  // Balance
+  debtEbitda_max: "", coverage_min: "", currentRatio_min: "",
+  // Tamaño
+  mcap_min: "", mcap_max: "",
+  // Dividendo
+  divYield_min: "", divYears_min: "", divStable: false,
+  // Resultados
+  _results: [], _loading: false, _searched: false, _error: ""
+};
+
+function setRadarFilter(key, val) {
+  state.radar[key] = val;
+}
+
+async function runRadarSearch() {
+  const r = state.radar;
+  r._loading = true; r._searched = false; r._error = ""; r._results = [];
+  renderActiveTab();
+
+  // Construir query para Yahoo Finance screener
+  const queries = [];
+  if (r.per_max)         queries.push(`peerPeRatio,lt,${r.per_max}`);
+  if (r.evEbitda_max)    queries.push(`peerEv2EbitdaRatio,lt,${r.evEbitda_max}`);
+  if (r.pb_max)          queries.push(`priceToBook,lt,${r.pb_max}`);
+  if (r.yield_min)       queries.push(`trailingAnnualDividendYield,gt,${r.yield_min/100}`);
+  if (r.margin_min)      queries.push(`profitMargins,gt,${r.margin_min/100}`);
+  if (r.roe_min)         queries.push(`returnOnEquity,gt,${r.roe_min/100}`);
+  if (r.debtEbitda_max)  queries.push(`debtToEquity,lt,${r.debtEbitda_max*10}`);
+  if (r.mcap_min)        queries.push(`marketCap,gt,${r.mcap_min*1e6}`);
+  if (r.mcap_max)        queries.push(`marketCap,lt,${r.mcap_max*1e6}`);
+
+  // Mapa región → exchange
+  const regionEx = { "España":"MCE,MAD","Europa":"MCE,MAD,PAR,XETRA,MIL,AMS","EE.UU.":"NYQ,NMS,NGM","Reino Unido":"LSE","Asia":"TYO,HKG,SHH" };
+  const exFilter = regionEx[r.region] || "";
+
+  const body = {
+    offset: 0, size: 50, sortField: "marketCap", sortType: "DESC",
+    quoteType: "EQUITY", topOperator: "AND",
+    query: { operator: "AND", operands: [
+      ...(r.sector && r.sector!=="Todos" ? [{ operator:"EQ", operands:["sector", r.sector] }] : []),
+      ...(exFilter ? [{ operator:"IN", operands:["exchange", exFilter.split(",")] }] : []),
+      ...(r.currency && r.currency!=="Todas" ? [{ operator:"EQ", operands:["currency", r.currency] }] : []),
+      ...queries.map(q => { const [f,op,v]=q.split(","); return { operator:op==="gt"?"GT":"LT", operands:[f, parseFloat(v)] }; })
+    ]}
+  };
+
+  const screenerUrl = `https://query1.finance.yahoo.com/v1/finance/screener?formatted=false&lang=en-US&region=US&crumb=`;
+  const proxies = [
+    `https://corsproxy.io/?url=${encodeURIComponent(screenerUrl)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(screenerUrl)}`,
+  ];
+
+  let results = null;
+  for (const proxy of proxies) {
+    try {
+      const res = await fetch(proxy, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(12000)
+      });
+      if (!res.ok) continue;
+      const json = await res.json();
+      const quotes = json?.finance?.result?.[0]?.quotes;
+      if (quotes?.length) { results = quotes; break; }
+    } catch(e) { console.warn("Screener proxy error:", e.message); }
+  }
+
+  if (!results) {
+    // Fallback: buscar en las posiciones propias aplicando filtros locales
+    results = _radarFilterLocal();
+    r._error = results.length ? "API de screener no disponible — mostrando resultados de tu cartera actual con los filtros aplicados." : "No se pudo conectar con el screener. Prueba de nuevo en unos segundos.";
+  }
+
+  r._results = results;
+  r._loading = false;
+  r._searched = true;
+  renderActiveTab();
+}
+
+function _radarFilterLocal() {
+  const r = state.radar;
+  return state.positions.filter(p => {
+    const di = state.divInfo?.find(d=>d.ticker===p.ticker);
+    const yld = (di?.div_yield||0)*100;
+    const cp = state.priceCache[p.ticker]||p.avg_cost;
+    if (r.sector !== "Todos" && p.sector !== r.sector) return false;
+    if (r.currency !== "Todas" && p.currency !== r.currency) return false;
+    if (r.yield_min && yld < parseFloat(r.yield_min)) return false;
+    return true;
+  }).map(p => {
+    const di = state.divInfo?.find(d=>d.ticker===p.ticker);
+    const cp = state.priceCache[p.ticker]||p.avg_cost;
+    return {
+      symbol: p.ticker, shortName: p.name, sector: p.sector,
+      currency: p.currency, regularMarketPrice: cp,
+      marketCap: cp * p.shares,
+      trailingAnnualDividendYield: di?.div_yield||0,
+      trailingPE: null, priceToBook: null,
+      returnOnEquity: null, profitMargins: null,
+      _fromPortfolio: true
+    };
+  });
+}
+
+function renderRadar() {
+  const r = state.radar;
+
+  const inp = (key, placeholder, label, suffix="") => `
+    <div style="display:flex;flex-direction:column;gap:3px">
+      <label style="font-size:10px;color:#64748b;font-weight:600">${label}</label>
+      <div style="display:flex;align-items:center;gap:4px">
+        <input type="number" value="${r[key]||""}" placeholder="${placeholder}"
+          oninput="setRadarFilter('${key}',this.value)"
+          style="width:80px;padding:5px 7px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;background:#fff"/>
+        ${suffix?`<span style="font-size:10px;color:#94a3b8">${suffix}</span>`:""}
+      </div>
+    </div>`;
+
+  const sel = (key, options, label) => `
+    <div style="display:flex;flex-direction:column;gap:3px">
+      <label style="font-size:10px;color:#64748b;font-weight:600">${label}</label>
+      <select onchange="setRadarFilter('${key}',this.value)"
+        style="padding:5px 7px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;background:#fff;min-width:110px">
+        ${options.map(o=>`<option value="${o}" ${r[key]===o?"selected":""}>${o}</option>`).join("")}
+      </select>
+    </div>`;
+
+  const group = (emoji, title, color, fields) => `
+    <div style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:12px">
+      <div style="font-size:12px;font-weight:700;color:${color};margin-bottom:10px">${emoji} ${title}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px">${fields}</div>
+    </div>`;
+
+  // Resultados
+  let resultsHtml = "";
+  if (r._loading) {
+    resultsHtml = `<div style="text-align:center;padding:30px;color:#64748b">
+      <div style="font-size:24px;margin-bottom:8px">⏳</div>
+      <div style="font-size:13px">Buscando empresas...</div>
+    </div>`;
+  } else if (r._searched) {
+    if (r._error) {
+      resultsHtml += `<div style="padding:10px 12px;background:#fef3c7;border-radius:8px;font-size:11px;color:#92400e;margin-bottom:10px">⚠️ ${r._error}</div>`;
+    }
+    if (!r._results.length) {
+      resultsHtml += `<div style="text-align:center;padding:24px;color:#94a3b8;font-size:13px">😔 Ninguna empresa cumple los filtros. Amplía los criterios.</div>`;
+    } else {
+      const rows = r._results.map(q => {
+        const ticker = q.symbol||"";
+        const name = q.shortName||q.longName||ticker;
+        const price = q.regularMarketPrice!=null ? fmtNum(q.regularMarketPrice) : "—";
+        const mcap = q.marketCap ? fmtMcap(q.marketCap) : "—";
+        const pe = q.trailingPE!=null ? q.trailingPE.toFixed(1)+"x" : "—";
+        const pb = q.priceToBook!=null ? q.priceToBook.toFixed(2)+"x" : "—";
+        const yld = q.trailingAnnualDividendYield!=null ? (q.trailingAnnualDividendYield*100).toFixed(2)+"%" : "—";
+        const roe = q.returnOnEquity!=null ? (q.returnOnEquity*100).toFixed(1)+"%" : "—";
+        const margin = q.profitMargins!=null ? (q.profitMargins*100).toFixed(1)+"%" : "—";
+        const inPortfolio = state.positions.some(p=>p.ticker===ticker);
+        const yldColor = q.trailingAnnualDividendYield>0.05?"#16a34a":q.trailingAnnualDividendYield>0.02?"#b45309":"#475569";
+        return `<tr style="cursor:pointer" onclick="document.getElementById('val-ticker-radar')&&(document.getElementById('val-ticker-radar').value='${ticker}')">
+          <td><div style="display:flex;align-items:center;gap:6px">
+            ${logoImg(ticker,name,22)}
+            <div>
+              <div style="font-size:12px;font-weight:700;color:#1d4ed8">${esc(ticker)}${inPortfolio?` <span style="font-size:9px;background:#dbeafe;color:#1d4ed8;padding:1px 4px;border-radius:4px">✓ cartera</span>`:""}</div>
+              <div style="font-size:10px;color:#64748b;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</div>
+            </div>
+          </div></td>
+          <td style="font-size:11px;color:#475569">${esc(q.sector||"—")}</td>
+          <td style="font-weight:600">${price}</td>
+          <td style="font-size:11px">${mcap}</td>
+          <td style="font-size:11px">${pe}</td>
+          <td style="font-size:11px">${pb}</td>
+          <td style="font-size:11px;font-weight:600;color:${yldColor}">${yld}</td>
+          <td style="font-size:11px">${roe}</td>
+          <td style="font-size:11px">${margin}</td>
+          <td><button onclick="event.stopPropagation();openAddPosFromRadar('${esc(ticker)}','${esc(name)}')"
+            style="font-size:10px;padding:3px 7px;background:#2563eb;color:#fff;border:none;border-radius:5px;cursor:pointer">+ Añadir</button></td>
+        </tr>`;
+      }).join("");
+      resultsHtml += `<div style="overflow-x:auto">
+        <table style="min-width:700px;font-size:12px">
+          <thead><tr style="background:#f8fafc">
+            ${["Empresa","Sector","Precio","M.Cap","P/E","P/B","Yield","ROE","Mg.Neto",""].map(h=>`<th style="font-size:10px;padding:6px 8px;text-align:left;white-space:nowrap">${h}</th>`).join("")}
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div style="font-size:11px;color:#94a3b8;margin-top:8px;text-align:right">${r._results.length} resultado${r._results.length!==1?"s":""} · Fuente: Yahoo Finance</div>`;
+    }
+  }
+
+  return `<div style="padding:14px">
+    <h3 style="font-size:14px;font-weight:700;color:#1d4ed8;margin-bottom:12px">🔭 Radar — Screener de acciones</h3>
+
+    <!-- Filtros universo -->
+    ${group("🌍","Universo","#1d4ed8",
+      sel("region", RADAR_REGIONS, "Región") +
+      sel("sector", RADAR_SECTORS, "Sector") +
+      sel("currency", RADAR_CURRENCIES, "Divisa")
+    )}
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin-top:10px">
+
+      <!-- Valoración -->
+      ${group("💰","Valoración","#b45309",
+        inp("per_max","25","P/E máx","x") +
+        inp("evEbitda_max","15","EV/EBITDA máx","x") +
+        inp("pb_max","3","P/B máx","x") +
+        inp("yield_min","2","Yield mín","%")
+      )}
+
+      <!-- Calidad -->
+      ${group("🏆","Calidad","#16a34a",
+        inp("margin_min","5","Margen neto mín","%") +
+        inp("roe_min","10","ROE mín","%") +
+        inp("roic_min","8","ROIC mín","%")
+      )}
+
+      <!-- Balance -->
+      ${group("🏦","Balance","#7c3aed",
+        inp("debtEbitda_max","3","Deuda/EBITDA máx","x") +
+        inp("coverage_min","3","Cobertura int. mín","x") +
+        inp("currentRatio_min","1","Ratio corriente mín","x")
+      )}
+
+      <!-- Crecimiento -->
+      ${group("📈","Crecimiento","#0891b2",
+        inp("revGrowth_min","5","Crec. ingresos mín","%") +
+        inp("epsGrowth_min","5","Crec. BPA mín","%") +
+        inp("divGrowth_min","3","Crec. dividendo mín","%")
+      )}
+
+      <!-- Dividendo -->
+      ${group("💸","Dividendo","#dc2626",
+        inp("divYield_min","2","Yield mín","%") +
+        inp("divYears_min","5","Años pagando mín","") +
+        inp("payout_max","80","Payout máx","%")
+      )}
+
+      <!-- Tamaño -->
+      ${group("📏","Tamaño","#475569",
+        inp("mcap_min","100","Cap. mín","M€") +
+        inp("mcap_max","","Cap. máx","M€")
+      )}
+    </div>
+
+    <!-- Botón buscar -->
+    <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">
+      <button onclick="runRadarSearch()"
+        style="padding:10px 24px;background:#1d4ed8;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px">
+        🔍 Buscar empresas
+      </button>
+      <button onclick="state.radar={...state.radar,region:'Todos',sector:'Todos',currency:'Todas',per_max:'',evEbitda_max:'',pb_max:'',yield_min:'',margin_min:'',roe_min:'',roic_min:'',debtEbitda_max:'',coverage_min:'',currentRatio_min:'',revGrowth_min:'',epsGrowth_min:'',divGrowth_min:'',divYield_min:'',divYears_min:'',payout_max:'',mcap_min:'',mcap_max:''};renderActiveTab()"
+        style="padding:10px 16px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;cursor:pointer">
+        ✕ Limpiar filtros
+      </button>
+      ${r._searched&&!r._loading?`<span style="font-size:11px;color:#94a3b8">${r._results.length} resultado${r._results.length!==1?"s":""}</span>`:""}
+    </div>
+
+    <!-- Resultados -->
+    ${r._loading||r._searched?`<div style="margin-top:14px;background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:12px">${resultsHtml}</div>`:""}
+  </div>`;
+}
+
+function fmtNum(v) {
+  if (v==null) return "—";
+  return v.toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+function fmtMcap(v) {
+  if (!v) return "—";
+  if (v>=1e12) return (v/1e12).toFixed(1)+"B€";
+  if (v>=1e9)  return (v/1e9).toFixed(1)+"MM€";
+  if (v>=1e6)  return (v/1e6).toFixed(0)+"M€";
+  return v.toFixed(0)+"€";
+}
+function openAddPosFromRadar(ticker, name) {
+  state.activeTab = 0;
+  renderActiveTab();
+  setTimeout(()=>openAddPos(ticker, name), 150);
+}
+
 async function init() {
   document.getElementById("disclaimer-overlay").style.display = "none";
   document.getElementById("login-overlay").style.display = "flex";
-  await loadMe(); // si ya hay sesión guardada en el navegador, entra directo
+  await loadMe();
 }
 
 init();
