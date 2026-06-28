@@ -3464,15 +3464,29 @@ function deleteCartera() {
   buildDivInfo(); save(); renderHeader(); renderActiveTab();
 }
 
-function openAddAlert(defaultTicker) {
-  const tickers=state.positions.map(p=>`<option ${p.ticker===(defaultTicker||state.selectedTicker)?"selected":""}>${esc(p.ticker)} — ${esc(p.name)}</option>`).join("");
+function openAddAlert(defaultTicker, defaultName, defaultPrice) {
+  const isInPortfolio = state.positions.some(p => p.ticker === defaultTicker);
+  const portfolioOptions = state.positions.map(p=>`<option ${p.ticker===(defaultTicker||state.selectedTicker)?"selected":""}>${esc(p.ticker)} — ${esc(p.name)}</option>`).join("");
+  // Si el ticker viene del radar y no está en cartera, añadirlo como opción extra
+  const extraOption = defaultTicker && !isInPortfolio
+    ? `<option value="${esc(defaultTicker)}" selected>${esc(defaultTicker)}${defaultName?" — "+esc(defaultName):""}</option>`
+    : "";
   openModal(`
     <h3>🔔 Nueva alerta de precio</h3>
-    <div class="field"><label>Ticker</label><select id="m-a-ticker" class="inp">${tickers}</select></div>
+    <div class="field"><label>Ticker</label>
+      <select id="m-a-ticker" class="inp">
+        ${extraOption}${portfolioOptions}
+      </select>
+    </div>
     <div class="field"><label>Condición</label>
       <select id="m-a-dir" class="inp"><option value="ABOVE">↑ Sube por encima de</option><option value="BELOW">↓ Baja por debajo de</option></select>
     </div>
-    <div class="field"><label>Precio objetivo (€)</label><input id="m-a-price" type="number" step="0.01" class="inp" value="0"></div>
+    <div class="field"><label>Precio objetivo (€)</label>
+      <input id="m-a-price" type="number" step="0.01" class="inp" value="${defaultPrice ? (+defaultPrice*0.9).toFixed(2) : 0}">
+    </div>
+    <div style="font-size:11px;color:#64748b;margin-bottom:12px">
+      ${defaultPrice ? `Precio actual: <b>${(+defaultPrice).toFixed(2)}</b> — sugerido -10%` : ""}
+    </div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
       <button class="btn-gray" onclick="closeModal()">Cancelar</button>
       <button class="btn" onclick="saveAlertModal()">💾 Guardar</button>
@@ -4108,68 +4122,63 @@ async function runRadarSearch() {
   }
   state.radar._progress = null;
 
-  // Enriquecer con fundamentales via timeseries (mismo endpoint que ya funciona en pestaña Valoración)
-  // Solo los primeros 20 para no sobrecargar
+  // Enriquecer con fundamentales via timeseries (paralelo, mismas claves que TS_ANNUAL)
   state.radar._progress = "Enriqueciendo datos fundamentales...";
   renderActiveTab();
 
-  await Promise.allSettled(allQuotes.slice(0, 20).map(async q => {
-    // Intentar timeseries primero (no requiere sesión, ya probado)
+  await Promise.allSettled(allQuotes.map(async q => {
     for (const proxyFn of TS_PROXIES) {
       try {
-        const res = await fetch(proxyFn(q.symbol), { signal: AbortSignal.timeout(7000) });
+        const res = await fetch(proxyFn(q.symbol), { signal: AbortSignal.timeout(8000) });
         if (!res.ok) continue;
         const json = await res.json();
         const ts = json?.timeseries?.result;
         if (!ts?.length) continue;
 
-        const getLatest = (key) => {
-          const s = ts.find(x => x.meta?.type?.[0] === key);
-          const arr = s?.[key];
-          if (!arr?.length) return null;
-          return arr[arr.length - 1]?.reportedValue?.raw ?? null;
-        };
+        // Construir mapa tipo → último valor disponible
+        const val = {};
+        ts.forEach(item => {
+          const type = item.meta?.type?.[0];
+          if (!type) return;
+          const arr = item[type];
+          if (!Array.isArray(arr) || !arr.length) return;
+          // Coger el último valor no nulo
+          for (let i = arr.length - 1; i >= 0; i--) {
+            const v = arr[i]?.reportedValue?.raw;
+            if (v != null) { val[type] = v; break; }
+          }
+        });
 
-        const rev  = getLatest("annualTotalRevenue");
-        const ni   = getLatest("annualNetIncome");
-        const ebit = getLatest("annualOperatingIncome");
-        const eq   = getLatest("annualStockholdersEquity") || getLatest("annualTotalStockholdersEquity");
-        const debt = getLatest("annualTotalDebt");
-        const cash = getLatest("annualCashAndCashEquivalents");
-        const ebitda = getLatest("annualEbitda");
-        const gp   = getLatest("annualGrossProfit");
-        const cfo  = getLatest("annualOperatingCashFlow");
-
-        if (rev && ni) q.profitMargins = +((ni/rev)*100).toFixed(1);
-        if (eq && ni)  q.returnOnEquity = +((ni/eq)*100).toFixed(1);
-        if (ebitda && debt) {
-          const nd = (debt||0) - (cash||0);
-          q.debtToEquity = ebitda > 0 ? +(nd/ebitda).toFixed(2) : null;
+        // Márgenes — vienen como decimal (0.15 = 15%)
+        if (val.annualNetIncomeMargin   != null) q.profitMargins  = +(val.annualNetIncomeMargin * 100).toFixed(1);
+        if (val.annualGrossProfitMargin != null) q.grossMargin    = +(val.annualGrossProfitMargin * 100).toFixed(1);
+        if (val.annualOperatingIncomeMargin != null) q.operatingMargin = +(val.annualOperatingIncomeMargin * 100).toFixed(1);
+        // ROE — viene como decimal (0.18 = 18%)
+        if (val.annualReturnOnEquity    != null) q.returnOnEquity = +(val.annualReturnOnEquity * 100).toFixed(1);
+        // Deuda neta / EBITDA
+        if (val.annualTotalDebt != null && val.annualEbitda != null && val.annualEbitda > 0) {
+          const nd = (val.annualTotalDebt || 0) - (val.annualCashAndCashEquivalents || 0);
+          q.debtToEquity = +(nd / val.annualEbitda).toFixed(2);
         }
-        if (rev && gp) q.grossMargin = +((gp/rev)*100).toFixed(1);
-        if (rev && ebit) q.operatingMargin = +((ebit/rev)*100).toFixed(1);
-        // FCF yield aproximado
-        if (q.marketCap && cfo) q.fcfYield = +((cfo/q.marketCap)*100).toFixed(1);
-        break;
-      } catch(e) {}
+        // FCF yield
+        if (val.annualFreeCashFlow != null && q.marketCap) {
+          q.fcfYield = +((val.annualFreeCashFlow / q.marketCap) * 100).toFixed(1);
+        }
+        // EPS para calcular P/E si no lo tenemos
+        if (!q.trailingPE && val.annualBasicEPS && q.regularMarketPrice) {
+          q.trailingPE = +(q.regularMarketPrice / val.annualBasicEPS).toFixed(1);
+        }
+        break; // primer proxy que funciona, salir
+      } catch(e) { /* siguiente proxy */ }
     }
 
-    // Si timeseries no dio datos, intentar YIELD_PROXIES que devuelve trailingPE en meta
-    if (!q.trailingPE) {
-      for (const proxyFn of YIELD_PROXIES) {
-        try {
-          const res = await fetch(proxyFn(q.symbol), { signal: AbortSignal.timeout(5000) });
-          if (!res.ok) continue;
-          const json = await res.json();
-          const meta = json?.chart?.result?.[0]?.meta || {};
-          if (meta.trailingPE)  q.trailingPE = meta.trailingPE;
-          if (meta.dividendYield && !q.trailingAnnualDividendYield)
-            q.trailingAnnualDividendYield = meta.dividendYield;
-          break;
-        } catch(e) {}
-      }
+    // Fallback: yield del yieldCache si no vino del timeseries
+    if (!q.trailingAnnualDividendYield) {
+      const cached = state.yieldCache[q.symbol];
+      if (cached?.yield) q.trailingAnnualDividendYield = cached.yield;
     }
   }));
+
   state.radar._progress = null;
 
   // Enriquecer con sector desde mapa estático
@@ -4354,8 +4363,8 @@ function renderRadar() {
           <td style="font-size:11px">${roe}</td>
           <td style="font-size:11px">${margin}</td>
           <td style="font-size:11px;color:#7c3aed">${deuda}</td>
-          <td><button onclick="event.stopPropagation();openAddPosFromRadar('${esc(ticker)}','${esc(name)}')"
-            style="font-size:10px;padding:3px 7px;background:#2563eb;color:#fff;border:none;border-radius:5px;cursor:pointer">+ Añadir</button></td>
+          <td><button onclick="event.stopPropagation();openAlertFromRadar('${esc(ticker)}','${esc(name)}',${q.regularMarketPrice||0})"
+            style="font-size:10px;padding:3px 7px;background:#f59e0b;color:#fff;border:none;border-radius:5px;cursor:pointer">🔔 Alerta</button></td>
         </tr>`;
       }).join("");
       resultsHtml += `<div style="overflow-x:auto">
@@ -4454,6 +4463,12 @@ function fmtMcap(v) {
   if (v>=1e6)  return (v/1e6).toFixed(0)+"M€";
   return v.toFixed(0)+"€";
 }
+function openAlertFromRadar(ticker, name, price) {
+  state.activeTab = 1; // pestaña Alertas
+  renderActiveTab();
+  setTimeout(() => openAddAlert(ticker, name, price), 150);
+}
+
 function openAddPosFromRadar(ticker, name) {
   state.activeTab = 0;
   renderActiveTab();
