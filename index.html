@@ -3987,55 +3987,36 @@ async function runRadarSearch() {
     : (RADAR_TICKERS[r.region] || RADAR_TICKERS["Global"]);
 
   // 2. Fetch cotizaciones en lotes de 20 via Yahoo v7/quote (funciona con proxies)
-  // 2. Fetch cotizaciones usando el mismo endpoint que ya funciona para precios
-  // fetchWithProxy ya está probado y funciona — lo usamos en paralelo para todos los tickers
-  // Limitamos a 30 tickers por región para no saturar
   const tickersToFetch = tickers.slice(0, 40);
-  
-  // Mostrar progreso
-  r._progress = `Consultando ${tickersToFetch.length} empresas...`;
+  state.radar._progress = `Consultando ${tickersToFetch.length} empresas...`;
   renderActiveTab();
 
   const allQuotes = [];
-  
-  // Lanzar en grupos de 8 en paralelo para no saturar
-  const GROUP = 8;
+  const GROUP = 10;
+
   for (let i = 0; i < tickersToFetch.length; i += GROUP) {
-    const group = tickersToFetch.slice(i, i + GROUP);
-    const results = await Promise.allSettled(
-      group.map(async ticker => {
-        // Usamos el mismo endpoint v8/chart que ya funciona en la app
-        for (const proxyFn of PROXIES) {
-          try {
-            const url = proxyFn(ticker);
-            const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
-            if (!res.ok) continue;
-            const json = await res.json();
-            const result = json?.chart?.result?.[0];
-            if (!result) continue;
-            const meta = result.meta || {};
-            return {
-              symbol: ticker,
-              shortName: meta.shortName || meta.longName || ticker,
-              regularMarketPrice: meta.regularMarketPrice,
-              currency: meta.currency,
-              exchange: meta.exchangeName || meta.exchange,
-              marketCap: meta.marketCap,
-              // Estos campos no vienen del v8/chart — los dejamos null por ahora
-              sector: null, trailingPE: null, priceToBook: null,
-              trailingAnnualDividendYield: state.yieldCache[ticker]?.yield || null,
-              returnOnEquity: null, profitMargins: null, debtToEquity: null,
-              payoutRatio: null, _basic: true
-            };
-          } catch(e) { /* siguiente proxy */ }
-        }
-        return null;
-      })
-    );
-    results.forEach(r => { if (r.status === 'fulfilled' && r.value) allQuotes.push(r.value); });
-    
-    // Actualizar progreso
-    state.radar._progress = `Consultando empresas... ${Math.min(i+GROUP, tickersToFetch.length)}/${tickersToFetch.length}`;
+    const batch = tickersToFetch.slice(i, i + GROUP).join(",");
+    const fields = "symbol,shortName,regularMarketPrice,marketCap,trailingPE,forwardPE,priceToBook,trailingAnnualDividendYield,returnOnEquity,profitMargins,debtToEquity,payoutRatio,currency,exchange,sector,earningsGrowth,revenueGrowth,fiftyTwoWeekLow,fiftyTwoWeekHigh";
+
+    const SCREENER_URLS = [
+      `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v6/finance/quote?symbols=${batch}&fields=${fields}`)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v6/finance/quote?symbols=${batch}&fields=${fields}`)}`,
+      `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v6/finance/quote?symbols=${batch}&fields=${fields}`)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v6/finance/quote?symbols=${batch}&fields=${fields}`)}`,
+    ];
+
+    let ok = false;
+    for (const url of SCREENER_URLS) {
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) continue;
+        const json = await res.json();
+        const quotes = json?.quoteResponse?.result;
+        if (quotes?.length) { allQuotes.push(...quotes); ok = true; break; }
+      } catch(e) { /* próximo */ }
+    }
+
+    state.radar._progress = `Consultando... ${Math.min(i + GROUP, tickersToFetch.length)}/${tickersToFetch.length}`;
     renderActiveTab();
   }
   state.radar._progress = null;
