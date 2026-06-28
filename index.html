@@ -3926,88 +3926,193 @@ async function runRadarSearch() {
   r._loading = true; r._searched = false; r._error = ""; r._results = [];
   renderActiveTab();
 
-  // Construir query para Yahoo Finance screener
-  const queries = [];
-  if (r.per_max)         queries.push(`peerPeRatio,lt,${r.per_max}`);
-  if (r.evEbitda_max)    queries.push(`peerEv2EbitdaRatio,lt,${r.evEbitda_max}`);
-  if (r.pb_max)          queries.push(`priceToBook,lt,${r.pb_max}`);
-  if (r.yield_min)       queries.push(`trailingAnnualDividendYield,gt,${r.yield_min/100}`);
-  if (r.margin_min)      queries.push(`profitMargins,gt,${r.margin_min/100}`);
-  if (r.roe_min)         queries.push(`returnOnEquity,gt,${r.roe_min/100}`);
-  if (r.debtEbitda_max)  queries.push(`debtToEquity,lt,${r.debtEbitda_max*10}`);
-  if (r.mcap_min)        queries.push(`marketCap,gt,${r.mcap_min*1e6}`);
-  if (r.mcap_max)        queries.push(`marketCap,lt,${r.mcap_max*1e6}`);
-
-  // Mapa región → exchange
-  const regionEx = { "España":"MCE,MAD","Europa":"MCE,MAD,PAR,XETRA,MIL,AMS","EE.UU.":"NYQ,NMS,NGM","Reino Unido":"LSE","Asia":"TYO,HKG,SHH" };
-  const exFilter = regionEx[r.region] || "";
-
-  const body = {
-    offset: 0, size: 50, sortField: "marketCap", sortType: "DESC",
-    quoteType: "EQUITY", topOperator: "AND",
-    query: { operator: "AND", operands: [
-      ...(r.sector && r.sector!=="Todos" ? [{ operator:"EQ", operands:["sector", r.sector] }] : []),
-      ...(exFilter ? [{ operator:"IN", operands:["exchange", exFilter.split(",")] }] : []),
-      ...(r.currency && r.currency!=="Todas" ? [{ operator:"EQ", operands:["currency", r.currency] }] : []),
-      ...queries.map(q => { const [f,op,v]=q.split(","); return { operator:op==="gt"?"GT":"LT", operands:[f, parseFloat(v)] }; })
-    ]}
+  // Yahoo Finance usa códigos de región/mercado distintos a "exchange"
+  // El campo correcto es "region" en la URL y "exchange" como filtro de operand
+  const REGION_MAP = {
+    "España":      { region:"es", exchanges:["MCE"] },
+    "Europa":      { region:"gb", exchanges:["MCE","ENX","XETRA","BIT","AMS","VIE","SWX"] },
+    "EE.UU.":      { region:"us", exchanges:["NYQ","NMS","NGM","ASE","PCX"] },
+    "Reino Unido": { region:"gb", exchanges:["LSE"] },
+    "Asia":        { region:"jp", exchanges:["TYO","HKG","SHH","SES"] },
+    "Global":      { region:"us", exchanges:[] },
+    "Todos":       { region:"us", exchanges:[] },
   };
 
-  const screenerUrl = `https://query1.finance.yahoo.com/v1/finance/screener?formatted=false&lang=en-US&region=US&crumb=`;
-  const proxies = [
-    `https://corsproxy.io/?url=${encodeURIComponent(screenerUrl)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(screenerUrl)}`,
+  // Sectores en inglés para Yahoo
+  const SECTOR_EN = {
+    "Tecnología":"Technology","Consumo Defensivo":"Consumer Defensive",
+    "Consumo Cíclico":"Consumer Cyclical","Salud":"Healthcare",
+    "Financiero":"Financial Services","Servicios Financieros":"Financial Services",
+    "Energía":"Energy","Utilities":"Utilities","Industria":"Industrials",
+    "Materiales Básicos":"Basic Materials","Inmobiliario":"Real Estate",
+    "Comunicaciones":"Communication Services","Otros":"",
+  };
+
+  const regionCfg = REGION_MAP[r.region] || REGION_MAP["Todos"];
+  const sectorEN  = SECTOR_EN[r.sector] || "";
+
+  // Construir operands
+  const operands = [];
+
+  // Región/exchanges — filtro más importante
+  if (regionCfg.exchanges.length) {
+    operands.push({ operator:"or", operands: regionCfg.exchanges.map(ex=>({ operator:"eq", operands:["exchange", ex] })) });
+  }
+  // Sector
+  if (sectorEN) operands.push({ operator:"eq", operands:["sector", sectorEN] });
+  // Divisa
+  if (r.currency && r.currency!=="Todas") operands.push({ operator:"eq", operands:["currency", r.currency] });
+  // Valoración
+  if (r.per_max)        operands.push({ operator:"lt", operands:["trailingPE",       +r.per_max] });
+  if (r.pb_max)         operands.push({ operator:"lt", operands:["priceToBook",       +r.pb_max] });
+  if (r.yield_min)      operands.push({ operator:"gt", operands:["trailingAnnualDividendYield", +r.yield_min/100] });
+  // Calidad
+  if (r.margin_min)     operands.push({ operator:"gt", operands:["profitMargins",     +r.margin_min/100] });
+  if (r.roe_min)        operands.push({ operator:"gt", operands:["returnOnEquity",    +r.roe_min/100] });
+  // Balance
+  if (r.debtEbitda_max) operands.push({ operator:"lt", operands:["debtToEquity",      +r.debtEbitda_max * 100] });
+  // Capitalización
+  if (r.mcap_min)       operands.push({ operator:"gt", operands:["marketCap",         +r.mcap_min * 1e6] });
+  if (r.mcap_max)       operands.push({ operator:"lt", operands:["marketCap",         +r.mcap_max * 1e6] });
+  // Dividendo
+  if (r.divYield_min)   operands.push({ operator:"gt", operands:["trailingAnnualDividendYield", +r.divYield_min/100] });
+  if (r.payout_max)     operands.push({ operator:"lt", operands:["payoutRatio",        +r.payout_max/100] });
+
+  const body = {
+    size: 50, offset: 0,
+    sortField: "marketCap", sortType: "DESC",
+    quoteType: "EQUITY", topOperator: "AND",
+    query: { operator: "and", operands: operands.length ? operands : [{ operator:"gt", operands:["marketCap", 100000000] }] }
+  };
+
+  // Endpoint v1 screener — necesita crumb pero a veces funciona sin él via proxy
+  const YF_SCREENER = `https://query1.finance.yahoo.com/v1/finance/screener?formatted=false&lang=en-US&region=${regionCfg.region}`;
+  const YF_SCREENER2 = `https://query2.finance.yahoo.com/v1/finance/screener?formatted=false&lang=en-US&region=${regionCfg.region}`;
+
+  // También intentar con el endpoint v2 que no requiere crumb
+  const YF_SCREEN_V2 = `https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?formatted=false&lang=en-US&region=${regionCfg.region}&scrIds=day_gainers&count=50`;
+
+  const PROXIES_SCREENER = [
+    u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
   ];
 
   let results = null;
-  for (const proxy of proxies) {
-    try {
-      const res = await fetch(proxy, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(12000)
-      });
-      if (!res.ok) continue;
-      const json = await res.json();
-      const quotes = json?.finance?.result?.[0]?.quotes;
-      if (quotes?.length) { results = quotes; break; }
-    } catch(e) { console.warn("Screener proxy error:", e.message); }
+  let lastError = "";
+
+  // Intentar POST con v1
+  for (const mkProxy of PROXIES_SCREENER) {
+    for (const baseUrl of [YF_SCREENER, YF_SCREENER2]) {
+      try {
+        const res = await fetch(mkProxy(baseUrl), {
+          method:"POST",
+          headers:{"Content-Type":"application/json","Accept":"application/json"},
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(12000)
+        });
+        const json = await res.json();
+        const quotes = json?.finance?.result?.[0]?.quotes;
+        if (quotes?.length) {
+          // Filtrar por exchange si la región lo requiere
+          results = regionCfg.exchanges.length
+            ? quotes.filter(q => regionCfg.exchanges.includes(q.exchange||q.fullExchangeName||""))
+            : quotes;
+          // Filtrar manualmente por sector si Yahoo no lo hizo bien
+          if (sectorEN) results = results.filter(q => (q.sector||"").toLowerCase() === sectorEN.toLowerCase());
+          if (results.length) break;
+        } else {
+          lastError = JSON.stringify(json).slice(0,120);
+        }
+      } catch(e) { lastError = e.message; }
+    }
+    if (results?.length) break;
   }
 
-  if (!results) {
-    // Fallback: buscar en las posiciones propias aplicando filtros locales
-    results = _radarFilterLocal();
-    r._error = results.length ? "API de screener no disponible — mostrando resultados de tu cartera actual con los filtros aplicados." : "No se pudo conectar con el screener. Prueba de nuevo en unos segundos.";
+  if (!results?.length) {
+    // Fallback: buscar tickers populares via Yahoo search + filtros locales
+    results = await _radarSearchByQuery(r, regionCfg, sectorEN);
+    if (!results?.length) {
+      results = _radarFilterLocal();
+      r._error = `Screener externo no disponible (${lastError.slice(0,60)}). Mostrando tu cartera filtrada.`;
+    } else {
+      r._error = "Resultados limitados — screener principal bloqueado, usando búsqueda alternativa.";
+    }
   }
 
-  r._results = results;
+  r._results = results || [];
   r._loading = false;
   r._searched = true;
   renderActiveTab();
 }
 
+// Búsqueda alternativa: buscar empresas populares por región/sector usando Yahoo search
+async function _radarSearchByQuery(r, regionCfg, sectorEN) {
+  // Consultas representativas por región/sector
+  const QUERY_MAP = {
+    "España": ["IBEX 35 spain stocks MCE","ACS IBE REP TEF ENG MAP ACX"],
+    "EE.UU.": [sectorEN ? sectorEN+" stocks NYSE" : "S&P 500 large cap stocks"],
+    "Europa": ["European stocks DAX CAC FTSE"],
+    "Reino Unido": ["FTSE 100 UK stocks LSE"],
+    "Asia": ["Tokyo stocks Nikkei Japan"],
+  };
+  const queries = QUERY_MAP[r.region] || ["global stocks large cap"];
+
+  // Usar Yahoo search para obtener tickers y luego filtrar
+  const tickers = [];
+  for (const q of queries.slice(0,1)) {
+    for (const proxyFn of SEARCH_PROXIES) {
+      try {
+        const url = proxyFn(q);
+        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) continue;
+        const json = await res.json();
+        const quotes = json?.quotes || json?.data?.quotes || [];
+        quotes.filter(q=>q.quoteType==="EQUITY"||q.typeDisp==="Equity").forEach(q=>tickers.push(q.symbol));
+        if (tickers.length) break;
+      } catch(e) {}
+    }
+    if (tickers.length) break;
+  }
+  return [];  // Sin datos enriquecidos no podemos mostrar métricas útiles
+}
+
 function _radarFilterLocal() {
   const r = state.radar;
+  const SECTOR_EN = {
+    "Tecnología":"Technology","Consumo Defensivo":"Consumer Defensive",
+    "Consumo Cíclico":"Consumer Cyclical","Salud":"Healthcare",
+    "Financiero":"Financial Services","Energía":"Energy",
+    "Utilities":"Utilities","Industria":"Industrials",
+    "Materiales Básicos":"Basic Materials","Inmobiliario":"Real Estate",
+    "Comunicaciones":"Communication Services",
+  };
   return state.positions.filter(p => {
     const di = state.divInfo?.find(d=>d.ticker===p.ticker);
     const yld = (di?.div_yield||0)*100;
-    const cp = state.priceCache[p.ticker]||p.avg_cost;
-    if (r.sector !== "Todos" && p.sector !== r.sector) return false;
-    if (r.currency !== "Todas" && p.currency !== r.currency) return false;
+    // Región
+    if (r.region && r.region!=="Todos") {
+      const TICKER_REGION = { ".MC":"España",".MAD":"España",".L":"Reino Unido",".PA":"Europa",".DE":"Europa",".F":"Europa",".AS":"Europa",".MI":"Europa" };
+      const suffix = Object.keys(TICKER_REGION).find(s=>p.ticker.endsWith(s));
+      const pRegion = suffix ? TICKER_REGION[suffix] : "EE.UU.";
+      const wantEurope = r.region === "Europa";
+      if (wantEurope && !["España","Europa","Reino Unido"].includes(pRegion)) return false;
+      if (!wantEurope && r.region !== "Global" && pRegion !== r.region) return false;
+    }
+    if (r.sector && r.sector!=="Todos" && p.sector !== r.sector) return false;
+    if (r.currency && r.currency!=="Todas" && p.currency !== r.currency) return false;
     if (r.yield_min && yld < parseFloat(r.yield_min)) return false;
+    if (r.divYield_min && yld < parseFloat(r.divYield_min)) return false;
     return true;
   }).map(p => {
     const di = state.divInfo?.find(d=>d.ticker===p.ticker);
     const cp = state.priceCache[p.ticker]||p.avg_cost;
     return {
-      symbol: p.ticker, shortName: p.name, sector: p.sector,
-      currency: p.currency, regularMarketPrice: cp,
-      marketCap: cp * p.shares,
-      trailingAnnualDividendYield: di?.div_yield||0,
-      trailingPE: null, priceToBook: null,
-      returnOnEquity: null, profitMargins: null,
-      _fromPortfolio: true
+      symbol:p.ticker, shortName:p.name, sector:p.sector, currency:p.currency,
+      exchange: p.ticker.endsWith(".MC")?"MCE":p.ticker.endsWith(".L")?"LSE":"NYQ",
+      regularMarketPrice:cp, marketCap:cp*p.shares,
+      trailingAnnualDividendYield:di?.div_yield||0,
+      trailingPE:null, priceToBook:null, returnOnEquity:null, profitMargins:null,
+      _fromPortfolio:true
     };
   });
 }
