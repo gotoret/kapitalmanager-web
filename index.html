@@ -3991,35 +3991,78 @@ async function runRadarSearch() {
   state.radar._progress = `Consultando ${tickersToFetch.length} empresas...`;
   renderActiveTab();
 
+  // Usar fetchWithProxy (v8/chart) — el único endpoint que sabemos que funciona sin auth
+  // Lo lanzamos en paralelo en grupos de 8
   const allQuotes = [];
-  const GROUP = 10;
+  const GROUP = 8;
 
   for (let i = 0; i < tickersToFetch.length; i += GROUP) {
-    const batch = tickersToFetch.slice(i, i + GROUP).join(",");
-    const fields = "symbol,shortName,regularMarketPrice,marketCap,trailingPE,forwardPE,priceToBook,trailingAnnualDividendYield,returnOnEquity,profitMargins,debtToEquity,payoutRatio,currency,exchange,sector,earningsGrowth,revenueGrowth,fiftyTwoWeekLow,fiftyTwoWeekHigh";
-
-    const SCREENER_URLS = [
-      `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v6/finance/quote?symbols=${batch}&fields=${fields}`)}`,
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v6/finance/quote?symbols=${batch}&fields=${fields}`)}`,
-      `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v6/finance/quote?symbols=${batch}&fields=${fields}`)}`,
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v6/finance/quote?symbols=${batch}&fields=${fields}`)}`,
-    ];
-
-    let ok = false;
-    for (const url of SCREENER_URLS) {
-      try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-        if (!res.ok) continue;
-        const json = await res.json();
-        const quotes = json?.quoteResponse?.result;
-        if (quotes?.length) { allQuotes.push(...quotes); ok = true; break; }
-      } catch(e) { /* próximo */ }
-    }
-
-    state.radar._progress = `Consultando... ${Math.min(i + GROUP, tickersToFetch.length)}/${tickersToFetch.length}`;
+    const group = tickersToFetch.slice(i, i + GROUP);
+    const settled = await Promise.allSettled(group.map(async ticker => {
+      const price = await fetchWithProxy(PROXIES, ticker);
+      if (price == null) return null;
+      // Recuperar metadatos del último resultado del proxy
+      let meta = {};
+      for (const proxyFn of PROXIES) {
+        try {
+          const res = await fetch(proxyFn(ticker), { signal: AbortSignal.timeout(5000) });
+          if (!res.ok) continue;
+          const json = await res.json();
+          meta = json?.chart?.result?.[0]?.meta || {};
+          if (meta.regularMarketPrice) break;
+        } catch(e) {}
+      }
+      const div = state.yieldCache[ticker];
+      return {
+        symbol: ticker,
+        shortName: meta.shortName || meta.longName || ticker,
+        regularMarketPrice: meta.regularMarketPrice || price,
+        marketCap: meta.marketCap || null,
+        currency: meta.currency || (ticker.endsWith(".MC")?"EUR":ticker.endsWith(".L")?"GBP":"USD"),
+        exchange: meta.exchangeName || meta.exchange || "",
+        sector: TICKER_SECTOR[ticker] || null,
+        trailingPE: null, forwardPE: null, priceToBook: null,
+        trailingAnnualDividendYield: div?.yield ?? null,
+        returnOnEquity: null, profitMargins: null,
+        debtToEquity: null, payoutRatio: null,
+        earningsGrowth: null, revenueGrowth: null,
+      };
+    }));
+    settled.forEach(s => { if (s.status==="fulfilled" && s.value) allQuotes.push(s.value); });
+    state.radar._progress = `Consultando... ${Math.min(i+GROUP, tickersToFetch.length)}/${tickersToFetch.length}`;
     renderActiveTab();
   }
   state.radar._progress = null;
+
+  // Enriquecer con fundamentales via quoteSummary (best-effort, no bloquea si falla)
+  const enrichBatch = allQuotes.slice(0, 20);
+  await Promise.allSettled(enrichBatch.map(async q => {
+    for (const proxyFn of FUND_PROXIES) {
+      try {
+        const url = proxyFn(q.symbol);
+        const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+        if (!res.ok) continue;
+        const json = await res.json();
+        const r0 = json?.quoteSummary?.result?.[0];
+        if (!r0) continue;
+        const fd = r0.financialData || {};
+        const ks = r0.defaultKeyStatistics || {};
+        const sd = r0.summaryDetail || {};
+        q.trailingPE        = sd.trailingPE?.raw ?? ks.trailingPE?.raw ?? null;
+        q.forwardPE         = sd.forwardPE?.raw ?? null;
+        q.priceToBook       = ks.priceToBook?.raw ?? null;
+        q.returnOnEquity    = fd.returnOnEquity?.raw ?? null;
+        q.profitMargins     = fd.profitMargins?.raw ?? null;
+        q.debtToEquity      = fd.debtToEquity?.raw ?? null;
+        q.earningsGrowth    = fd.earningsGrowth?.raw ?? null;
+        q.revenueGrowth     = fd.revenueGrowth?.raw ?? null;
+        q.payoutRatio       = sd.payoutRatio?.raw ?? null;
+        if (!q.trailingAnnualDividendYield) q.trailingAnnualDividendYield = sd.dividendYield?.raw ?? null;
+        if (!q.marketCap) q.marketCap = sd.marketCap?.raw ?? null;
+        break;
+      } catch(e) {}
+    }
+  }));
 
   // Enriquecer con sector desde mapa estático (v8/chart no devuelve sector)
   const TICKER_SECTOR = {
