@@ -3987,25 +3987,111 @@ async function runRadarSearch() {
     : (RADAR_TICKERS[r.region] || RADAR_TICKERS["Global"]);
 
   // 2. Fetch cotizaciones en lotes de 20 via Yahoo v7/quote (funciona con proxies)
-  const BATCH = 20;
+  // 2. Fetch cotizaciones usando el mismo endpoint que ya funciona para precios
+  // fetchWithProxy ya está probado y funciona — lo usamos en paralelo para todos los tickers
+  // Limitamos a 30 tickers por región para no saturar
+  const tickersToFetch = tickers.slice(0, 40);
+  
+  // Mostrar progreso
+  r._progress = `Consultando ${tickersToFetch.length} empresas...`;
+  renderActiveTab();
+
   const allQuotes = [];
-  for (let i = 0; i < tickers.length; i += BATCH) {
-    const batch = tickers.slice(i, i + BATCH);
-    const symbols = batch.join(",");
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols}&fields=symbol,shortName,sector,industry,regularMarketPrice,marketCap,trailingPE,priceToBook,trailingAnnualDividendYield,returnOnEquity,profitMargins,debtToEquity,payoutRatio,currency,exchange,fiftyTwoWeekLow,fiftyTwoWeekHigh`;
-    for (const mkProxy of [
-      u=>`https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-      u=>`https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
-    ]) {
-      try {
-        const res = await fetch(mkProxy(url), { signal: AbortSignal.timeout(10000) });
-        if (!res.ok) continue;
-        const json = await res.json();
-        const quotes = json?.quoteResponse?.result || json?.result || [];
-        if (quotes.length) { allQuotes.push(...quotes); break; }
-      } catch(e) { /* siguiente proxy */ }
-    }
+  
+  // Lanzar en grupos de 8 en paralelo para no saturar
+  const GROUP = 8;
+  for (let i = 0; i < tickersToFetch.length; i += GROUP) {
+    const group = tickersToFetch.slice(i, i + GROUP);
+    const results = await Promise.allSettled(
+      group.map(async ticker => {
+        // Usamos el mismo endpoint v8/chart que ya funciona en la app
+        for (const proxyFn of PROXIES) {
+          try {
+            const url = proxyFn(ticker);
+            const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+            if (!res.ok) continue;
+            const json = await res.json();
+            const result = json?.chart?.result?.[0];
+            if (!result) continue;
+            const meta = result.meta || {};
+            return {
+              symbol: ticker,
+              shortName: meta.shortName || meta.longName || ticker,
+              regularMarketPrice: meta.regularMarketPrice,
+              currency: meta.currency,
+              exchange: meta.exchangeName || meta.exchange,
+              marketCap: meta.marketCap,
+              // Estos campos no vienen del v8/chart — los dejamos null por ahora
+              sector: null, trailingPE: null, priceToBook: null,
+              trailingAnnualDividendYield: state.yieldCache[ticker]?.yield || null,
+              returnOnEquity: null, profitMargins: null, debtToEquity: null,
+              payoutRatio: null, _basic: true
+            };
+          } catch(e) { /* siguiente proxy */ }
+        }
+        return null;
+      })
+    );
+    results.forEach(r => { if (r.status === 'fulfilled' && r.value) allQuotes.push(r.value); });
+    
+    // Actualizar progreso
+    state.radar._progress = `Consultando empresas... ${Math.min(i+GROUP, tickersToFetch.length)}/${tickersToFetch.length}`;
+    renderActiveTab();
   }
+  state.radar._progress = null;
+
+  // Enriquecer con sector desde mapa estático (v8/chart no devuelve sector)
+  const TICKER_SECTOR = {
+    // España
+    "SAN.MC":"Financiero","BBVA.MC":"Financiero","SAB.MC":"Financiero","BKT.MC":"Financiero",
+    "ITX.MC":"Consumo Cíclico","MEL.MC":"Consumo Cíclico","IAG.MC":"Industria",
+    "IBE.MC":"Utilities","ENG.MC":"Utilities","RED.MC":"Utilities","NTGY.MC":"Utilities","ELE.MC":"Utilities",
+    "REP.MC":"Energía",
+    "TEF.MC":"Comunicaciones","A3M.MC":"Comunicaciones","TL5.MC":"Comunicaciones",
+    "ACS.MC":"Industria","FER.MC":"Industria","ANA.MC":"Industria","TRE.MC":"Industria","CAF.MC":"Industria",
+    "MAP.MC":"Financiero","AMS.MC":"Tecnología","GRF.MC":"Salud","PHM.MC":"Salud",
+    "ACX.MC":"Materiales Básicos","EBRO.MC":"Consumo Defensivo","MCM.MC":"Consumo Defensivo",
+    "VIS.MC":"Consumo Defensivo","LOG.MC":"Industria","CIE.MC":"Consumo Cíclico",
+    "CLNX.MC":"Comunicaciones","MRL.MC":"Inmobiliario","AENA.MC":"Industria","ALM.MC":"Industria",
+    // EE.UU.
+    "AAPL":"Tecnología","MSFT":"Tecnología","GOOGL":"Comunicaciones","META":"Comunicaciones",
+    "NVDA":"Tecnología","CSCO":"Tecnología","CRM":"Tecnología","TXN":"Tecnología","AVGO":"Tecnología",
+    "AMZN":"Consumo Cíclico","HD":"Consumo Cíclico","MCD":"Consumo Cíclico","LOW":"Consumo Cíclico",
+    "KO":"Consumo Defensivo","PEP":"Consumo Defensivo","WMT":"Consumo Defensivo","COST":"Consumo Defensivo",
+    "PM":"Consumo Defensivo","MO":"Consumo Defensivo","BTI":"Consumo Defensivo","KHC":"Consumo Defensivo",
+    "JNJ":"Salud","PFE":"Salud","MRK":"Salud","ABBV":"Salud","LLY":"Salud","TMO":"Salud","DHR":"Salud",
+    "ABT":"Salud","BMY":"Salud","MDT":"Salud","AMGN":"Salud","ISRG":"Salud","UNH":"Salud","CVS":"Salud",
+    "JPM":"Financiero","BAC":"Financiero","GS":"Financiero","MS":"Financiero","BLK":"Financiero",
+    "BRK-B":"Financiero","AXP":"Financiero","V":"Financiero","MA":"Financiero","SPGI":"Financiero",
+    "TROW":"Financiero","BEN":"Financiero",
+    "XOM":"Energía","CVX":"Energía","ENB":"Energía","TRP":"Energía",
+    "NEE":"Utilities","D":"Utilities","SO":"Utilities","DUK":"Utilities",
+    "O":"Inmobiliario","WPC":"Inmobiliario","MAIN":"Financiero",
+    "CAT":"Industria","DE":"Industria","GE":"Industria","HON":"Industria","RTX":"Industria",
+    "UPS":"Industria","FDX":"Industria","UNP":"Industria","NSC":"Industria","ETN":"Industria","EMR":"Industria",
+    "LIN":"Materiales Básicos",
+    "VZ":"Comunicaciones","T":"Comunicaciones","CMCSA":"Comunicaciones","NFLX":"Comunicaciones",
+    "PG":"Consumo Defensivo","NWN":"Utilities","UVV":"Consumo Defensivo",
+    // UK
+    "SHEL.L":"Energía","BP.L":"Energía","RIO.L":"Materiales Básicos","AAL.L":"Materiales Básicos",
+    "AZN.L":"Salud","GSK.L":"Salud","ULVR.L":"Consumo Defensivo","DGE.L":"Consumo Defensivo",
+    "IMB.L":"Consumo Defensivo","BATS.L":"Consumo Defensivo","HSBA.L":"Financiero",
+    "LLOY.L":"Financiero","BARC.L":"Financiero","NWG.L":"Financiero","LSEG.L":"Financiero",
+    "REL.L":"Comunicaciones","PSON.L":"Comunicaciones","NG.L":"Utilities",
+    "CPG.L":"Consumo Cíclico","SGE.L":"Tecnología","EXPN.L":"Tecnología",
+    // Europa
+    "ASML.AS":"Tecnología","SAP.DE":"Tecnología","PHIA.AS":"Salud",
+    "SIE.DE":"Industria","ALV.DE":"Financiero","BAS.DE":"Materiales Básicos",
+    "BMW.DE":"Consumo Cíclico","VOW3.DE":"Consumo Cíclico","MBG.DE":"Consumo Cíclico",
+    "MC.PA":"Consumo Cíclico","OR.PA":"Consumo Defensivo","AIR.PA":"Industria",
+    "BNP.PA":"Financiero","SAN.PA":"Financiero","ADS.DE":"Consumo Cíclico",
+    "ENI.MI":"Energía","ENEL.MI":"Utilities","INGA.AS":"Financiero",
+    "HEIA.AS":"Consumo Defensivo","UNA.AS":"Consumo Defensivo",
+  };
+
+  allQuotes.forEach(q => {
+    if (!q.sector) q.sector = TICKER_SECTOR[q.symbol] || null;
+  });
 
   if (!allQuotes.length) {
     r._results = _radarFilterLocal();
@@ -4014,29 +4100,33 @@ async function runRadarSearch() {
     renderActiveTab(); return;
   }
 
-  // 3. Aplicar filtros sobre los datos reales obtenidos
+  // 3. Aplicar filtros
   let results = allQuotes.filter(q => {
     if (!q.regularMarketPrice) return false;
-    // Región doble-check por exchange
+    // Región — usar sufijo del ticker (más fiable que el campo exchange)
     if (r.region && r.region !== "Todos") {
-      const EX_REGION = {
-        "España":["MCE","MAD"],"EE.UU.":["NYQ","NMS","NGM","ASE","PCX"],
-        "Reino Unido":["LSE"],"Europa":["MCE","ENX","XETRA","BIT","AMS","VIE","SWX","PAR","MIL"],
-        "Asia":["TYO","OSA","HKG","SHH","KSC"]
-      };
-      const allowed = EX_REGION[r.region] || [];
-      if (allowed.length && !allowed.includes(q.exchange)) return false;
+      const t = q.symbol || "";
+      const isSpain  = t.endsWith(".MC") || t.endsWith(".MAD");
+      const isUK     = t.endsWith(".L");
+      const isEurope = t.endsWith(".PA")||t.endsWith(".DE")||t.endsWith(".AS")||t.endsWith(".MI")||t.endsWith(".VX")||t.endsWith(".BR")||t.endsWith(".LS")||t.endsWith(".ST")||t.endsWith(".HE")||t.endsWith(".OL")||t.endsWith(".CO");
+      const isAsia   = t.endsWith(".T")||t.endsWith(".HK")||t.endsWith(".KS")||t.endsWith(".SS")||t.endsWith(".SZ");
+      const isUS     = !isSpain && !isUK && !isEurope && !isAsia;
+      if (r.region==="España"      && !isSpain) return false;
+      if (r.region==="EE.UU."      && !isUS) return false;
+      if (r.region==="Reino Unido" && !isUK) return false;
+      if (r.region==="Asia"        && !isAsia) return false;
+      if (r.region==="Europa"      && !isSpain && !isUK && !isEurope) return false;
     }
     // Sector
-    if (sectorEN && (q.sector||"").toLowerCase() !== sectorEN.toLowerCase()) return false;
+    if (r.sector && r.sector!=="Todos" && q.sector && q.sector !== r.sector) return false;
     // Divisa
     if (r.currency && r.currency!=="Todas" && q.currency !== r.currency) return false;
-    // Valoración
-    if (r.per_max && q.trailingPE != null && q.trailingPE > +r.per_max) return false;
-    if (r.pb_max  && q.priceToBook != null && q.priceToBook > +r.pb_max) return false;
+    // Valoración (solo filtrar si tenemos el dato)
+    if (r.per_max    && q.trailingPE      != null && q.trailingPE > +r.per_max) return false;
+    if (r.pb_max     && q.priceToBook     != null && q.priceToBook > +r.pb_max) return false;
     // Calidad
-    if (r.margin_min && q.profitMargins != null && q.profitMargins*100 < +r.margin_min) return false;
-    if (r.roe_min    && q.returnOnEquity != null && q.returnOnEquity*100 < +r.roe_min) return false;
+    if (r.margin_min && q.profitMargins   != null && q.profitMargins*100 < +r.margin_min) return false;
+    if (r.roe_min    && q.returnOnEquity  != null && q.returnOnEquity*100 < +r.roe_min) return false;
     // Balance
     if (r.debtEbitda_max && q.debtToEquity != null && q.debtToEquity/100 > +r.debtEbitda_max) return false;
     // Dividendo
@@ -4125,7 +4215,8 @@ function renderRadar() {
   if (r._loading) {
     resultsHtml = `<div style="text-align:center;padding:30px;color:#64748b">
       <div style="font-size:24px;margin-bottom:8px">⏳</div>
-      <div style="font-size:13px">Buscando empresas...</div>
+      <div style="font-size:13px;font-weight:600">${r._progress||"Buscando empresas..."}</div>
+      <div style="font-size:11px;color:#94a3b8;margin-top:4px">Consultando Yahoo Finance para cada ticker de la región</div>
     </div>`;
   } else if (r._searched) {
     if (r._error) {
