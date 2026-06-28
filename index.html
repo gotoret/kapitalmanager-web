@@ -822,10 +822,30 @@ async function fetchWithProxy(proxies, ticker) {
       const data = await res.json();
       let price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
       if (price) {
-        // Yahoo Finance devuelve precios del LSE en peniques (GBX), no en libras (GBP)
-        // Tickers .L → dividir entre 100
         if (String(ticker).toUpperCase().endsWith(".L")) price = +(price / 100).toFixed(4);
         return price;
+      }
+    } catch(e) { /* try next */ }
+  }
+  return null;
+}
+
+async function fetchWithProxyFull(proxies, ticker) {
+  // Igual que fetchWithProxy pero devuelve el meta completo en vez de solo el precio
+  for (const proxyFn of proxies) {
+    try {
+      const url = proxyFn(ticker);
+      const res = await fetch(url, {signal: AbortSignal.timeout(6000)});
+      if (!res.ok) continue;
+      const data = await res.json();
+      const meta = data?.chart?.result?.[0]?.meta;
+      if (meta?.regularMarketPrice) {
+        if (String(ticker).toUpperCase().endsWith(".L")) {
+          meta.regularMarketPrice = +(meta.regularMarketPrice / 100).toFixed(4);
+          if (meta.fiftyTwoWeekHigh) meta.fiftyTwoWeekHigh = +(meta.fiftyTwoWeekHigh / 100).toFixed(4);
+          if (meta.fiftyTwoWeekLow)  meta.fiftyTwoWeekLow  = +(meta.fiftyTwoWeekLow  / 100).toFixed(4);
+        }
+        return meta;
       }
     } catch(e) { /* try next */ }
   }
@@ -3991,41 +4011,33 @@ async function runRadarSearch() {
   state.radar._progress = `Consultando ${tickersToFetch.length} empresas...`;
   renderActiveTab();
 
-  // Usar fetchWithProxy (v8/chart) — el único endpoint que sabemos que funciona sin auth
-  // Lo lanzamos en paralelo en grupos de 8
   const allQuotes = [];
   const GROUP = 8;
 
   for (let i = 0; i < tickersToFetch.length; i += GROUP) {
     const group = tickersToFetch.slice(i, i + GROUP);
     const settled = await Promise.allSettled(group.map(async ticker => {
-      const price = await fetchWithProxy(PROXIES, ticker);
-      if (price == null) return null;
-      // Recuperar metadatos del último resultado del proxy
-      let meta = {};
-      for (const proxyFn of PROXIES) {
-        try {
-          const res = await fetch(proxyFn(ticker), { signal: AbortSignal.timeout(5000) });
-          if (!res.ok) continue;
-          const json = await res.json();
-          meta = json?.chart?.result?.[0]?.meta || {};
-          if (meta.regularMarketPrice) break;
-        } catch(e) {}
-      }
+      const meta = await fetchWithProxyFull(PROXIES, ticker);
+      if (!meta?.regularMarketPrice) return null;
       const div = state.yieldCache[ticker];
       return {
         symbol: ticker,
         shortName: meta.shortName || meta.longName || ticker,
-        regularMarketPrice: meta.regularMarketPrice || price,
+        regularMarketPrice: meta.regularMarketPrice,
         marketCap: meta.marketCap || null,
         currency: meta.currency || (ticker.endsWith(".MC")?"EUR":ticker.endsWith(".L")?"GBP":"USD"),
         exchange: meta.exchangeName || meta.exchange || "",
         sector: TICKER_SECTOR[ticker] || null,
-        trailingPE: null, forwardPE: null, priceToBook: null,
-        trailingAnnualDividendYield: div?.yield ?? null,
-        returnOnEquity: null, profitMargins: null,
-        debtToEquity: null, payoutRatio: null,
-        earningsGrowth: null, revenueGrowth: null,
+        trailingPE: meta.trailingPE ?? null,
+        forwardPE: meta.forwardPE ?? null,
+        priceToBook: null,
+        trailingAnnualDividendYield: div?.yield ?? meta.dividendYield ?? null,
+        returnOnEquity: null,
+        profitMargins: null,
+        debtToEquity: null,
+        payoutRatio: null,
+        fiftyTwoWeekLow: meta.fiftyTwoWeekLow ?? null,
+        fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh ?? null,
       };
     }));
     settled.forEach(s => { if (s.status==="fulfilled" && s.value) allQuotes.push(s.value); });
@@ -4034,13 +4046,11 @@ async function runRadarSearch() {
   }
   state.radar._progress = null;
 
-  // Enriquecer con fundamentales via quoteSummary (best-effort, no bloquea si falla)
-  const enrichBatch = allQuotes.slice(0, 20);
-  await Promise.allSettled(enrichBatch.map(async q => {
+  // Enriquecer fundamentales con quoteSummary (best-effort, no bloquea si falla)
+  await Promise.allSettled(allQuotes.slice(0, 15).map(async q => {
     for (const proxyFn of FUND_PROXIES) {
       try {
-        const url = proxyFn(q.symbol);
-        const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+        const res = await fetch(proxyFn(q.symbol), { signal: AbortSignal.timeout(5000) });
         if (!res.ok) continue;
         const json = await res.json();
         const r0 = json?.quoteSummary?.result?.[0];
@@ -4048,15 +4058,14 @@ async function runRadarSearch() {
         const fd = r0.financialData || {};
         const ks = r0.defaultKeyStatistics || {};
         const sd = r0.summaryDetail || {};
-        q.trailingPE        = sd.trailingPE?.raw ?? ks.trailingPE?.raw ?? null;
-        q.forwardPE         = sd.forwardPE?.raw ?? null;
-        q.priceToBook       = ks.priceToBook?.raw ?? null;
-        q.returnOnEquity    = fd.returnOnEquity?.raw ?? null;
-        q.profitMargins     = fd.profitMargins?.raw ?? null;
-        q.debtToEquity      = fd.debtToEquity?.raw ?? null;
-        q.earningsGrowth    = fd.earningsGrowth?.raw ?? null;
-        q.revenueGrowth     = fd.revenueGrowth?.raw ?? null;
-        q.payoutRatio       = sd.payoutRatio?.raw ?? null;
+        q.trailingPE     = q.trailingPE     ?? sd.trailingPE?.raw ?? null;
+        q.priceToBook    = ks.priceToBook?.raw ?? null;
+        q.returnOnEquity = fd.returnOnEquity?.raw ?? null;
+        q.profitMargins  = fd.profitMargins?.raw ?? null;
+        q.debtToEquity   = fd.debtToEquity?.raw ?? null;
+        q.payoutRatio    = sd.payoutRatio?.raw ?? null;
+        q.earningsGrowth = fd.earningsGrowth?.raw ?? null;
+        q.revenueGrowth  = fd.revenueGrowth?.raw ?? null;
         if (!q.trailingAnnualDividendYield) q.trailingAnnualDividendYield = sd.dividendYield?.raw ?? null;
         if (!q.marketCap) q.marketCap = sd.marketCap?.raw ?? null;
         break;
