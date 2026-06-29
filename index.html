@@ -1988,7 +1988,7 @@ function renderDonutByPosition(totalVal) {
     </div>`;
   }).join("");
 
-  return `<div class="card" style="grid-column:1/-1">
+  return `<div class="card">
     <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:16px">Distribución por Posición</h3>
     <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start">
       <div style="flex-shrink:0;display:flex;align-items:center;justify-content:center">
@@ -1999,7 +1999,7 @@ function renderDonutByPosition(totalVal) {
           <text x="${cx}" y="${cy+8}" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="system-ui">posiciones</text>
         </svg>
       </div>
-      <div style="flex:1;min-width:240px;max-height:400px;overflow-y:auto">${listItems}</div>
+      <div style="flex:1;min-width:200px;max-height:420px;overflow-y:auto">${listItems}</div>
     </div>
   </div>`;
 }
@@ -2056,20 +2056,29 @@ function renderCharts() {
 
   const legend=sectors.map(([s],i)=>`<span style="font-size:11px;display:inline-flex;align-items:center;gap:3px;color:#475569"><span style="width:9px;height:9px;border-radius:2px;background:${PIE_COLORS[i%PIE_COLORS.length]};display:inline-block;flex-shrink:0"></span>${esc(s)}</span>`).join(" ");
 
-  return `<div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px">
-    <div class="card">
-      <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:14px">Distribución por Sector</h3>
-      ${barChart(sectors)}
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">${legend}</div>
+  // Extraer el HTML del donut sin el wrapper card (lo integramos en el grid)
+  const donutHtml = renderDonutByPosition(total);
+
+  return `<div style="padding:14px;display:flex;flex-direction:column;gap:14px">
+
+    <!-- Fila superior: Sector | Divisa+Top | Donut -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;align-items:start">
+      <div class="card">
+        <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:14px">Distribución por Sector</h3>
+        ${barChart(sectors)}
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">${legend}</div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:14px">Distribución por Divisa</h3>
+        ${barChart(currencies,i=>["#2563eb","#f59e0b","#16a34a","#dc2626"][i%4])}
+        <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin:18px 0 12px">Top posiciones por valor</h3>
+        ${topBars}
+      </div>
+      ${donutHtml}
     </div>
+
+    <!-- Fila inferior: Resumen visual -->
     <div class="card">
-      <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:14px">Distribución por Divisa</h3>
-      ${barChart(currencies,i=>["#2563eb","#f59e0b","#16a34a","#dc2626"][i%4])}
-      <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin:18px 0 12px">Top posiciones por valor</h3>
-      ${topBars}
-    </div>
-    ${renderDonutByPosition(total)}
-    <div class="card" style="grid-column:1/-1">
       <h3 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">Resumen visual de cartera</h3>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">${posCards}</div>
     </div>
