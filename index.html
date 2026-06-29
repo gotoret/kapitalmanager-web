@@ -1664,10 +1664,30 @@ function renderPortfolio() {
   }).join("");
 
   const selPos = state.selectedTicker ? state.positions.find(p=>p.ticker===state.selectedTicker) : null;
+
+  // Lanzar fetch del histórico si no está en caché o es nuevo ticker
+  if (selPos && !state._chartCache) state._chartCache = {};
+  if (selPos && !state._chartCache[selPos.ticker]) {
+    fetchPriceHistory(selPos.ticker);
+  }
+
+  const chartSvg = selPos ? buildPriceChartSvg(selPos.ticker, selPos.avg_cost) : "";
+
   const panel = selPos ? `
-    <div style="width:260px;border-left:1px solid #e2e8f0;padding:14px;background:#f8fafc;overflow-y:auto;flex-shrink:0">
-      <div style="font-weight:700;font-size:15px;color:#1d4ed8;margin-bottom:2px">${esc(selPos.ticker)}</div>
-      <div style="color:#64748b;font-size:12px;margin-bottom:12px">${esc(selPos.name)}</div>
+    <div style="width:300px;border-left:1px solid #e2e8f0;padding:14px;background:#f8fafc;overflow-y:auto;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+        ${logoImg(selPos.ticker, selPos.name, 28)}
+        <div>
+          <div style="font-weight:700;font-size:15px;color:#1d4ed8">${esc(selPos.ticker)}</div>
+          <div style="color:#64748b;font-size:11px">${esc(selPos.name)}</div>
+        </div>
+      </div>
+
+      <!-- Gráfico 1 año -->
+      <div style="margin:12px 0 4px;background:#fff;border-radius:8px;border:1px solid #e2e8f0;padding:8px">
+        ${chartSvg}
+      </div>
+
       ${[
         ["Acciones",Math.round(selPos.shares)],
         ["Coste medio (local)",`${selPos.avg_cost?.toFixed(4)} ${selPos.currency}`],
@@ -1677,7 +1697,7 @@ function renderPortfolio() {
         ["Valor total",fmtEUR(posToEUR((state.priceCache[selPos.ticker]||selPos.avg_cost)*selPos.shares, selPos))],
         ["Coste total (EUR)",fmtEUR(toEURhist(selPos.avg_cost*selPos.shares,selPos))],
         ["Sector",selPos.sector||"—"],["Divisa",selPos.currency],["Fecha",selPos.date||"—"]
-      ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #e2e8f0;font-size:12px"><span style="color:#64748b">${k}</span><span style="font-weight:600">${v}</span></div>`).join("")}
+      ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #e2e8f0;font-size:11px"><span style="color:#64748b">${k}</span><span style="font-weight:600;text-align:right;max-width:160px">${v}</span></div>`).join("")}
       <div style="margin-top:12px;display:flex;flex-direction:column;gap:6px">
         <button class="btn" style="font-size:12px;padding:6px 10px" onclick="openEditPos('${esc(selPos.ticker)}')">✏ Editar posición</button>
         <button class="btn-danger" style="font-size:12px;padding:6px 10px" onclick="deletePosition('${esc(selPos.ticker)}')">✕ Eliminar</button>
@@ -1706,6 +1726,106 @@ function renderPortfolio() {
       ${panel}
     </div>`;
 }
+
+async function fetchPriceHistory(ticker) {
+  if (!state._chartCache) state._chartCache = {};
+  if (state._chartCache[ticker] === "loading") return;
+  state._chartCache[ticker] = "loading";
+
+  const isGBp = ticker.toUpperCase().endsWith(".L");
+  const urls = PROXIES.map(fn => fn(ticker).replace("range=1d", "range=1y").replace("interval=1d", "interval=1wk"));
+
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) continue;
+      const json = await res.json();
+      const result = json?.chart?.result?.[0];
+      if (!result) continue;
+      const timestamps = result.timestamp || [];
+      const closes = result.indicators?.quote?.[0]?.close || [];
+      if (!timestamps.length) continue;
+
+      const prices = timestamps.map((t, i) => ({
+        t, v: closes[i] != null ? (isGBp ? closes[i]/100 : closes[i]) : null
+      })).filter(p => p.v != null);
+
+      if (prices.length < 5) continue;
+      state._chartCache[ticker] = prices;
+
+      // Re-render solo si sigue seleccionado este ticker
+      if (state.selectedTicker === ticker && state.activeTab === 0) {
+        renderActiveTab();
+      }
+      return;
+    } catch(e) { /* siguiente proxy */ }
+  }
+  state._chartCache[ticker] = null; // falló
+}
+
+function buildPriceChartSvg(ticker, avgCost) {
+  const data = state._chartCache?.[ticker];
+  const W = 262, H = 100, PL = 8, PR = 8, PT = 12, PB = 18;
+  const gW = W - PL - PR, gH = H - PT - PB;
+
+  if (!data || data === "loading") {
+    return `<div style="height:${H}px;display:flex;align-items:center;justify-content:center">
+      <span style="font-size:11px;color:#94a3b8">${data === "loading" ? "⏳ Cargando gráfico..." : "📊 Sin datos"}</span>
+    </div>`;
+  }
+
+  const vals = data.map(d => d.v);
+  const minV = Math.min(...vals), maxV = Math.max(...vals);
+  const range = maxV - minV || 1;
+  const toX = i => PL + (i / (data.length - 1)) * gW;
+  const toY = v => PT + gH - ((v - minV) / range) * gH;
+
+  // Línea de precio
+  const pts = data.map((d, i) => `${toX(i).toFixed(1)},${toY(d.v).toFixed(1)}`).join(" ");
+  // Área rellena
+  const areaPath = `M${PL},${PT+gH} L${data.map((d,i)=>`${toX(i).toFixed(1)},${toY(d.v).toFixed(1)}`).join(" L")} L${W-PR},${PT+gH} Z`;
+
+  const first = vals[0], last = vals[vals.length-1];
+  const pct = ((last - first) / first * 100).toFixed(1);
+  const isUp = last >= first;
+  const color = isUp ? "#16a34a" : "#dc2626";
+  const fillColor = isUp ? "#16a34a18" : "#dc262618";
+
+  // Línea de coste medio (si está disponible y en rango)
+  let costLine = "";
+  if (avgCost && avgCost >= minV * 0.8 && avgCost <= maxV * 1.2) {
+    const cy = toY(avgCost).toFixed(1);
+    costLine = `<line x1="${PL}" y1="${cy}" x2="${W-PR}" y2="${cy}" stroke="#f59e0b" stroke-width="1" stroke-dasharray="3,2"/>
+    <text x="${W-PR-2}" y="${+cy-2}" text-anchor="end" font-size="7" fill="#f59e0b">coste</text>`;
+  }
+
+  // Etiquetas X (meses)
+  const months = ["En","Fe","Ma","Ab","Ma","Ju","Jl","Ag","Se","Oc","No","Di"];
+  const xLabels = data.filter((_,i) => i === 0 || i === Math.floor(data.length/2) || i === data.length-1)
+    .map((d, i, arr) => {
+      const xi = i === 0 ? 0 : i === 1 ? Math.floor(data.length/2) : data.length-1;
+      const date = new Date(d.t * 1000);
+      const label = i === arr.length-1 ? "Hoy" : months[date.getMonth()];
+      const x = toX(xi);
+      return `<text x="${x.toFixed(1)}" y="${H-3}" text-anchor="${i===0?"start":i===arr.length-1?"end":"middle"}" font-size="8" fill="#94a3b8">${label}</text>`;
+    }).join("");
+
+  return `<div style="position:relative">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+      <span style="font-size:10px;color:#64748b;font-weight:600">Último año</span>
+      <span style="font-size:11px;font-weight:700;color:${color}">${isUp?"+":""}${pct}%</span>
+    </div>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;overflow:visible">
+      <path d="${areaPath}" fill="${fillColor}"/>
+      <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+      ${costLine}
+      ${xLabels}
+      <text x="${PL}" y="${PT+3}" font-size="8" fill="#94a3b8">${minV<1000?minV.toFixed(2):(minV/1000).toFixed(1)+"k"}</text>
+      <text x="${PL}" y="${PT+gH-2}" font-size="8" fill="#94a3b8">${maxV<1000?maxV.toFixed(2):(maxV/1000).toFixed(1)+"k"}</text>
+    </svg>
+  </div>`;
+}
+
 
 function sortPortfolio(col) {
   if(state.sortCol===col) state.sortDir*=-1; else {state.sortCol=col;state.sortDir=1;}
