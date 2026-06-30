@@ -2055,7 +2055,12 @@ function renderDividends() {
         return `<div class="metric-card" style="border-left:3px solid ${color}"><div class="metric-label">${l}</div><div class="metric-value" style="color:${color}">${fmtEUR(v)}</div></div>`;
       }).join("")}
     </div>
-    <div style="margin-bottom:12px"><button class="btn" onclick="openAddDividend()">💰 Registrar dividendo</button></div>
+    <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn" onclick="openAddDividend()">💰 Registrar dividendo</button>
+      <button class="btn" style="background:#0f766e" onclick="document.getElementById('div-csv-input').click()">📥 Importar CSV</button>
+      <button class="btn" style="background:#166534" onclick="exportDividendsCsv()">📤 Exportar CSV</button>
+      <input type="file" id="div-csv-input" accept=".csv" style="display:none" onchange="importDividendsCsv(event)">
+    </div>
     <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">Dividendos esperados por posición</h4>
     <div style="overflow-x:auto;margin-bottom:20px">
       <table style="min-width:900px"><thead><tr>${["Ticker","Empresa","Acciones","Div./acc","Yield %","Ex-date","Frecuencia","País","Retención","Bruto anual","Neto anual"].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
@@ -3730,6 +3735,106 @@ function saveAlertModal() {
   if(!ticker||price<=0){alert("Completa todos los campos");return;}
   state.alerts.push({id:uid(),ticker,direction,price,active:true,triggered:false,created_at:new Date().toISOString()});
   save(); closeModal(); renderActiveTab(); renderHeader();
+}
+
+function exportDividendsCsv() {
+  const rows = [...(state.dividends||[])].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
+  const header = "Ticker,Empresa,fecha_cobro,importe_dividendo_eur";
+  const lines = rows.map(d => {
+    const pos = state.positions.find(p=>p.ticker===d.ticker);
+    const name = pos?.name || d.ticker;
+    const fecha = (d.date||"").slice(0,10);
+    const total = +((d.amount||0)*(d.shares||0)).toFixed(2);
+    // Escapar comas en el nombre si las hubiera
+    const safeName = name.includes(",") ? `"${name}"` : name;
+    return `${d.ticker},${safeName},${fecha},${total}`;
+  });
+  const csv = [header, ...lines].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `dividendos_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function importDividendsCsv(event) {
+  const file = event.target.files?.[0];
+  event.target.value = ""; // reset para poder re-seleccionar el mismo archivo
+  if (!file) return;
+
+  const text = await file.text();
+  const lines = text.replace(/\r/g,"").split("\n").filter(l => l.trim());
+  if (lines.length < 2) { alert("El archivo CSV está vacío o no tiene datos"); return; }
+
+  // Parsear header para detectar columnas (tolerante a mayúsculas/orden distinto)
+  const parseCsvLine = (line) => {
+    const out = []; let cur = ""; let inQ = false;
+    for (let i=0;i<line.length;i++){
+      const c=line[i];
+      if(c==='"'){ inQ=!inQ; continue; }
+      if(c===','&&!inQ){ out.push(cur); cur=""; continue; }
+      cur+=c;
+    }
+    out.push(cur);
+    return out.map(s=>s.trim());
+  };
+
+  const headers = parseCsvLine(lines[0]).map(h=>h.toLowerCase());
+  const idx = {
+    ticker: headers.findIndex(h=>h.includes("ticker")),
+    empresa: headers.findIndex(h=>h.includes("empresa")||h.includes("name")),
+    fecha: headers.findIndex(h=>h.includes("fecha")||h.includes("date")),
+    importe: headers.findIndex(h=>h.includes("importe")||h.includes("amount")||h.includes("total"))
+  };
+
+  if (idx.ticker === -1 || idx.fecha === -1 || idx.importe === -1) {
+    alert("El CSV debe tener columnas: Ticker, fecha_cobro, importe_dividendo_eur");
+    return;
+  }
+
+  const parsed = lines.slice(1).map(line => {
+    const cols = parseCsvLine(line);
+    const ticker = (cols[idx.ticker]||"").trim().toUpperCase();
+    const empresa = idx.empresa>=0 ? (cols[idx.empresa]||"").trim() : "";
+    const fecha = (cols[idx.fecha]||"").trim();
+    const importeTotal = parseFloat((cols[idx.importe]||"0").replace(",","."));
+    return { ticker, empresa, fecha, importeTotal };
+  }).filter(r => r.ticker && r.fecha && !isNaN(r.importeTotal) && r.importeTotal > 0);
+
+  if (!parsed.length) { alert("No se encontraron filas válidas en el CSV"); return; }
+
+  // Deduplicar contra lo ya registrado (mismo ticker+fecha+importe total)
+  const existingKeys = new Set((state.dividends||[]).map(d =>
+    `${d.ticker}|${(d.date||"").slice(0,10)}|${(+(d.amount*d.shares)).toFixed(2)}`
+  ));
+
+  let added = 0, skipped = 0;
+  parsed.forEach(r => {
+    const key = `${r.ticker}|${r.fecha}|${r.importeTotal.toFixed(2)}`;
+    if (existingKeys.has(key)) { skipped++; return; }
+
+    // Guardamos el total cobrado directamente como amount con shares=1,
+    // así el valor histórico se conserva exacto sin importar cuántas
+    // acciones tengas ahora en cartera (que pueden haber cambiado con el tiempo)
+    state.dividends.unshift({
+      id: uid(),
+      ticker: r.ticker,
+      amount: r.importeTotal,
+      shares: 1,
+      notes: r.empresa || "Importado CSV",
+      date: new Date(r.fecha + "T12:00:00").toISOString()
+    });
+    existingKeys.add(key);
+    added++;
+  });
+
+  save();
+  renderActiveTab();
+  alert(`✅ Importación completada\n\n${added} dividendos añadidos\n${skipped} omitidos (ya existían)`);
 }
 
 function openAddDividend() {
