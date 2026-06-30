@@ -717,6 +717,246 @@ async function refreshDividendYields() {
   if (state.activeTab === 2) renderActiveTab();
 }
 
+function openSnapshotCartera() {
+  const today = new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"long",year:"numeric"});
+
+  // ── Datos generales ──────────────────────────────────────────
+  const totalInv = state.positions.reduce((s,p) => s + posToEUR(p.shares*p.avg_cost,p), 0);
+  const totalCur = state.positions.reduce((s,p) => {
+    const cp = state.priceCache[p.ticker];
+    return s + (cp ? posToEUR(p.shares*cp,p) : posToEUR(p.shares*p.avg_cost,p));
+  }, 0);
+  const pnlTotal = totalCur - totalInv;
+  const pnlPct   = totalInv ? pnlTotal/totalInv*100 : 0;
+  const pc       = pnlTotal>=0?"#16a34a":"#dc2626";
+
+  // Dividendo anual estimado total
+  const divAnual = (state.divInfo||[]).reduce((s,d)=>s+toEUR(d.annual_income||0,d.currency||"EUR"),0);
+  const yieldOnCost = totalInv ? divAnual/totalInv*100 : 0;
+
+  // ── Top 10 posiciones por valor ─────────────────────────────
+  const posWithVal = state.positions.map(p=>{
+    const cp = state.priceCache[p.ticker]||p.avg_cost;
+    const val = posToEUR(p.shares*cp,p);
+    const inv = posToEUR(p.shares*p.avg_cost,p);
+    const pct = totalCur ? val/totalCur*100 : 0;
+    const retPct = inv ? (val-inv)/inv*100 : 0;
+    const di = state.divInfo?.find(d=>d.ticker===p.ticker);
+    return {...p, val, inv, pct, retPct, cp, divAnual: toEUR(di?.annual_income||0,p.currency||"EUR")};
+  }).sort((a,b)=>b.val-a.val);
+
+  // ── Distribución por sector ──────────────────────────────────
+  const sectors = {};
+  posWithVal.forEach(p=>{
+    const s=p.sector||"Otros";
+    sectors[s]=(sectors[s]||0)+p.val;
+  });
+  const sectorList = Object.entries(sectors).sort((a,b)=>b[1]-a[1]);
+  const PIE = ["#2563eb","#16a34a","#dc2626","#f59e0b","#7c3aed","#0891b2","#be185d","#065f46","#9333ea","#ea580c","#84cc16","#64748b"];
+
+  // ── SVG Donut sectores ───────────────────────────────────────
+  const donutSvg = (() => {
+    const total = sectorList.reduce((s,[,v])=>s+v,0)||1;
+    const R=70,r=42,cx=80,cy=80; let angle=-Math.PI/2;
+    const paths = sectorList.map(([,v],i)=>{
+      const pct=v/total, sweep=pct*2*Math.PI;
+      const a1=angle, a2=angle+sweep; angle=a2;
+      const x1=cx+R*Math.cos(a1),y1=cy+R*Math.sin(a1);
+      const x2=cx+R*Math.cos(a2),y2=cy+R*Math.sin(a2);
+      const xi1=cx+r*Math.cos(a1),yi1=cy+r*Math.sin(a1);
+      const xi2=cx+r*Math.cos(a2),yi2=cy+r*Math.sin(a2);
+      const lg=sweep>Math.PI?1:0;
+      return `<path d="M${x1.toFixed(1)},${y1.toFixed(1)} A${R},${R} 0 ${lg},1 ${x2.toFixed(1)},${y2.toFixed(1)} L${xi2.toFixed(1)},${yi2.toFixed(1)} A${r},${r} 0 ${lg},0 ${xi1.toFixed(1)},${yi1.toFixed(1)} Z" fill="${PIE[i%PIE.length]}" stroke="#111" stroke-width="1"/>`;
+    }).join("");
+    return `<svg viewBox="0 0 160 160" width="160" height="160">${paths}
+      <text x="${cx}" y="${cy-5}" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">${state.positions.length}</text>
+      <text x="${cx}" y="${cy+8}" text-anchor="middle" fill="#94a3b8" font-size="7">posiciones</text>
+    </svg>`;
+  })();
+
+  // ── SVG barras dividendos por empresa ───────────────────────
+  const divByPos = posWithVal.filter(p=>p.divAnual>0).sort((a,b)=>b.divAnual-a.divAnual).slice(0,12);
+  const divBarSvg = (() => {
+    if (!divByPos.length) return `<div style="color:#64748b;font-size:12px;padding:20px;text-align:center">Sin datos de dividendos</div>`;
+    const maxD = Math.max(...divByPos.map(p=>p.divAnual));
+    const W=280,bH=16,gap=4,PL=52,PR=8,PT=8;
+    const H = divByPos.length*(bH+gap)+PT+10;
+    const bars = divByPos.map((p,i)=>{
+      const bw = maxD>0 ? ((p.divAnual/maxD)*(W-PL-PR)) : 0;
+      const y = PT+i*(bH+gap);
+      return `<text x="${PL-4}" y="${y+bH*0.65}" text-anchor="end" font-size="8" fill="#94a3b8">${p.ticker.replace(".MC","").replace(".L","").slice(0,6)}</text>
+        <rect x="${PL}" y="${y}" width="${bw.toFixed(1)}" height="${bH}" fill="#16a34a" rx="3" opacity="0.85"/>
+        <text x="${(PL+bw+3).toFixed(1)}" y="${y+bH*0.65}" font-size="7.5" fill="#16a34a">${fmtEUR(p.divAnual)}</text>`;
+    }).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${bars}</svg>`;
+  })();
+
+  // ── SVG barras rentabilidad por empresa ─────────────────────
+  const retByPos = [...posWithVal].sort((a,b)=>b.retPct-a.retPct).slice(0,12);
+  const retBarSvg = (() => {
+    const maxR = Math.max(...retByPos.map(p=>Math.abs(p.retPct)),1);
+    const W=280,bH=14,gap=4,CX=90,PR=8,PT=8;
+    const H = retByPos.length*(bH+gap)+PT+10;
+    const bars = retByPos.map((p,i)=>{
+      const y=PT+i*(bH+gap);
+      const bw=(Math.abs(p.retPct)/maxR)*(W-CX-PR-30);
+      const x=p.retPct>=0?CX:CX-bw;
+      const col=p.retPct>=0?"#16a34a":"#dc2626";
+      return `<text x="${CX-4}" y="${y+bH*0.7}" text-anchor="end" font-size="7.5" fill="#94a3b8">${p.ticker.replace(".MC","").replace(".L","").slice(0,7)}</text>
+        <line x1="${CX}" y1="${y}" x2="${CX}" y2="${y+bH}" stroke="#334155" stroke-width="1"/>
+        <rect x="${x.toFixed(1)}" y="${y}" width="${bw.toFixed(1)}" height="${bH}" fill="${col}" rx="2" opacity="0.85"/>
+        <text x="${p.retPct>=0?(CX+bw+3):(CX-bw-3)}" y="${y+bH*0.7}" font-size="7" fill="${col}" text-anchor="${p.retPct>=0?"start":"end"}">${p.retPct>=0?"+":""}${p.retPct.toFixed(1)}%</text>`;
+    }).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${bars}</svg>`;
+  })();
+
+  // ── Top gainers / losers ─────────────────────────────────────
+  const gainers = posWithVal.filter(p=>p.retPct>0).slice(0,5);
+  const losers  = [...posWithVal].reverse().filter(p=>p.retPct<0).slice(0,5);
+
+  const rankCard = (list, label, color) => list.length ? list.map((p,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #1e293b">
+      ${logoImg(p.ticker,p.name,22)}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:10px;font-weight:700;color:#e2e8f0">${p.ticker}</div>
+        <div style="font-size:9px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</div>
+      </div>
+      <div style="text-align:right;font-size:11px;font-weight:700;color:${color}">${p.retPct>=0?"+":""}${p.retPct.toFixed(1)}%</div>
+    </div>`).join("") : `<div style="color:#475569;font-size:11px;padding:10px">—</div>`;
+
+  // ── Métricas de dividendos ───────────────────────────────────
+  const divMensual = divAnual/12;
+  const topDivYield = posWithVal.filter(p=>p.divAnual>0).sort((a,b)=>(b.divAnual/b.inv)-(a.divAnual/a.inv)).slice(0,5);
+
+  const html = `
+  <div style="background:#0f172a;color:#e2e8f0;font-family:system-ui,sans-serif;padding:20px;min-height:100vh;box-sizing:border-box" id="snapshot-body">
+
+    <!-- HEADER -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-size:22px;font-weight:900;color:#f1f5f9">📸 Snapshot de Cartera</div>
+        <div style="font-size:11px;color:#64748b">${today} · ${state.authUser||""} · Kapital Manager</div>
+      </div>
+      <button onclick="closeModal()" style="padding:6px 14px;background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;cursor:pointer;font-size:12px">✕ Cerrar</button>
+    </div>
+
+    <!-- KPIs PRINCIPALES -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:18px">
+      ${[
+        ["💰 INVERTIDO",fmtEUR(totalInv),"#60a5fa"],
+        ["📈 VALOR ACTUAL",fmtEUR(totalCur),"#34d399"],
+        [pnlTotal>=0?"🟢 P&L TOTAL":"🔴 P&L TOTAL",(pnlTotal>=0?"+":"")+fmtEUR(pnlTotal),pnlTotal>=0?"#4ade80":"#f87171"],
+        ["📊 RENTABILIDAD",(pnlPct>=0?"+":"")+pnlPct.toFixed(2)+"%",pnlPct>=0?"#4ade80":"#f87171"],
+        ["💸 DIV. ANUAL",fmtEUR(divAnual),"#fbbf24"],
+        ["📅 DIV. MENSUAL",fmtEUR(divMensual),"#fbbf24"],
+        ["🎯 YIELD ON COST",yieldOnCost.toFixed(2)+"%","#a78bfa"],
+        ["🏢 POSICIONES",state.positions.length.toString(),"#94a3b8"],
+      ].map(([l,v,c])=>`<div style="background:#1e293b;border-radius:10px;padding:12px;border-left:3px solid ${c}">
+        <div style="font-size:9px;color:#64748b;font-weight:700;letter-spacing:.5px;margin-bottom:4px">${l}</div>
+        <div style="font-size:17px;font-weight:900;color:${c}">${v}</div>
+      </div>`).join("")}
+    </div>
+
+    <!-- FILA 1: Donut sectores + Top posiciones + KPIs div -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:12px">
+
+      <!-- Distribución por sector -->
+      <div style="background:#1e293b;border-radius:12px;padding:14px">
+        <div style="font-size:12px;font-weight:700;color:#f1f5f9;margin-bottom:10px">🍩 Distribución por Sector</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          ${donutSvg}
+          <div style="flex:1;font-size:9px">
+            ${sectorList.slice(0,8).map(([s,v],i)=>`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:${PIE[i%PIE.length]};display:inline-block"></span><span style="color:#94a3b8">${s.slice(0,14)}</span></span>
+              <span style="color:#e2e8f0;font-weight:700">${totalCur?(v/totalCur*100).toFixed(1):0}%</span>
+            </div>`).join("")}
+          </div>
+        </div>
+      </div>
+
+      <!-- Top 8 posiciones por valor -->
+      <div style="background:#1e293b;border-radius:12px;padding:14px">
+        <div style="font-size:12px;font-weight:700;color:#f1f5f9;margin-bottom:10px">🏆 Top Posiciones por Valor</div>
+        ${posWithVal.slice(0,8).map((p,i)=>`
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #0f172a">
+            ${logoImg(p.ticker,p.name,20)}
+            <div style="flex:1;min-width:0">
+              <span style="font-size:10px;font-weight:700;color:#60a5fa">${p.ticker}</span>
+              <span style="font-size:9px;color:#475569;margin-left:4px">${p.pct.toFixed(1)}%</span>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:10px;font-weight:700;color:#e2e8f0">${fmtEUR(p.val)}</div>
+              <div style="font-size:9px;color:${p.retPct>=0?"#4ade80":"#f87171"}">${p.retPct>=0?"+":""}${p.retPct.toFixed(1)}%</div>
+            </div>
+          </div>`).join("")}
+      </div>
+
+      <!-- Métricas dividendo -->
+      <div style="background:#1e293b;border-radius:12px;padding:14px">
+        <div style="font-size:12px;font-weight:700;color:#f1f5f9;margin-bottom:10px">💸 Top Yield on Cost</div>
+        ${topDivYield.map(p=>{
+          const yoc = p.inv ? (p.divAnual/p.inv*100) : 0;
+          return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #0f172a">
+            ${logoImg(p.ticker,p.name,20)}
+            <div style="flex:1;min-width:0">
+              <div style="font-size:10px;font-weight:700;color:#60a5fa">${p.ticker}</div>
+              <div style="font-size:9px;color:#64748b">${fmtEUR(p.divAnual)}/año</div>
+            </div>
+            <div style="font-size:12px;font-weight:800;color:#fbbf24">${yoc.toFixed(1)}%</div>
+          </div>`;
+        }).join("")}
+        <div style="margin-top:10px;padding:8px;background:#0f172a;border-radius:8px;text-align:center">
+          <div style="font-size:9px;color:#64748b;margin-bottom:2px">INGRESOS PASIVOS ESTIMADOS</div>
+          <div style="font-size:18px;font-weight:900;color:#fbbf24">${fmtEUR(divMensual)}<span style="font-size:10px;color:#64748b">/mes</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FILA 2: Barras dividendos + Barras rentabilidad + Gainers/Losers -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:12px">
+
+      <!-- Dividendos anuales por empresa -->
+      <div style="background:#1e293b;border-radius:12px;padding:14px">
+        <div style="font-size:12px;font-weight:700;color:#f1f5f9;margin-bottom:10px">📊 Dividendos anuales por empresa</div>
+        ${divBarSvg}
+      </div>
+
+      <!-- Rentabilidad por empresa -->
+      <div style="background:#1e293b;border-radius:12px;padding:14px">
+        <div style="font-size:12px;font-weight:700;color:#f1f5f9;margin-bottom:10px">📈 Rentabilidad sin dividendo</div>
+        ${retBarSvg}
+      </div>
+
+      <!-- Gainers & Losers -->
+      <div style="background:#1e293b;border-radius:12px;padding:14px">
+        <div style="font-size:12px;font-weight:700;color:#4ade80;margin-bottom:8px">🟢 Mejores posiciones</div>
+        ${rankCard(gainers,"gainers","#4ade80")}
+        <div style="font-size:12px;font-weight:700;color:#f87171;margin-top:12px;margin-bottom:8px">🔴 Peores posiciones</div>
+        ${rankCard(losers,"losers","#f87171")}
+      </div>
+    </div>
+
+    <!-- FOOTER -->
+    <div style="text-align:center;font-size:9px;color:#334155;margin-top:8px">
+      Kapital Manager · ${today} · Solo orientativo · Los valores mostrados son estimaciones
+    </div>
+  </div>`;
+
+  // Abrir en modal fullscreen
+  const overlay = document.getElementById("modal-overlay");
+  const box = document.getElementById("modal-box");
+  if (!overlay || !box) return;
+  overlay.style.display = "flex";
+  box.style.maxWidth = "1100px";
+  box.style.width = "95vw";
+  box.style.maxHeight = "92vh";
+  box.style.overflowY = "auto";
+  box.style.padding = "0";
+  box.style.background = "#0f172a";
+  box.style.borderRadius = "16px";
+  box.innerHTML = html;
+}
+
 function exportCarteraExcel() {
   const fecha = new Date().toISOString().slice(0, 10);
 
@@ -1718,6 +1958,7 @@ function renderPortfolio() {
   <button class="btn-green" style="font-size:11px;padding:5px 10px" onclick="openAddAlert()">🔔 Alerta</button>
   <button class="btn" style="background:#0f766e;font-size:15px;padding:5px 9px;line-height:1" onclick="openImportBroker()" title="Importar extracto de broker">📥</button>
   <button class="btn" style="background:#166534;font-size:15px;padding:5px 9px;line-height:1" onclick="exportCarteraExcel()" title="Exportar cartera a Excel">📊</button>
+  <button class="btn" style="background:#7c3aed;font-size:15px;padding:5px 9px;line-height:1" onclick="openSnapshotCartera()" title="Snapshot — Informe visual de cartera">📸</button>
           <div style="flex:1"></div>
           <input id="port-filter" class="inp-sm" placeholder="🔍 Filtrar..." style="width:150px;font-size:11px" value="${esc(filter)}" oninput="renderActiveTab()">
           <button class="btn-danger" style="margin-left:6px;font-size:11px;padding:5px 10px" onclick="deleteCartera()" title="Elimina todas las posiciones">🗑️ Vaciar</button>
@@ -4121,7 +4362,6 @@ function renderRenta() {
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn" style="background:#166534;font-size:12px;padding:8px 14px" onclick="exportRentaExcel(${ejercicio})">📊 Exportar a Excel</button>
-        <button class="btn" onclick="printRenta()" style="font-size:12px;padding:8px 16px">🖨️ Imprimir / PDF</button>
       </div>
     </div>
 
