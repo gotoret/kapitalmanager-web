@@ -79,6 +79,8 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid #e2e8f0;border-top-color:#2563eb;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 </head>
 <body>
 <div id="app">
@@ -1605,14 +1607,353 @@ function renderActiveTab() {
 // ─────────────────────────────────────────────
 // TAB 0 — CARTERA
 // ─────────────────────────────────────────────
+function getPortfolioSnapshot() {
+  const positions = [...state.positions].map(p => {
+    const cp = state.priceCache[p.ticker];
+    const inv = posToEUR(p.shares * p.avgcost, p);
+    const cur = cp ? posToEUR(p.shares * cp, p) : null;
+    const pnl = cur !== null ? cur - inv : null;
+    const y = state.divInfo?.find(d => d.ticker === p.ticker);
+    return {
+      ...p,
+      inv,
+      cur,
+      pnl,
+      pct: cur !== null && inv ? pnl / inv * 100 : null,
+      yield: y?.divyield ? y.divyield * 100 : null,
+      annual: y?.annualincome ? y.annualincome : 0,
+      ret: retencionOrigenPct(p.ticker, p.currency) * 100
+    };
+  });
+
+  const totalInv = positions.reduce((a, p) => a + (p.inv || 0), 0);
+  const totalCur = positions.reduce((a, p) => a + (p.cur || 0), 0);
+  const totalPnl = totalCur - totalInv;
+  const totalPct = totalInv ? totalPnl / totalInv * 100 : 0;
+  const totalDivs = positions.reduce((a, p) => a + (p.annual || 0), 0);
+  const totalNeto = positions.reduce((a, p) => a + ((p.annual || 0) * (1 - (p.ret || 0) / 100)), 0);
+
+  const top10 = [...positions]
+    .sort((a, b) => (b.cur || 0) - (a.cur || 0))
+    .slice(0, 10);
+
+  return {
+    positions,
+    totalInv,
+    totalCur,
+    totalPnl,
+    totalPct,
+    totalDivs,
+    totalNeto,
+    top10
+  };
+}
+
+function fmtMoneyNoCurrency(v) {
+  return (v || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function buildPortfolioPdfHtml() {
+  const s = getPortfolioSnapshot();
+  const totalPositions = s.positions.length;
+  const topTicker = s.top10[0]?.ticker || '-';
+
+  const rows = s.positions.map((p, i) => {
+    const isTop = i < 10;
+    return `
+      <tr style="${isTop ? 'background:#f0fdf4;' : ''}">
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-weight:700;color:#1d4ed8;">${esc(p.ticker)}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;">${esc(p.name || p.ticker)}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtMoneyNoCurrency(p.shares)}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtEUR(posToEUR(p.avgcost, p))}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${p.cur !== null ? fmtEUR(p.cur) : '-'}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;color:${p.pnl >= 0 ? '#16a34a' : '#dc2626'};font-weight:700;">
+          ${p.pnl !== null ? fmtEUR(p.pnl) : '-'}
+        </td>
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;color:${p.pnl >= 0 ? '#16a34a' : '#dc2626'};font-weight:700;">
+          ${p.pct !== null ? fmtPct(p.pct) : '-'}
+        </td>
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${p.yield !== null ? p.yield.toFixed(2) + '%' : '-'}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const topRows = s.top10.map((p, i) => `
+    <tr>
+      <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-weight:700;color:#1d4ed8;">#${i + 1} ${esc(p.ticker)}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;">${esc(p.name || p.ticker)}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtEUR(p.cur || 0)}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtPct(p.pct || 0)}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${p.yield !== null ? p.yield.toFixed(2) + '%' : '-'}</td>
+    </tr>
+  `).join('');
+
+  const pieData = s.top10.map(p => `<li>${esc(p.ticker)} — ${fmtEUR(p.cur || 0)}</li>`).join('');
+
+  return `
+  <div id="portfolio-pdf-root" style="width:1200px;background:#ffffff;color:#111827;font-family:Segoe UI,Arial,sans-serif;padding:28px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px;margin-bottom:18px;">
+      <div>
+        <div style="font-size:24px;font-weight:800;color:#111827;">Informe de Cartera</div>
+        <div style="font-size:12px;color:#6b7280;margin-top:4px;">Generado el ${new Date().toLocaleString('es-ES')}</div>
+      </div>
+      <div style="text-align:right;font-size:12px;color:#6b7280;">
+        <div><b>Total posiciones:</b> ${totalPositions}</div>
+        <div><b>Top destacadas:</b> ${topTicker}</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px;">
+      <div style="border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:#f9fafb;">
+        <div style="font-size:11px;color:#6b7280;font-weight:700;">INVERTIDO</div>
+        <div style="font-size:24px;font-weight:800;color:#111827;margin-top:4px;">${fmtEUR(s.totalInv)}</div>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:#f9fafb;">
+        <div style="font-size:11px;color:#6b7280;font-weight:700;">VALOR ACTUAL</div>
+        <div style="font-size:24px;font-weight:800;color:#111827;margin-top:4px;">${fmtEUR(s.totalCur)}</div>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:#f9fafb;">
+        <div style="font-size:11px;color:#6b7280;font-weight:700;">GANANCIA / PÉRDIDA</div>
+        <div style="font-size:24px;font-weight:800;color:${s.totalPnl >= 0 ? '#16a34a' : '#dc2626'};margin-top:4px;">${fmtEUR(s.totalPnl)}</div>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:#f9fafb;">
+        <div style="font-size:11px;color:#6b7280;font-weight:700;">RENTABILIDAD</div>
+        <div style="font-size:24px;font-weight:800;color:${s.totalPnl >= 0 ? '#16a34a' : '#dc2626'};margin-top:4px;">${fmtPct(s.totalPct)}</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1.3fr 0.9fr;gap:14px;margin-bottom:18px;">
+      <div style="border:1px solid #e5e7eb;border-radius:14px;padding:16px;">
+        <div style="font-size:14px;font-weight:800;margin-bottom:10px;color:#111827;">Composición por valor</div>
+        <div style="font-size:12px;color:#6b7280;margin-bottom:10px;">Las 10 posiciones con más peso están resaltadas en verde suave.</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="background:#f9fafb;">
+              <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Ticker</th>
+              <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Empresa</th>
+              <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb;">Acciones</th>
+              <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb;">Coste medio</th>
+              <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb;">Valor actual</th>
+              <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb;">P/L</th>
+              <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb;">%</th>
+              <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb;">Yield</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div style="border:1px solid #e5e7eb;border-radius:14px;padding:16px;">
+          <div style="font-size:14px;font-weight:800;margin-bottom:10px;color:#111827;">Top 10 por valor</div>
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead>
+              <tr style="background:#f9fafb;">
+                <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Ticker</th>
+                <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;">Empresa</th>
+                <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb;">Valor</th>
+                <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb;">%</th>
+                <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb;">Yield</th>
+              </tr>
+            </thead>
+            <tbody>${topRows}</tbody>
+          </table>
+        </div>
+
+        <div style="border:1px solid #e5e7eb;border-radius:14px;padding:16px;">
+          <div style="font-size:14px;font-weight:800;margin-bottom:10px;color:#111827;">Dividendos estimados</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div style="background:#f9fafb;border-radius:12px;padding:12px;">
+              <div style="font-size:11px;color:#6b7280;font-weight:700;">DIVIDENDOS BRUTOS</div>
+              <div style="font-size:20px;font-weight:800;margin-top:4px;">${fmtEUR(s.totalDivs)}</div>
+            </div>
+            <div style="background:#f9fafb;border-radius:12px;padding:12px;">
+              <div style="font-size:11px;color:#6b7280;font-weight:700;">NETO ESTIMADO</div>
+              <div style="font-size:20px;font-weight:800;margin-top:4px;color:#16a34a;">${fmtEUR(s.totalNeto)}</div>
+            </div>
+          </div>
+          <div style="font-size:11px;color:#6b7280;margin-top:10px;">Incluye posiciones actuales y retención estimada por país/divisa.</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="border:1px solid #e5e7eb;border-radius:14px;padding:16px;margin-bottom:18px;">
+      <div style="font-size:14px;font-weight:800;margin-bottom:10px;color:#111827;">Gráfico resumido</div>
+      <div style="font-size:12px;color:#6b7280;margin-bottom:10px;">Puedes insertar aquí tus SVGs/Charts si quieres capturarlos dentro del PDF.</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+        <div style="height:180px;border:1px dashed #d1d5db;border-radius:12px;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:12px;">Pie cartera</div>
+        <div style="height:180px;border:1px dashed #d1d5db;border-radius:12px;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:12px;">Dividendo mensual</div>
+        <div style="height:180px;border:1px dashed #d1d5db;border-radius:12px;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:12px;">Evolución</div>
+      </div>
+    </div>
+
+    <div style="font-size:11px;color:#6b7280;">
+      Informe generado automáticamente desde Kapital Manager.
+    </div>
+  </div>`;
+}
+
+async function exportPortfolioPdf() {
+  const old = document.getElementById('portfolio-pdf-root');
+  if (old) old.remove();
+
+  const wrap = document.createElement('div');
+  wrap.style.position = 'fixed';
+  wrap.style.left = '-99999px';
+  wrap.style.top = '0';
+  wrap.innerHTML = buildPortfolioPdfHtml();
+  document.body.appendChild(wrap);
+
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF('p', 'mm', 'a4');
+  const node = wrap.querySelector('#portfolio-pdf-root');
+
+  const canvas = await html2canvas(node, {
+    scale: 2,
+    useCORS: true,
+    backgroundColor: '#ffffff'
+  });
+
+  const imgData = canvas.toDataURL('image/png');
+  const pageW = 210;
+  const pageH = 297;
+  const imgH = canvas.height * pageW / canvas.width;
+
+  let y = 0;
+  let heightLeft = imgH;
+
+  pdf.addImage(imgData, 'PNG', 0, y, pageW, imgH, undefined, 'FAST');
+  heightLeft -= pageH;
+
+  while (heightLeft > 0) {
+    pdf.addPage();
+    y = heightLeft - imgH;
+    pdf.addImage(imgData, 'PNG', 0, y, pageW, imgH, undefined, 'FAST');
+    heightLeft -= pageH;
+  }
+
+  pdf.save(`Informe_Cartera_${new Date().toISOString().slice(0,10)}.pdf`);
+  wrap.remove();
+}
+
 function renderPortfolio() {
-  const filter = (document.getElementById("port-filter")||{}).value||"";
-  let rows = state.positions.filter(p=>
-    p.ticker.toLowerCase().includes(filter.toLowerCase())||
-    (p.name||"").toLowerCase().includes(filter.toLowerCase())||
-    (p.sector||"").toLowerCase().includes(filter.toLowerCase())
+  const filter = document.getElementById('port-filter')?.value || '';
+  let rows = state.positions.filter(p =>
+    p.ticker.toLowerCase().includes(filter.toLowerCase()) ||
+    p.name.toLowerCase().includes(filter.toLowerCase()) ||
+    p.sector.toLowerCase().includes(filter.toLowerCase())
   );
 
+  const getV = (p, col) => {
+    const cp = state.priceCache[p.ticker];
+    const inv = posToEUR(p.shares * p.avgcost, p);
+    const cpE = cp ? posToEUR(cp, p) : null;
+    const curV = cpE !== null ? p.shares * cpE : null;
+    const pnl = curV !== null ? curV - inv : null;
+    const di = state.divInfo.find(d => d.ticker === p.ticker);
+    return { ticker: p.ticker, empresa: p.name, acciones: p.shares, coste: posToEUR(p.avgcost, p), precio: cpE || 0, valor: curV || inv, pnl: pnl || 0, pct: pnl && inv ? pnl / inv * 100 : 0, yield: di?.divyield ? di.divyield * 100 : 0, sector: p.sector };
+  };
+
+  if (state.sortCol) {
+    rows = [...rows].sort((a, b) => {
+      const va = getV(a, state.sortCol);
+      const vb = getV(b, state.sortCol);
+      return (va[state.sortCol] > vb[state.sortCol] ? 1 : -1) * state.sortDir;
+    });
+  }
+
+  const cols = [
+    ['ticker', 'Ticker', 'left'],
+    ['empresa', 'Empresa', 'left'],
+    ['acciones', 'Acc.', 'center'],
+    ['coste', 'Coste medio', 'right'],
+    ['precio', 'Precio actual', 'right'],
+    ['valor', 'Valor total', 'right'],
+    ['pnl', 'G/P', 'right'],
+    ['pct', 'G/P %', 'right'],
+    ['yield', 'Yield', 'center'],
+    ['sector', 'Sector', 'left']
+  ];
+
+  const thead = cols.map(c => {
+    const arrow = state.sortCol === c[0] ? (state.sortDir > 0 ? ' ▲' : ' ▼') : '';
+    return `<th class="sortable" style="text-align:${c[2]};" onclick="sortPortfolio('${c[0]}')">${c[1]}${arrow}</th>`;
+  }).join('');
+
+  const topSet = new Set([...rows].sort((a, b) => {
+    const av = getV(a, 'valor').valor;
+    const bv = getV(b, 'valor').valor;
+    return bv - av;
+  }).slice(0, 10).map(p => p.ticker));
+
+  const tbody = rows.map(pos => {
+    const cp = state.priceCache[pos.ticker];
+    const inv = posToEUR(pos.shares * pos.avgcost, pos);
+    const cpE = cp ? posToEUR(cp, pos) : null;
+    const curE = cpE !== null ? pos.shares * cpE : null;
+    const pnl = curE !== null ? curE - inv : null;
+    const pct = pnl !== null && inv ? pnl / inv * 100 : null;
+    const pc = pnl !== null ? pnlColor(pnl) : '#94a3b8';
+    const di = state.divInfo.find(d => d.ticker === pos.ticker);
+    const yld = di?.divyield ? di.divyield * 100 : null;
+    const yc = yld ? (yld >= 4 ? '#16a34a' : yld >= 2 ? '#b45309' : '#dc2626') : '#94a3b8';
+    const sel = state.selectedTicker === pos.ticker;
+    const top = topSet.has(pos.ticker);
+
+    return `
+      <tr style="${sel ? 'background:#eff6ff!important;' : ''}${top ? 'border-left:4px solid #16a34a;' : ''}" onclick="selectTicker('${esc(pos.ticker)}')">
+        <td style="padding:7px 10px;"><div style="display:flex;align-items:center;gap:7px;">${logoImg(pos.ticker, pos.name, 26)}<span style="color:#1d4ed8;font-weight:700;">${esc(pos.ticker)}</span>${top ? '<span class="badge" style="background:#dcfce7;color:#166534;">TOP 10</span>' : ''}</div></td>
+        <td style="padding:7px 10px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(pos.name)}</td>
+        <td style="padding:7px 10px;text-align:center;">${Math.round(pos.shares)}</td>
+        <td style="padding:7px 10px;text-align:right;">${fmtEUR(posToEUR(pos.avgcost, pos))}</td>
+        <td style="padding:7px 10px;text-align:right;">${cpE ? fmtEUR(cpE) : '<span style="color:#94a3b8;">Sin datos</span>'}</td>
+        <td style="padding:7px 10px;text-align:right;font-weight:600;">${fmtEUR(curE || inv)}</td>
+        <td style="padding:7px 10px;text-align:right;color:${pc};font-weight:600;">${pnl !== null ? fmtEUR(Math.abs(pnl)) : '-'}</td>
+        <td style="padding:7px 10px;text-align:right;color:${pc};font-weight:600;">${pct !== null ? fmtPct(pct) : '-'}</td>
+        <td style="padding:7px 10px;text-align:center;color:${yc};font-weight:600;">${yld ? yld.toFixed(2) + '%' : '-'}</td>
+        <td style="padding:7px 10px;color:#64748b;font-size:12px;">${esc(pos.sector)}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const panel = state.selectedTicker
+    ? `<div style="width:340px;border-left:1px solid #e2e8f0;padding:14px;background:#f8fafc;overflow-y:auto;flex-shrink:0;">
+        ${logoImg(state.selectedTicker, state.positions.find(p => p.ticker === state.selectedTicker)?.name || state.selectedTicker, 32)}
+        <div style="font-weight:700;font-size:15px;color:#1d4ed8;">${esc(state.selectedTicker)}</div>
+        <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
+          <button class="btn" style="font-size:12px;padding:6px 10px;" onclick="openEditPos('${esc(state.selectedTicker)}')">Editar posición</button>
+          <button class="btn-danger" style="font-size:12px;padding:6px 10px;" onclick="deletePosition('${esc(state.selectedTicker)}')">Eliminar</button>
+          <button class="btn-green" style="font-size:12px;padding:6px 10px;" onclick="openAddAlert('${esc(state.selectedTicker)}')">Nueva alerta</button>
+        </div>
+      </div>`
+    : '';
+
+  return `
+  <div style="display:flex;height:100%;overflow:hidden;">
+    <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+      <div class="toolbar" style="gap:6px;padding:8px 10px;flex-wrap:wrap;">
+        <button class="btn" style="font-size:11px;padding:5px 10px;" onclick="openAddPos()">Añadir</button>
+        <button class="btn" style="background:#475569;font-size:11px;padding:5px 10px;" onclick="openEditPos()">Editar</button>
+        <button class="btn-danger" style="font-size:11px;padding:5px 10px;" onclick="deletePosition()">Eliminar</button>
+        <button class="btn-green" style="font-size:11px;padding:5px 10px;" onclick="openAddAlert()">Alerta</button>
+        <button class="btn" style="background:#0f766e;font-size:15px;padding:5px 9px;line-height:1;" onclick="openImportBroker()" title="Importar extracto de broker">⬆</button>
+        <button class="btn" style="background:#2563eb;font-size:15px;padding:5px 9px;line-height:1;" onclick="exportCarteraExcel()" title="Exportar cartera a Excel">Excel</button>
+        <button class="btn" style="background:#111827;font-size:15px;padding:5px 9px;line-height:1;" onclick="exportPortfolioPdf()" title="Generar informe PDF">📷</button>
+        <div style="flex:1;"></div>
+        <input id="port-filter" class="inp-sm" placeholder="Filtrar..." style="width:150px;font-size:11px;" value="${esc(filter)}" oninput="renderActiveTab()">
+        <button class="btn-danger" style="margin-left:6px;font-size:11px;padding:5px 10px;" onclick="deleteCartera()" title="Elimina todas las posiciones">Vaciar</button>
+      </div>
+
+      <div style="flex:1;overflow:auto;">
+        <table>
+          <thead><tr>${thead}</tr></thead>
+          <tbody>${tbody || '<tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:28px;">Sin posiciones</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+    ${panel}
+  </div>`;
+}
   const getV = (p,col) => {
     const cp=state.priceCache[p.ticker];
     const inv=posToEUR(p.shares*p.avg_cost, p);
@@ -3888,55 +4229,19 @@ function saveDividendModal() {
 // TAB 7 — DECLARACIÓN DE LA RENTA
 // ─────────────────────────────────────────────
 function renderRenta() {
-  const now = new Date();
-  const ejercicio = now.getFullYear() - 1;
-  const yearStr = String(ejercicio);
+  return `
+    <div style="padding:14px;">
+      <div class="toolbar" style="gap:8px;flex-wrap:wrap;">
+        <button class="btn" onclick="exportCarteraExcel()">Exportar a Excel</button>
+      </div>
 
-  // ── 1. DIVIDENDOS COBRADOS EN EL EJERCICIO (detalle por operación) ──
-  const divEjercicio = [...state.dividends.filter(d => (d.date||"").startsWith(yearStr))]
-    .sort((a,b)=>(a.date||"").localeCompare(b.date||""));
-
-  function retencionOrigen(ticker, currency) {
-    if (ticker.endsWith(".MC") || currency==="EUR") return 0.19;
-    if (currency==="USD") return 0.15;
-    if (currency==="GBP") return 0.00;
-    if (ticker.endsWith(".SW") || ticker.endsWith(".VX")) return 0.35;
-    if (ticker.endsWith(".PA") || ticker.endsWith(".NX")) return 0.128;
-    if (ticker.endsWith(".DE") || ticker.endsWith(".F")) return 0.25;
-    if (ticker.endsWith(".AS")) return 0.15;
-    if (ticker.endsWith(".MI")) return 0.26;
-    if (ticker.endsWith(".LS")) return 0.28;
-    return 0.15;
-  }
-  const retencionESP = 0.19;
-
-  // Detalle por operación de dividendo — fecha, empresa, ISIN/ticker, bruto, retención, gastos, divisa/cambio
-  const divRows = divEjercicio.map(d => {
-    const pos = state.positions.find(p=>p.ticker===d.ticker);
-    const currency = d.currency || pos?.currency || "EUR";
-    const brutoLocal = +((d.amount||0) * (d.shares||0)).toFixed(2);
-    const fxAplicado = currency !== "EUR" ? getFX(currency) : 1;
-    const brutoEUR = +toEUR(brutoLocal, currency).toFixed(2);
-    const gastos = +(d.fee || 0).toFixed(2); // gastos de custodia/admin si se registraron
-    const retOr = retencionOrigen(d.ticker, currency);
-    const retOrEUR = +(brutoEUR * retOr).toFixed(2);
-    const retEsp = +(brutoEUR * retencionESP).toFixed(2);
-    const limConvenio = Math.min(retOr, 0.15);
-    const deducibleOrigen = +(brutoEUR * limConvenio).toFixed(2);
-    const retEspNeta = +(Math.max(0, retEsp - deducibleOrigen)).toFixed(2);
-    const neto = +(brutoEUR - retOrEUR - retEspNeta - gastos).toFixed(2);
-    return {
-      fecha: (d.date||"").slice(0,10),
-      ticker: d.ticker,
-      name: pos?.name || d.ticker,
-      isin: d.isin || pos?.isin || "—",
-      acciones: d.shares,
-      brutoLocal, currency, fxAplicado,
-      brutoEUR, gastos, retOr, retOrEUR,
-      retEspTotal: retEsp, deducibleOrigen, retEspNeta, neto
-    };
-  });
-
+      <div style="margin-top:14px;color:#475569;font-size:13px;line-height:1.6;">
+        <div style="font-weight:700;color:#1d4ed8;margin-bottom:8px;">Renta</div>
+        <div>La exportación a Excel sigue disponible desde aquí. El botón de Imprimir/PDF ha sido retirado como pediste.</div>
+      </div>
+    </div>
+  `;
+}
   const totDiv = {
     bruto: divRows.reduce((s,d)=>s+d.brutoEUR,0),
     gastos: divRows.reduce((s,d)=>s+d.gastos,0),
