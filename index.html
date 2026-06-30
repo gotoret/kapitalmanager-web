@@ -3847,6 +3847,8 @@ function openAddDividend() {
       <div class="field"><label>Importe por acción</label><input id="m-d-amount" type="number" step="0.0001" class="inp" value="0" oninput="updateDivTotal()"></div>
       <div class="field"><label>Nº acciones</label><input id="m-d-shares" type="number" class="inp" value="${state.positions[0]?.shares||0}" oninput="updateDivTotal()"></div>
     </div>
+    <div class="field"><label>Fecha de cobro</label><input id="m-d-date" type="date" class="inp" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div class="field"><label>Gastos de custodia/admin (€, opcional)</label><input id="m-d-fee" type="number" step="0.01" class="inp" value="0"></div>
     <div class="field"><label>Notas</label><input id="m-d-notes" class="inp" placeholder="Opcional..."></div>
     <div id="div-total-preview" style="margin-top:8px;padding:10px;background:#fef9c3;border-radius:8px;font-size:12px;color:#b45309;font-weight:600">Total cobrado: —</div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
@@ -3874,8 +3876,11 @@ function saveDividendModal() {
   const amount=+document.getElementById("m-d-amount").value;
   const shares=+document.getElementById("m-d-shares").value;
   const notes=document.getElementById("m-d-notes").value;
+  const date=document.getElementById("m-d-date")?.value || new Date().toISOString().slice(0,10);
+  const fee=+(document.getElementById("m-d-fee")?.value||0);
   if(!ticker||amount<=0||shares<=0){alert("Completa todos los campos");return;}
-  state.dividends.unshift({id:uid(),ticker,amount,shares,notes,date:new Date().toISOString()});
+  const pos = state.positions.find(p=>p.ticker===ticker);
+  state.dividends.unshift({id:uid(),ticker,amount,shares,notes,fee,currency:pos?.currency||"EUR",date:new Date(date).toISOString()});
   save(); closeModal(); renderActiveTab();
 }
 
@@ -3884,110 +3889,164 @@ function saveDividendModal() {
 // ─────────────────────────────────────────────
 function renderRenta() {
   const now = new Date();
-  const ejercicio = now.getFullYear() - 1; // Año anterior
+  const ejercicio = now.getFullYear() - 1;
   const yearStr = String(ejercicio);
 
-  // ── 1. DIVIDENDOS COBRADOS EN EL EJERCICIO ──
-  const divEjercicio = state.dividends.filter(d => (d.date||"").startsWith(yearStr));
+  // ── 1. DIVIDENDOS COBRADOS EN EL EJERCICIO (detalle por operación) ──
+  const divEjercicio = [...state.dividends.filter(d => (d.date||"").startsWith(yearStr))]
+    .sort((a,b)=>(a.date||"").localeCompare(b.date||""));
 
-  // Agrupar por ticker
-  const divPorTicker = {};
-  divEjercicio.forEach(d => {
-    const tk = d.ticker;
-    if (!divPorTicker[tk]) {
-      const pos = state.positions.find(p=>p.ticker===tk);
-      divPorTicker[tk] = {ticker:tk, name:pos?.name||tk, currency:pos?.currency||"EUR", bruto:0, retencionOrigen:0, count:0};
-    }
-    const bruto = d.amount * d.shares;
-    divPorTicker[tk].bruto += bruto;
-    divPorTicker[tk].count++;
-  });
-
-  // Retención en origen estimada por país (basada en divisa/ticker)
   function retencionOrigen(ticker, currency) {
-    if (ticker.endsWith(".MC") || currency==="EUR") return 0.19;  // España: no hay doble imposición
-    if (currency==="USD") return 0.15;     // USA: retención en origen 15% (convenio)
-    if (currency==="GBP") return 0.00;     // UK: sin retención en origen sobre dividendos
-    if (ticker.endsWith(".SW") || ticker.endsWith(".VX")) return 0.35; // Suiza: 35%
-    if (ticker.endsWith(".PA") || ticker.endsWith(".NX")) return 0.128; // Francia: 12.8%
-    if (ticker.endsWith(".DE") || ticker.endsWith(".F")) return 0.25;   // Alemania: 25%
-    if (ticker.endsWith(".AS")) return 0.15; // Holanda: 15%
-    if (ticker.endsWith(".MI")) return 0.26; // Italia: 26%
-    if (ticker.endsWith(".LS")) return 0.28; // Portugal: 28%
-    return 0.15; // Estimación genérica
+    if (ticker.endsWith(".MC") || currency==="EUR") return 0.19;
+    if (currency==="USD") return 0.15;
+    if (currency==="GBP") return 0.00;
+    if (ticker.endsWith(".SW") || ticker.endsWith(".VX")) return 0.35;
+    if (ticker.endsWith(".PA") || ticker.endsWith(".NX")) return 0.128;
+    if (ticker.endsWith(".DE") || ticker.endsWith(".F")) return 0.25;
+    if (ticker.endsWith(".AS")) return 0.15;
+    if (ticker.endsWith(".MI")) return 0.26;
+    if (ticker.endsWith(".LS")) return 0.28;
+    return 0.15;
   }
+  const retencionESP = 0.19;
 
-  const retencionESP = 0.19; // Retención Hacienda española sobre dividendos
-
-  const divRows = Object.values(divPorTicker).map(d => {
-    const retOr = retencionOrigen(d.ticker, d.currency);
-    const retOrImporte = +(d.bruto * retOr).toFixed(2);
-    const brutoEUR = +(toEUR(d.bruto, d.currency)).toFixed(2);
-    const retOrEUR = +(toEUR(retOrImporte, d.currency)).toFixed(2);
+  // Detalle por operación de dividendo — fecha, empresa, ISIN/ticker, bruto, retención, gastos, divisa/cambio
+  const divRows = divEjercicio.map(d => {
+    const pos = state.positions.find(p=>p.ticker===d.ticker);
+    const currency = d.currency || pos?.currency || "EUR";
+    const brutoLocal = +((d.amount||0) * (d.shares||0)).toFixed(2);
+    const fxAplicado = currency !== "EUR" ? getFX(currency) : 1;
+    const brutoEUR = +toEUR(brutoLocal, currency).toFixed(2);
+    const gastos = +(d.fee || 0).toFixed(2); // gastos de custodia/admin si se registraron
+    const retOr = retencionOrigen(d.ticker, currency);
+    const retOrEUR = +(brutoEUR * retOr).toFixed(2);
     const retEsp = +(brutoEUR * retencionESP).toFixed(2);
-    // Deducible: lo ya retenido en origen (con límite del convenio, normalmente 15%)
     const limConvenio = Math.min(retOr, 0.15);
     const deducibleOrigen = +(brutoEUR * limConvenio).toFixed(2);
     const retEspNeta = +(Math.max(0, retEsp - deducibleOrigen)).toFixed(2);
-    return {...d, brutoEUR, retOrPct:retOr, retOrEUR, retEspTotal:retEsp, deducibleOrigen, retEspNeta};
+    const neto = +(brutoEUR - retOrEUR - retEspNeta - gastos).toFixed(2);
+    return {
+      fecha: (d.date||"").slice(0,10),
+      ticker: d.ticker,
+      name: pos?.name || d.ticker,
+      isin: d.isin || pos?.isin || "—",
+      acciones: d.shares,
+      brutoLocal, currency, fxAplicado,
+      brutoEUR, gastos, retOr, retOrEUR,
+      retEspTotal: retEsp, deducibleOrigen, retEspNeta, neto
+    };
   });
 
   const totDiv = {
     bruto: divRows.reduce((s,d)=>s+d.brutoEUR,0),
+    gastos: divRows.reduce((s,d)=>s+d.gastos,0),
     retOrEUR: divRows.reduce((s,d)=>s+d.retOrEUR,0),
     retEspTotal: divRows.reduce((s,d)=>s+d.retEspTotal,0),
     deducibleOrigen: divRows.reduce((s,d)=>s+d.deducibleOrigen,0),
     retEspNeta: divRows.reduce((s,d)=>s+d.retEspNeta,0),
+    neto: divRows.reduce((s,d)=>s+d.neto,0),
   };
 
-  // ── 2. PLUSVALÍAS / MINUSVALÍAS (VENTAS EN EL EJERCICIO) ──
-  const ventasEjercicio = state.transactions.filter(t => t.type==="SELL" && (t.date||"").startsWith(yearStr));
-
-  const pvRows = ventasEjercicio.map(t => {
-    const pos = state.positions.find(p=>p.ticker===t.ticker);
-    const currency = pos?.currency || "EUR";
-    const coste = pos?.avg_cost || 0;
-    const precioVenta = t.price;
-    const acciones = t.shares;
-    // Coste fiscal en EUR: se usa el tipo de cambio histórico guardado en la posición
-    const costeTotalEUR = +(toEURhist(coste * acciones, pos)).toFixed(2);
-    // Ingreso en EUR: se usa el tipo guardado en la transacción de venta (si existe), si no el actual
-    const fxVenta = t.fx_rate && t.fx_rate !== 1 ? t.fx_rate : null;
-    const ingresoTotal = fxVenta
-      ? +((precioVenta * acciones) / fxVenta).toFixed(2)
-      : +(toEUR(precioVenta * acciones, currency)).toFixed(2);
-    const resultado = +(ingresoTotal - costeTotalEUR).toFixed(2);
-    const fechaCompra = pos?.date ? new Date(pos.date) : null;
-    const fechaVenta = new Date(t.date);
-    const diasTenencia = fechaCompra ? Math.round((fechaVenta - fechaCompra)/864e5) : null;
-    const fxCompraLabel = pos?.fx_rate && pos.fx_rate !== 1 && currency !== "EUR" ? `TC compra: ${pos.fx_rate?.toFixed(4)}` : null;
-    return {
-      ticker: t.ticker,
-      name: pos?.name||t.ticker,
-      acciones,
-      fechaCompra: pos?.date?.slice(0,10)||"—",
-      fechaVenta: (t.date||"").slice(0,10),
-      precioCompra: coste,
-      precioVenta,
-      costeTotal: costeTotalEUR,
-      ingresoTotal,
-      resultado,
-      diasTenencia,
-      currency,
-      fxCompraLabel
-    };
+  // ── 2. VENTAS DEL EJERCICIO — MÉTODO FIFO REAL ──
+  // Para cada ticker, recorremos TODAS sus transacciones cronológicamente y
+  // mantenemos una cola FIFO de lotes de compra para calcular el coste exacto
+  // de cada venta, incluso si hay compras parciales en distintas fechas/precios.
+  const txByTicker = {};
+  [...state.transactions].sort((a,b)=>(a.date||"").localeCompare(b.date||"")).forEach(t => {
+    if (!txByTicker[t.ticker]) txByTicker[t.ticker] = [];
+    txByTicker[t.ticker].push(t);
   });
 
+  const pvRows = [];
+  Object.entries(txByTicker).forEach(([ticker, txs]) => {
+    const pos = state.positions.find(p=>p.ticker===ticker);
+    const currency = pos?.currency || txs.find(t=>t.currency)?.currency || "EUR";
+    const lots = []; // cola FIFO: {shares, costUnit, date, fxRate, fee}
+
+    txs.forEach(t => {
+      if (t.type === "BUY") {
+        lots.push({
+          shares: t.shares,
+          costUnit: t.price,
+          date: t.date,
+          fxRate: t.fx_rate && t.fx_rate !== 1 ? t.fx_rate : null,
+          fee: t.commission || 0
+        });
+      } else if (t.type === "SELL") {
+        let sharesToSell = t.shares;
+        const lotsUsed = [];
+        // Consumir lotes en orden FIFO (los más antiguos primero)
+        while (sharesToSell > 0 && lots.length > 0) {
+          const lot = lots[0];
+          const take = Math.min(lot.shares, sharesToSell);
+          lotsUsed.push({ shares: take, costUnit: lot.costUnit, date: lot.date, fxRate: lot.fxRate, fee: lot.fee * (take/lot.shares) });
+          lot.shares -= take;
+          sharesToSell -= take;
+          if (lot.shares <= 0.00001) lots.shift();
+        }
+
+        if ((t.date||"").startsWith(yearStr) && lotsUsed.length) {
+          const sellFx = t.fx_rate && t.fx_rate !== 1 ? t.fx_rate : null;
+          const ventaTotalLocal = t.price * t.shares;
+          const ventaTotalEUR = sellFx
+            ? +(ventaTotalLocal / sellFx).toFixed(2)
+            : +toEUR(ventaTotalLocal, currency).toFixed(2);
+          const comisionVenta = t.commission || 0;
+          const comisionVentaEUR = sellFx ? +(comisionVenta/sellFx).toFixed(2) : +toEUR(comisionVenta, currency).toFixed(2);
+
+          // Coste total agregando cada lote consumido (puede haber varias compras = varias fechas/precios)
+          let costeTotalEUR = 0;
+          let comisionCompraEUR = 0;
+          const fechasCompra = [];
+          lotsUsed.forEach(lu => {
+            const costeLocal = lu.costUnit * lu.shares;
+            const costeEUR = lu.fxRate
+              ? costeLocal / lu.fxRate
+              : toEUR(costeLocal, currency);
+            costeTotalEUR += costeEUR;
+            const feeEUR = lu.fxRate ? (lu.fee/lu.fxRate) : toEUR(lu.fee, currency);
+            comisionCompraEUR += feeEUR;
+            fechasCompra.push(lu.date?.slice(0,10));
+          });
+          costeTotalEUR = +costeTotalEUR.toFixed(2);
+          comisionCompraEUR = +comisionCompraEUR.toFixed(2);
+
+          const costeConGastos = +(costeTotalEUR + comisionCompraEUR).toFixed(2);
+          const ventaConGastos = +(ventaTotalEUR - comisionVentaEUR).toFixed(2);
+          const resultado = +(ventaConGastos - costeConGastos).toFixed(2);
+
+          pvRows.push({
+            ticker, name: pos?.name||ticker, isin: pos?.isin||"—",
+            acciones: t.shares,
+            fechaCompra: lotsUsed.length>1 ? `${lotsUsed.length} lotes FIFO` : (fechasCompra[0]||"—"),
+            fechasCompraDetalle: fechasCompra,
+            fechaVenta: (t.date||"").slice(0,10),
+            precioCompraMedio: +(costeTotalEUR/t.shares).toFixed(4),
+            precioVenta: t.price,
+            costeTotal: costeTotalEUR,
+            comisionCompra: comisionCompraEUR,
+            ventaTotal: ventaTotalEUR,
+            comisionVenta: comisionVentaEUR,
+            resultado,
+            currency, fxVenta: sellFx,
+            nLotes: lotsUsed.length
+          });
+        }
+      }
+    });
+  });
+  pvRows.sort((a,b)=>a.fechaVenta.localeCompare(b.fechaVenta));
+
   const totPV = {
-    coste: pvRows.reduce((s,r)=>s+r.costeTotal,0),
-    ingreso: pvRows.reduce((s,r)=>s+r.ingresoTotal,0),
+    coste: pvRows.reduce((s,r)=>s+r.costeTotal+r.comisionCompra,0),
+    ingreso: pvRows.reduce((s,r)=>s+r.ventaTotal-r.comisionVenta,0),
     resultado: pvRows.reduce((s,r)=>s+r.resultado,0),
   };
   const plusvalias = pvRows.filter(r=>r.resultado>0).reduce((s,r)=>s+r.resultado,0);
   const minusvalias = pvRows.filter(r=>r.resultado<0).reduce((s,r)=>s+r.resultado,0);
   const saldoNeto = +(plusvalias + minusvalias).toFixed(2);
 
-  // ── 3. BASE IMPONIBLE DEL AHORRO y TIPOS ──
+  // ── 3. BASE IMPONIBLE DEL AHORRO ──
   const baseAhorro = +(totDiv.bruto + saldoNeto).toFixed(2);
 
   function tipoMarginalAhorro(base) {
@@ -3998,7 +4057,6 @@ function renderRenta() {
     if (base <= 300000) return "27%";
     return "28%";
   }
-
   function cuotaAhorro(base) {
     if (base <= 0) return 0;
     let cuota = 0;
@@ -4009,55 +4067,67 @@ function renderRenta() {
     cuota += base * 0.28;
     return +cuota.toFixed(2);
   }
-
   const cuotaBruta = cuotaAhorro(baseAhorro);
   const cuotaNeta = +(Math.max(0, cuotaBruta - totDiv.deducibleOrigen - totDiv.retEspNeta)).toFixed(2);
 
-  // ── 4. CASILLAS IRPF ORIENTATIVAS ──
-  // (basadas en modelo IRPF vigente, orientativas, no vinculantes)
-
-  // ── RENDER ──
   const fmtPct = v => (v*100).toFixed(1)+"%";
-  const fmtN = v => v?.toFixed(2)+"€";
 
+  // ── TABLA DIVIDENDOS — detalle completo por operación ──
   const divTableRows = divRows.length ? divRows.map(d=>`
     <tr>
+      <td style="color:#64748b;white-space:nowrap">${d.fecha}</td>
       <td style="font-weight:700;color:#1d4ed8">${esc(d.ticker)}</td>
-      <td>${esc(d.name)}</td>
-      <td style="text-align:right">${fmtEUR(d.brutoEUR)}</td>
-      <td style="text-align:center">${fmtPct(d.retOrPct)}</td>
+      <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.name)}</td>
+      <td style="font-size:9px;color:#94a3b8">${esc(d.isin)}</td>
+      <td style="text-align:right">${d.acciones}</td>
+      <td style="text-align:right">${d.brutoLocal.toFixed(2)} ${d.currency}</td>
+      <td style="text-align:center;font-size:10px;color:#94a3b8">${d.currency!=="EUR"?d.fxAplicado.toFixed(4):"—"}</td>
+      <td style="text-align:right;font-weight:600">${fmtEUR(d.brutoEUR)}</td>
+      <td style="text-align:right;color:#dc2626">${d.gastos>0?"−"+fmtEUR(d.gastos):"—"}</td>
+      <td style="text-align:center">${fmtPct(d.retOr)}</td>
       <td style="text-align:right;color:#dc2626">−${fmtEUR(d.retOrEUR)}</td>
       <td style="text-align:right;color:#dc2626">−${fmtEUR(d.retEspTotal)}</td>
       <td style="text-align:right;color:#059669">+${fmtEUR(d.deducibleOrigen)}</td>
-      <td style="text-align:right;font-weight:700">${fmtEUR(d.brutoEUR - d.retOrEUR - d.retEspNeta)}</td>
-    </tr>`).join("") : `<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:20px">Sin dividendos registrados en ${yearStr}<br><small>Regístralos en la pestaña 💰 Dividendos</small></td></tr>`;
+      <td style="text-align:right;font-weight:700">${fmtEUR(d.neto)}</td>
+    </tr>`).join("") : `<tr><td colspan="14" style="text-align:center;color:#94a3b8;padding:20px">Sin dividendos registrados en ${yearStr}<br><small>Regístralos en la pestaña 💰 Dividendos</small></td></tr>`;
 
+  // ── TABLA VENTAS — detalle FIFO completo ──
   const pvTableRows = pvRows.length ? pvRows.map(r=>`
     <tr>
       <td style="font-weight:700;color:#1d4ed8">${esc(r.ticker)}</td>
-      <td>${r.acciones}</td>
-      <td style="text-align:right">${fmtEUR(r.costeTotal)}${r.fxCompraLabel?`<br><span style="font-size:9px;color:#94a3b8">${r.fxCompraLabel}</span>`:""}</td>
-      <td style="text-align:right">${fmtEUR(r.ingresoTotal)}</td>
-      <td style="text-align:right;font-weight:700;color:${r.resultado>=0?"#059669":"#dc2626"}">${r.resultado>=0?"+":""}${fmtEUR(r.resultado)}</td>
-      <td style="text-align:center;color:#64748b">${r.fechaCompra}</td>
+      <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</td>
+      <td style="font-size:9px;color:#94a3b8">${esc(r.isin)}</td>
+      <td style="text-align:right">${r.acciones}</td>
+      <td style="text-align:center;color:#64748b;font-size:10px">
+        ${r.fechaCompra}${r.nLotes>1?`<br><span title="${r.fechasCompraDetalle.join(', ')}" style="text-decoration:underline dotted;cursor:help">ver fechas</span>`:""}
+      </td>
       <td style="text-align:center;color:#64748b">${r.fechaVenta}</td>
-      <td style="text-align:center">${r.diasTenencia!=null?r.diasTenencia+"d":"—"}</td>
-    </tr>`).join("") : `<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:20px">Sin ventas registradas en ${yearStr}<br><small>Regístralas en la pestaña 📝 Transacciones</small></td></tr>`;
+      <td style="text-align:right">${r.precioCompraMedio.toFixed(4)}</td>
+      <td style="text-align:right">${r.precioVenta.toFixed(4)}</td>
+      <td style="text-align:right">${fmtEUR(r.costeTotal)}</td>
+      <td style="text-align:right;color:#dc2626">${r.comisionCompra>0?"−"+fmtEUR(r.comisionCompra):"—"}</td>
+      <td style="text-align:right">${fmtEUR(r.ventaTotal)}</td>
+      <td style="text-align:right;color:#dc2626">${r.comisionVenta>0?"−"+fmtEUR(r.comisionVenta):"—"}</td>
+      <td style="text-align:right;font-weight:700;color:${r.resultado>=0?"#059669":"#dc2626"}">${r.resultado>=0?"+":""}${fmtEUR(r.resultado)}</td>
+    </tr>`).join("") : `<tr><td colspan="13" style="text-align:center;color:#94a3b8;padding:20px">Sin ventas registradas en ${yearStr}<br><small>Regístralas en la pestaña 📝 Transacciones</small></td></tr>`;
 
-  return `<div style="padding:16px;max-width:960px;margin:0 auto">
+  return `<div style="padding:16px;max-width:1100px;margin:0 auto">
 
-    <!-- CABECERA DEL INFORME -->
+    <!-- CABECERA -->
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:12px">
       <div>
         <h2 style="font-size:17px;font-weight:800;color:#1e293b;margin-bottom:2px">🧾 Informe fiscal — Ejercicio ${yearStr}</h2>
-        <div style="font-size:11px;color:#94a3b8">Generado el ${new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"long",year:"numeric"})} · Solo orientativo, no vinculante</div>
+        <div style="font-size:11px;color:#94a3b8">Generado el ${new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"long",year:"numeric"})} · Dividendos y ventas desglosados por operación · Método FIFO · Solo orientativo, no vinculante</div>
       </div>
-      <button class="btn" onclick="printRenta()" style="font-size:12px;padding:8px 16px">🖨️ Imprimir / Guardar PDF</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn" style="background:#166534;font-size:12px;padding:8px 14px" onclick="exportRentaExcel(${ejercicio})">📊 Exportar a Excel</button>
+        <button class="btn" onclick="printRenta()" style="font-size:12px;padding:8px 16px">🖨️ Imprimir / PDF</button>
+      </div>
     </div>
 
     <!-- AVISO LEGAL -->
     <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:10px;padding:12px 14px;font-size:11px;color:#92400e;margin-bottom:20px;line-height:1.6">
-      ⚠️ <strong>Aviso:</strong> Este informe es meramente orientativo y se basa en los datos que has introducido en la app. Las retenciones en origen son estimaciones según convenios de doble imposición. Consulta siempre con un asesor fiscal o gestor antes de presentar tu declaración. Los importes pueden diferir de los datos que aparecen en tu borrador de la AEAT.
+      ⚠️ <strong>Aviso:</strong> Informe orientativo basado en tus datos. Las retenciones en origen son estimaciones según convenios de doble imposición. El cálculo de coste en ventas usa el <strong>método FIFO</strong> (primera compra que entra, primera que sale) sobre tu historial de transacciones. Consulta con un asesor fiscal antes de presentar tu declaración.
     </div>
 
     <!-- RESUMEN EJECUTIVO -->
@@ -4066,7 +4136,7 @@ function renderRenta() {
         ["Dividendos brutos",fmtEUR(totDiv.bruto),"#2563eb"],
         ["Retenciones origen","-"+fmtEUR(totDiv.retOrEUR),"#dc2626"],
         ["Retenciones Hacienda","-"+fmtEUR(totDiv.retEspNeta),"#dc2626"],
-        ["Plusvalías netas",fmtEUR(plusvalias),"#059669"],
+        ["Plusvalías",fmtEUR(plusvalias),"#059669"],
         ["Minusvalías",fmtEUR(Math.abs(minusvalias)),"#dc2626"],
         ["Base ahorro estimada",fmtEUR(Math.max(0,baseAhorro)),"#7c3aed"],
       ].map(([l,v,c])=>`<div class="card" style="padding:12px;text-align:center">
@@ -4075,28 +4145,29 @@ function renderRenta() {
       </div>`).join("")}
     </div>
 
-    <!-- SECCIÓN 1: DIVIDENDOS -->
+    <!-- SECCIÓN 1: DIVIDENDOS — Rendimientos del capital mobiliario -->
     <div class="card" style="margin-bottom:16px">
-      <h3 style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:12px">📊 Dividendos cobrados en ${yearStr}</h3>
+      <h3 style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:4px">📊 Dividendos cobrados en ${yearStr} — Rendimientos del capital mobiliario</h3>
+      <div style="font-size:10px;color:#94a3b8;margin-bottom:12px">Detalle por operación: fecha, empresa, ISIN, importe bruto, divisa/cambio, gastos, retenciones y neto cobrado</div>
       <div style="overflow-x:auto">
-        <table style="width:100%;min-width:640px;font-size:11px">
+        <table style="width:100%;min-width:1000px;font-size:10px">
           <thead><tr style="background:#f8fafc">
-            ${["Ticker","Empresa","Bruto €","Ret. origen","Imp. ret. origen","Ret. Hacienda (19%)","Deducible","Neto cobrado"].map(h=>`<th style="padding:6px 8px;text-align:${["Bruto €","Imp. ret. origen","Ret. Hacienda (19%)","Deducible","Neto cobrado"].includes(h)?"right":"left"};color:#475569;font-weight:700;border-bottom:2px solid #e2e8f0">${h}</th>`).join("")}
+            ${["Fecha","Ticker","Empresa","ISIN","Acc.","Bruto (local)","T.Cambio","Bruto €","Gastos","Ret.%","Ret.origen","Ret.Hacienda","Deducible","Neto €"].map(h=>`<th style="padding:6px 7px;text-align:${["Acc.","Bruto (local)","Bruto €","Gastos","Ret.%","Ret.origen","Ret.Hacienda","Deducible","Neto €"].includes(h)?"right":"left"};color:#475569;font-weight:700;border-bottom:2px solid #e2e8f0;white-space:nowrap">${h}</th>`).join("")}
           </tr></thead>
-          <tbody style="font-size:11px">${divTableRows}</tbody>
+          <tbody>${divTableRows}</tbody>
           ${divRows.length?`<tfoot><tr style="background:#f8fafc;font-weight:700">
-            <td colspan="2" style="padding:6px 8px">TOTAL</td>
-            <td style="padding:6px 8px;text-align:right">${fmtEUR(totDiv.bruto)}</td>
+            <td colspan="7" style="padding:6px 7px">TOTAL</td>
+            <td style="padding:6px 7px;text-align:right">${fmtEUR(totDiv.bruto)}</td>
+            <td style="padding:6px 7px;text-align:right;color:#dc2626">${totDiv.gastos>0?"−"+fmtEUR(totDiv.gastos):"—"}</td>
             <td></td>
-            <td style="padding:6px 8px;text-align:right;color:#dc2626">−${fmtEUR(totDiv.retOrEUR)}</td>
-            <td style="padding:6px 8px;text-align:right;color:#dc2626">−${fmtEUR(totDiv.retEspTotal)}</td>
-            <td style="padding:6px 8px;text-align:right;color:#059669">+${fmtEUR(totDiv.deducibleOrigen)}</td>
-            <td style="padding:6px 8px;text-align:right">${fmtEUR(totDiv.bruto-totDiv.retOrEUR-totDiv.retEspNeta)}</td>
+            <td style="padding:6px 7px;text-align:right;color:#dc2626">−${fmtEUR(totDiv.retOrEUR)}</td>
+            <td style="padding:6px 7px;text-align:right;color:#dc2626">−${fmtEUR(totDiv.retEspTotal)}</td>
+            <td style="padding:6px 7px;text-align:right;color:#059669">+${fmtEUR(totDiv.deducibleOrigen)}</td>
+            <td style="padding:6px 7px;text-align:right">${fmtEUR(totDiv.neto)}</td>
           </tr></tfoot>`:""}
         </table>
       </div>
 
-      <!-- CASILLAS IRPF DIVIDENDOS -->
       ${divRows.length?`<div style="margin-top:14px;background:#eff6ff;border-radius:8px;padding:12px;font-size:11px">
         <div style="font-weight:700;color:#1d4ed8;margin-bottom:8px">📋 Casillas orientativas IRPF — Rendimientos del capital mobiliario</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px">
@@ -4114,21 +4185,23 @@ function renderRenta() {
       </div>`:""}
     </div>
 
-    <!-- SECCIÓN 2: PLUSVALÍAS Y MINUSVALÍAS -->
+    <!-- SECCIÓN 2: VENTAS — Ganancias y pérdidas patrimoniales (FIFO) -->
     <div class="card" style="margin-bottom:16px">
-      <h3 style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:12px">📈 Ganancias y pérdidas patrimoniales — Ventas en ${yearStr}</h3>
+      <h3 style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:4px">📈 Ganancias y pérdidas patrimoniales — Ventas en ${yearStr} (método FIFO)</h3>
+      <div style="font-size:10px;color:#94a3b8;margin-bottom:12px">Detalle por operación: fechas de compra y venta, precios unitarios, comisiones de compra y venta, resultado neto</div>
       <div style="overflow-x:auto">
-        <table style="width:100%;min-width:640px;font-size:11px">
+        <table style="width:100%;min-width:1000px;font-size:10px">
           <thead><tr style="background:#f8fafc">
-            ${["Ticker","Acciones","Coste total","Ingreso venta","Resultado","F. compra","F. venta","Tenencia"].map(h=>`<th style="padding:6px 8px;text-align:${["Coste total","Ingreso venta","Resultado"].includes(h)?"right":"left"};color:#475569;font-weight:700;border-bottom:2px solid #e2e8f0">${h}</th>`).join("")}
+            ${["Ticker","Empresa","ISIN","Acc.","F.compra","F.venta","Precio compra","Precio venta","Coste total","Com.compra","Venta total","Com.venta","Resultado"].map(h=>`<th style="padding:6px 7px;text-align:${["Acc.","Precio compra","Precio venta","Coste total","Com.compra","Venta total","Com.venta","Resultado"].includes(h)?"right":"left"};color:#475569;font-weight:700;border-bottom:2px solid #e2e8f0;white-space:nowrap">${h}</th>`).join("")}
           </tr></thead>
           <tbody>${pvTableRows}</tbody>
           ${pvRows.length?`<tfoot><tr style="background:#f8fafc;font-weight:700">
-            <td colspan="2" style="padding:6px 8px">TOTAL</td>
-            <td style="padding:6px 8px;text-align:right">${fmtEUR(totPV.coste)}</td>
-            <td style="padding:6px 8px;text-align:right">${fmtEUR(totPV.ingreso)}</td>
-            <td style="padding:6px 8px;text-align:right;color:${saldoNeto>=0?"#059669":"#dc2626"}">${saldoNeto>=0?"+":""}${fmtEUR(saldoNeto)}</td>
-            <td colspan="3"></td>
+            <td colspan="8" style="padding:6px 7px">TOTAL</td>
+            <td style="padding:6px 7px;text-align:right">${fmtEUR(pvRows.reduce((s,r)=>s+r.costeTotal,0))}</td>
+            <td style="padding:6px 7px;text-align:right;color:#dc2626">−${fmtEUR(pvRows.reduce((s,r)=>s+r.comisionCompra,0))}</td>
+            <td style="padding:6px 7px;text-align:right">${fmtEUR(pvRows.reduce((s,r)=>s+r.ventaTotal,0))}</td>
+            <td style="padding:6px 7px;text-align:right;color:#dc2626">−${fmtEUR(pvRows.reduce((s,r)=>s+r.comisionVenta,0))}</td>
+            <td style="padding:6px 7px;text-align:right;color:${saldoNeto>=0?"#059669":"#dc2626"}">${saldoNeto>=0?"+":""}${fmtEUR(saldoNeto)}</td>
           </tr></tfoot>`:""}
         </table>
       </div>
@@ -4171,21 +4244,116 @@ function renderRenta() {
         <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #e2e8f0;padding:4px 0"><span>Deducción doble imposición (retención origen)</span><span style="color:#059669">−${fmtEUR(totDiv.deducibleOrigen)}</span></div>
         <div style="display:flex;justify-content:space-between;padding:6px 0;font-weight:800;font-size:13px;color:#1e293b"><span>Cuota diferencial estimada a ingresar</span><span style="color:${cuotaNeta>0?"#dc2626":"#059669"}">${cuotaNeta>0?"":"−"}${fmtEUR(Math.abs(cuotaNeta))}</span></div>
       </div>
-      <div style="margin-top:8px;font-size:10px;color:#94a3b8">Tipo marginal aplicable estimado: ${tipoMarginalAhorro(baseAhorro)} · Tramos 2024 (Ley 35/2006 IRPF)</div>
+      <div style="margin-top:8px;font-size:10px;color:#94a3b8">Tipo marginal aplicable estimado: ${tipoMarginalAhorro(baseAhorro)} · Tramos vigentes (Ley 35/2006 IRPF)</div>
     </div>
 
-    <!-- SECCIÓN 4: NOTAS Y CONSEJO -->
+    <!-- SECCIÓN 4: NOTAS -->
     <div style="background:#f8fafc;border-radius:10px;padding:14px;font-size:11px;color:#475569;line-height:1.7">
       <div style="font-weight:700;color:#1e293b;margin-bottom:6px">💡 Notas importantes para tu declaración</div>
       <ul style="margin:0;padding-left:16px">
-        <li><strong>Minusvalías:</strong> Si tienes pérdidas en ${yearStr}, puedes compensarlas con plusvalías durante los <strong>4 ejercicios siguientes</strong>.</li>
-        <li><strong>Doble imposición:</strong> La retención en origen pagada en el extranjero es deducible en España con el límite del convenio (generalmente el 15%). El exceso no es recuperable vía IRPF pero sí puede solicitarse al país de origen en algunos casos.</li>
-        <li><strong>Modelo D-6:</strong> Si tienes acciones extranjeras por valor superior a 300.000€ debes presentar el modelo D-6 en enero.</li>
-        <li><strong>Modelo 720:</strong> Si el valor de los activos en el extranjero supera 50.000€, debes declararlo con el modelo 720.</li>
-        <li><strong>Corredor fiscal:</strong> Recuerda que los dividendos de empresas españolas ya incluyen la retención del 19% aplicada por el intermediario financiero.</li>
+        <li><strong>Método FIFO:</strong> en ventas parciales, el coste de adquisición se calcula consumiendo primero las compras más antiguas de cada ticker, tal como exige Hacienda.</li>
+        <li><strong>Minusvalías:</strong> si tienes pérdidas en ${yearStr}, puedes compensarlas con plusvalías durante los <strong>4 ejercicios siguientes</strong>.</li>
+        <li><strong>Doble imposición:</strong> la retención en origen pagada en el extranjero es deducible en España con el límite del convenio (generalmente 15%). El exceso no es recuperable vía IRPF.</li>
+        <li><strong>Modelo D-6:</strong> si tienes acciones extranjeras por valor superior a 300.000€ debes presentar el modelo D-6 en enero.</li>
+        <li><strong>Modelo 720:</strong> si el valor de los activos en el extranjero supera 50.000€, debes declararlo con el modelo 720.</li>
+        <li><strong>Gastos de custodia:</strong> son deducibles de los rendimientos del capital mobiliario; regístralos al anotar el dividendo si tu bróker los cobra.</li>
       </ul>
     </div>
   </div>`;
+}
+
+function exportRentaExcel(ejercicio) {
+  const yearStr = String(ejercicio);
+  // Reconstruir los mismos datos que renderRenta para exportarlos
+  const divEjercicio = state.dividends.filter(d => (d.date||"").startsWith(yearStr));
+  function retOrigen(ticker, currency) {
+    if (ticker.endsWith(".MC") || currency==="EUR") return 0.19;
+    if (currency==="USD") return 0.15;
+    if (currency==="GBP") return 0.00;
+    if (ticker.endsWith(".SW")||ticker.endsWith(".VX")) return 0.35;
+    if (ticker.endsWith(".PA")||ticker.endsWith(".NX")) return 0.128;
+    if (ticker.endsWith(".DE")||ticker.endsWith(".F")) return 0.25;
+    if (ticker.endsWith(".AS")) return 0.15;
+    if (ticker.endsWith(".MI")) return 0.26;
+    if (ticker.endsWith(".LS")) return 0.28;
+    return 0.15;
+  }
+
+  const divRows = divEjercicio.map(d => {
+    const pos = state.positions.find(p=>p.ticker===d.ticker);
+    const currency = d.currency || pos?.currency || "EUR";
+    const brutoLocal = +((d.amount||0)*(d.shares||0)).toFixed(2);
+    const brutoEUR = +toEUR(brutoLocal, currency).toFixed(2);
+    const retOr = retOrigen(d.ticker, currency);
+    const retOrEUR = +(brutoEUR*retOr).toFixed(2);
+    const retEsp = +(brutoEUR*0.19).toFixed(2);
+    const deducible = +(brutoEUR*Math.min(retOr,0.15)).toFixed(2);
+    const retEspNeta = +Math.max(0, retEsp-deducible).toFixed(2);
+    return {
+      "Tipo":"Dividendo", "Fecha":(d.date||"").slice(0,10), "Empresa":pos?.name||d.ticker,
+      "Ticker":d.ticker, "ISIN":pos?.isin||"", "Unidades":d.shares,
+      "Importe bruto (local)":brutoLocal, "Divisa":currency,
+      "Importe bruto (EUR)":brutoEUR, "Gastos":d.fee||0,
+      "Retención origen (%)":+(retOr*100).toFixed(1), "Retención origen (€)":retOrEUR,
+      "Retención Hacienda (€)":retEsp, "Deducible doble imposición (€)":deducible,
+      "Neto (€)": +(brutoEUR-retOrEUR-retEspNeta-(d.fee||0)).toFixed(2)
+    };
+  });
+
+  const txByTicker = {};
+  [...state.transactions].sort((a,b)=>(a.date||"").localeCompare(b.date||"")).forEach(t=>{
+    if (!txByTicker[t.ticker]) txByTicker[t.ticker]=[];
+    txByTicker[t.ticker].push(t);
+  });
+  const ventaRows = [];
+  Object.entries(txByTicker).forEach(([ticker,txs])=>{
+    const pos = state.positions.find(p=>p.ticker===ticker);
+    const currency = pos?.currency || "EUR";
+    const lots = [];
+    txs.forEach(t=>{
+      if (t.type==="BUY") lots.push({shares:t.shares,costUnit:t.price,date:t.date,fxRate:t.fx_rate&&t.fx_rate!==1?t.fx_rate:null,fee:t.commission||0});
+      else if (t.type==="SELL") {
+        let toSell=t.shares; const used=[];
+        while(toSell>0 && lots.length>0){
+          const lot=lots[0]; const take=Math.min(lot.shares,toSell);
+          used.push({shares:take,costUnit:lot.costUnit,date:lot.date,fxRate:lot.fxRate,fee:lot.fee*(take/lot.shares)});
+          lot.shares-=take; toSell-=take;
+          if(lot.shares<=0.00001) lots.shift();
+        }
+        if((t.date||"").startsWith(yearStr) && used.length){
+          const sellFx=t.fx_rate&&t.fx_rate!==1?t.fx_rate:null;
+          const ventaLocal=t.price*t.shares;
+          const ventaEUR=sellFx?+(ventaLocal/sellFx).toFixed(2):+toEUR(ventaLocal,currency).toFixed(2);
+          const comV=t.commission||0;
+          const comVEUR=sellFx?+(comV/sellFx).toFixed(2):+toEUR(comV,currency).toFixed(2);
+          let costeEUR=0, comCEUR=0; const fechas=[];
+          used.forEach(u=>{
+            const cl=u.costUnit*u.shares;
+            costeEUR += u.fxRate?cl/u.fxRate:toEUR(cl,currency);
+            comCEUR += u.fxRate?(u.fee/u.fxRate):toEUR(u.fee,currency);
+            fechas.push(u.date?.slice(0,10));
+          });
+          ventaRows.push({
+            "Tipo":"Venta","Fecha compra":fechas.join(" + "),"Fecha venta":(t.date||"").slice(0,10),
+            "Empresa":pos?.name||ticker,"Ticker":ticker,"ISIN":pos?.isin||"",
+            "Unidades":t.shares,"Precio compra medio":+(costeEUR/t.shares).toFixed(4),
+            "Precio venta":t.price,"Coste total (EUR)":+costeEUR.toFixed(2),
+            "Comisión compra (EUR)":+comCEUR.toFixed(2),"Importe venta (EUR)":ventaEUR,
+            "Comisión venta (EUR)":comVEUR,
+            "Resultado (EUR)":+((ventaEUR-comVEUR)-(costeEUR+comCEUR)).toFixed(2),
+            "Divisa":currency,"Nº lotes FIFO":used.length
+          });
+        }
+      }
+    });
+  });
+
+  const wb = XLSX.utils.book_new();
+  const wsDiv = XLSX.utils.json_to_sheet(divRows.length?divRows:[{"Info":"Sin dividendos en "+yearStr}]);
+  XLSX.utils.book_append_sheet(wb, wsDiv, "Dividendos");
+  const wsVenta = XLSX.utils.json_to_sheet(ventaRows.length?ventaRows:[{"Info":"Sin ventas en "+yearStr}]);
+  XLSX.utils.book_append_sheet(wb, wsVenta, "Ventas FIFO");
+  XLSX.writeFile(wb, `Informe_Fiscal_${yearStr}.xlsx`);
 }
 
 function printRenta() {
