@@ -1027,7 +1027,7 @@ function exportCarteraExcel() {
     .map(t=>({
       "Fecha": (t.date||"").slice(0,10), "Ticker": t.ticker, "Tipo": t.type,
       "Acciones": t.shares, "Precio": t.price, "Comisión": t.commission||0,
-      "Divisa": t.currency||"EUR", "Notas": t.notes||""
+      "Divisa": t.currency||"EUR", "Broker": t.broker||"", "Notas": t.notes||""
     }));
 
   // ── Hoja 3: Dividendos cobrados (historial real registrado) ──
@@ -1467,6 +1467,7 @@ async function parseImportFile() {
           price: parseNum(get(row,"Precio")),
           commission: parseNum(get(row,"Comisión")),
           currency: get(row,"Divisa") || "EUR",
+          broker: get(row,"Broker") || "",
           notes: get(row,"Notas"),
           source: "kapital-export"
         })).filter(t => t.ticker && t.shares > 0 && t.type);
@@ -2360,41 +2361,148 @@ function deleteDividend(id){ state.dividends=state.dividends.filter(d=>d.id!==id
 // TAB 3 — TRANSACCIONES
 // ─────────────────────────────────────────────
 function renderTransactions() {
-  const rows = state.transactions.map(t => `
-    <tr>
-      <td style="color:#94a3b8">${t.id}</td>
-      <td style="color:#64748b">${String(t.date || "").slice(0,16)}</td>
+  const sel = state._selTx || null;
+  const rows = state.transactions.map(t => {
+    const isSel = sel === t.id;
+    return `<tr style="cursor:pointer;background:${isSel?"#eff6ff":""}" onclick="state._selTx=${t.id===sel?null:t.id};renderActiveTab()">
+      <td style="color:#94a3b8;font-size:10px">${t.id}</td>
+      <td style="color:#64748b;white-space:nowrap">${String(t.date || "").slice(0,10)}</td>
       <td><div style="display:flex;align-items:center;gap:6px">${logoImg(t.ticker,"",22)}<span style="color:#1d4ed8;font-weight:700">${esc(t.ticker)}</span></div></td>
-      <td>
-        <span class="badge" style="background:${t.type==="BUY" ? "#2563eb22" : t.type==="SELL" ? "#dc262622" : "#b4530922"};color:${t.type==="BUY" ? "#2563eb" : t.type==="SELL" ? "#dc2626" : "#b45309"}">
-          ${esc(t.type)}
-        </span>
-      </td>
-      <td>${t.shares}</td>
-      <td>${fmtEUR(t.price || 0)}</td>
-      <td>${fmtEUR(t.commission || 0)}</td>
+      <td><span class="badge" style="background:${t.type==="BUY"?"#2563eb22":t.type==="SELL"?"#dc262622":"#b4530922"};color:${t.type==="BUY"?"#2563eb":t.type==="SELL"?"#dc2626":"#b45309"}">${esc(t.type)}</span></td>
+      <td style="text-align:right">${t.shares}</td>
+      <td style="text-align:right">${fmtNum(t.price || 0)}</td>
+      <td style="text-align:right">${fmtNum(t.commission || 0)}</td>
       <td>${esc(t.currency || "")}</td>
-      <td style="font-weight:600">${fmtEUR((t.shares || 0) * (t.price || 0) + (t.commission || 0))}</td>
-      <td style="color:#64748b">${esc(t.notes || "")}</td>
-      <td><button class="btn-danger-sm" onclick="deleteTransaction(${t.id})">✕</button></td>
-    </tr>
-  `).join("");
+      <td style="font-weight:600;text-align:right">${fmtNum((t.shares||0)*(t.price||0)+(t.commission||0))}</td>
+      <td style="color:#64748b;font-size:11px;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.broker||"—")}</td>
+      <td style="color:#64748b;font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.notes||"")}</td>
+      <td style="white-space:nowrap">
+        <button class="btn" style="font-size:10px;padding:2px 7px;margin-right:3px" onclick="event.stopPropagation();openEditTransaction(${t.id})">✏️</button>
+        <button class="btn-danger-sm" onclick="event.stopPropagation();deleteTransaction(${t.id})">✕</button>
+      </td>
+    </tr>`;
+  }).join("");
 
   return `
-    <div style="padding:14px;overflow-x:auto">
-      <table style="min-width:900px">
-        <thead>
-          <tr>${["ID","Fecha","Ticker","Tipo","Acciones","Precio","Comisión","Divisa","Total","Notas",""].map(h => `<th>${h}</th>`).join("")}</tr>
-        </thead>
-        <tbody>
-          ${rows || `<tr><td colspan="11" style="text-align:center;color:#94a3b8;padding:28px">Sin transacciones registradas</td></tr>`}
-        </tbody>
-      </table>
-    </div>
-  `;
+    <div style="padding:14px">
+      <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn" style="font-size:11px;padding:5px 12px" onclick="openAddTxManual()">＋ Nueva transacción</button>
+        ${sel!=null?`<button class="btn" style="font-size:11px;padding:5px 12px;background:#475569" onclick="openEditTransaction(${sel})">✏️ Editar seleccionada</button>`:""}
+        <span style="font-size:11px;color:#94a3b8;margin-left:4px">${state.transactions.length} transacciones · Click en fila para seleccionar</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table style="min-width:980px">
+          <thead>
+            <tr>${["ID","Fecha","Ticker","Tipo","Acciones","Precio","Comisión","Divisa","Total","Broker","Notas",""].map(h=>`<th>${h}</th>`).join("")}</tr>
+          </thead>
+          <tbody>
+            ${rows||`<tr><td colspan="12" style="text-align:center;color:#94a3b8;padding:28px">Sin transacciones registradas</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
 }
 
-function deleteTransaction(id){ if(!confirm("¿Eliminar esta transacción?")) return; state.transactions=state.transactions.filter(t=>t.id!==id); save(); renderActiveTab(); }
+function openAddTxManual() {
+  const tickers = [...new Set([...state.positions.map(p=>p.ticker), ...state.transactions.map(t=>t.ticker)])].sort();
+  openModal(`
+    <h3>➕ Nueva transacción</h3>
+    <div class="grid2">
+      <div class="field"><label>Ticker</label><input id="etx-ticker" class="inp" list="etx-ticker-list" placeholder="Ej: IBE.MC">
+        <datalist id="etx-ticker-list">${tickers.map(t=>`<option>${t}</option>`).join("")}</datalist>
+      </div>
+      <div class="field"><label>Tipo</label>
+        <select id="etx-type" class="inp">
+          <option>BUY</option><option>SELL</option><option>DIVIDEND</option>
+        </select>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Fecha</label><input id="etx-date" type="date" class="inp" value="${new Date().toISOString().slice(0,10)}"></div>
+      <div class="field"><label>Acciones</label><input id="etx-shares" type="number" step="any" class="inp" value="0"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Precio</label><input id="etx-price" type="number" step="any" class="inp" value="0"></div>
+      <div class="field"><label>Comisión</label><input id="etx-commission" type="number" step="any" class="inp" value="0"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Divisa</label>
+        <select id="etx-currency" class="inp">${CURRENCIES.map(c=>`<option ${c==="EUR"?"selected":""}>${c}</option>`).join("")}</select>
+      </div>
+      <div class="field"><label>Broker</label><input id="etx-broker" class="inp" placeholder="IBKR, Degiro, XTB..."></div>
+    </div>
+    <div class="field"><label>Notas</label><input id="etx-notes" class="inp" placeholder="Opcional"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
+      <button class="btn" onclick="saveTxModal(null)">💾 Guardar</button>
+    </div>`);
+}
+
+function openEditTransaction(id) {
+  const t = state.transactions.find(tx=>tx.id===id);
+  if (!t) return;
+  const tickers = [...new Set([...state.positions.map(p=>p.ticker), ...state.transactions.map(t=>t.ticker)])].sort();
+  openModal(`
+    <h3>✏️ Editar transacción</h3>
+    <div class="grid2">
+      <div class="field"><label>Ticker</label><input id="etx-ticker" class="inp" value="${esc(t.ticker)}" list="etx-ticker-list">
+        <datalist id="etx-ticker-list">${tickers.map(tk=>`<option>${tk}</option>`).join("")}</datalist>
+      </div>
+      <div class="field"><label>Tipo</label>
+        <select id="etx-type" class="inp">
+          ${["BUY","SELL","DIVIDEND"].map(tp=>`<option ${t.type===tp?"selected":""}>${tp}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Fecha</label><input id="etx-date" type="date" class="inp" value="${String(t.date||"").slice(0,10)}"></div>
+      <div class="field"><label>Acciones</label><input id="etx-shares" type="number" step="any" class="inp" value="${t.shares||0}"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Precio</label><input id="etx-price" type="number" step="any" class="inp" value="${t.price||0}"></div>
+      <div class="field"><label>Comisión</label><input id="etx-commission" type="number" step="any" class="inp" value="${t.commission||0}"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Divisa</label>
+        <select id="etx-currency" class="inp">${CURRENCIES.map(c=>`<option ${c===t.currency?"selected":""}>${c}</option>`).join("")}</select>
+      </div>
+      <div class="field"><label>Broker</label><input id="etx-broker" class="inp" value="${esc(t.broker||"")}" placeholder="IBKR, Degiro, XTB..."></div>
+    </div>
+    <div class="field"><label>Notas</label><input id="etx-notes" class="inp" value="${esc(t.notes||"")}"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
+      <button class="btn" onclick="saveTxModal(${id})">💾 Guardar</button>
+    </div>`);
+}
+
+function saveTxModal(id) {
+  const ticker = (document.getElementById("etx-ticker")?.value||"").trim().toUpperCase();
+  const type   = document.getElementById("etx-type")?.value||"BUY";
+  const date   = document.getElementById("etx-date")?.value;
+  const shares = +document.getElementById("etx-shares")?.value||0;
+  const price  = +document.getElementById("etx-price")?.value||0;
+  const commission = +document.getElementById("etx-commission")?.value||0;
+  const currency = document.getElementById("etx-currency")?.value||"EUR";
+  const broker = document.getElementById("etx-broker")?.value||"";
+  const notes  = document.getElementById("etx-notes")?.value||"";
+  if (!ticker) { alert("El ticker es obligatorio"); return; }
+  if (id !== null) {
+    // Editar existente
+    const i = state.transactions.findIndex(t=>t.id===id);
+    if (i>=0) state.transactions[i] = {...state.transactions[i], ticker, type, date: new Date(date).toISOString(), shares, price, commission, currency, broker, notes};
+  } else {
+    // Nueva
+    state.transactions.unshift({ id: uid(), ticker, type, date: new Date(date).toISOString(), shares, price, commission, currency, broker, notes });
+  }
+  save(); closeModal(); renderActiveTab();
+}
+
+function deleteTransaction(id){
+  if(!confirm("¿Eliminar esta transacción?")) return;
+  state.transactions=state.transactions.filter(t=>t.id!==id);
+  if (state._selTx===id) state._selTx=null;
+  save(); renderActiveTab();
+}
 
 // ─────────────────────────────────────────────
 // TAB 4 — GRÁFICOS
@@ -3975,10 +4083,19 @@ function deletePosition(ticker) {
 }
 
 function deleteCartera() {
-  if (!state.positions.length) { alert("La cartera ya está vacía."); return; }
-  if (!confirm(`⚠️ ¿Seguro que quieres ELIMINAR TODA LA CARTERA?\n\nSe borrarán las ${state.positions.length} posiciones que tienes actualmente. Esta acción no se puede deshacer.`)) return;
-  state.positions = [];
+  if (!state.positions.length && !state.transactions.length) { alert("La cartera ya está vacía."); return; }
+  const nPos = state.positions.length;
+  const nTx  = state.transactions.length;
+  const nDiv = (state.dividends||[]).length;
+  if (!confirm(`⚠️ ¿Seguro que quieres ELIMINAR TODA LA CARTERA?\n\n• ${nPos} posiciones\n• ${nTx} transacciones\n• ${nDiv} dividendos registrados\n\nEsta acción no se puede deshacer.`)) return;
+  state.positions    = [];
+  state.transactions = [];
+  state.dividends    = [];
+  state.divInfo      = [];
+  state.yieldCache   = {};
+  state.priceCache   = {};
   state.selectedTicker = null;
+  state._selTx = null;
   buildDivInfo(); save(); renderHeader(); renderActiveTab();
 }
 
@@ -4623,7 +4740,7 @@ function exportRentaExcel(ejercicio) {
             "Comisión compra (EUR)":+comCEUR.toFixed(2),"Importe venta (EUR)":ventaEUR,
             "Comisión venta (EUR)":comVEUR,
             "Resultado (EUR)":+((ventaEUR-comVEUR)-(costeEUR+comCEUR)).toFixed(2),
-            "Divisa":currency,"Nº lotes FIFO":used.length
+            "Divisa":currency,"Broker":t.broker||"","Nº lotes FIFO":used.length
           });
         }
       }
