@@ -2486,22 +2486,84 @@ function saveTxModal(id) {
   const broker = document.getElementById("etx-broker")?.value||"";
   const notes  = document.getElementById("etx-notes")?.value||"";
   if (!ticker) { alert("El ticker es obligatorio"); return; }
+
   if (id !== null) {
     // Editar existente
     const i = state.transactions.findIndex(t=>t.id===id);
-    if (i>=0) state.transactions[i] = {...state.transactions[i], ticker, type, date: new Date(date).toISOString(), shares, price, commission, currency, broker, notes};
+    if (i>=0) state.transactions[i] = {...state.transactions[i], ticker, type,
+      date: new Date(date).toISOString(), shares, price, commission, currency, broker, notes};
   } else {
     // Nueva
-    state.transactions.unshift({ id: uid(), ticker, type, date: new Date(date).toISOString(), shares, price, commission, currency, broker, notes });
+    state.transactions.unshift({ id: uid(), ticker, type,
+      date: new Date(date).toISOString(), shares, price, commission, currency, broker, notes });
   }
-  save(); closeModal(); renderActiveTab();
+
+  // Recalcular la posición afectada desde el historial FIFO
+  _rebuildPositionFromTx(ticker, currency);
+
+  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
+  refreshDividendYields();
 }
 
-function deleteTransaction(id){
-  if(!confirm("¿Eliminar esta transacción?")) return;
-  state.transactions=state.transactions.filter(t=>t.id!==id);
+// Reconstruye UNA posición desde el historial de transacciones (FIFO)
+function _rebuildPositionFromTx(ticker, currency) {
+  const txs = [...state.transactions]
+    .filter(t => t.ticker === ticker && (t.type==="BUY"||t.type==="SELL"))
+    .sort((a,b) => (a.date||"").localeCompare(b.date||""));
+
+  // Cola FIFO de lotes de compra
+  const lots = [];
+  txs.forEach(t => {
+    if (t.type === "BUY") {
+      lots.push({ shares: t.shares, price: t.price, date: t.date });
+    } else if (t.type === "SELL") {
+      let toSell = t.shares;
+      while (toSell > 0 && lots.length) {
+        const take = Math.min(lots[0].shares, toSell);
+        lots[0].shares -= take;
+        toSell -= take;
+        if (lots[0].shares <= 0.0001) lots.shift();
+      }
+    }
+  });
+
+  // Calcular shares restantes y coste medio ponderado
+  const remaining = lots.filter(l => l.shares > 0.0001);
+  const totalShares = remaining.reduce((s,l) => s + l.shares, 0);
+  const totalCost   = remaining.reduce((s,l) => s + l.shares * l.price, 0);
+  const avgCost     = totalShares > 0 ? totalCost / totalShares : 0;
+  const firstDate   = remaining.length ? remaining[0].date?.slice(0,10) : new Date().toISOString().slice(0,10);
+
+  // Actualizar o eliminar la posición
+  const idx = state.positions.findIndex(p => p.ticker === ticker);
+  if (totalShares > 0.0001) {
+    const existing = state.positions[idx] || {};
+    const updated = {
+      ticker,
+      name: existing.name || ticker,
+      shares: +totalShares.toFixed(6),
+      avg_cost: +avgCost.toFixed(6),
+      currency: existing.currency || currency || detectCurrencyFromTicker(ticker),
+      sector: existing.sector || guessSectorFromNameOrTicker(ticker, existing.name),
+      date: existing.date || firstDate,
+      fx_rate: existing.fx_rate || 1
+    };
+    if (idx >= 0) state.positions[idx] = updated;
+    else state.positions.push(updated);
+  } else {
+    // Vendido todo — eliminar la posición
+    if (idx >= 0) state.positions.splice(idx, 1);
+  }
+}
+
+function deleteTransaction(id) {
+  if (!confirm("¿Eliminar esta transacción?")) return;
+  const tx = state.transactions.find(t=>t.id===id);
+  state.transactions = state.transactions.filter(t=>t.id!==id);
   if (state._selTx===id) state._selTx=null;
-  save(); renderActiveTab();
+  // Recalcular la posición afectada
+  if (tx) _rebuildPositionFromTx(tx.ticker, tx.currency);
+  buildDivInfo(); save(); renderHeader(); renderActiveTab();
 }
 
 // ─────────────────────────────────────────────
