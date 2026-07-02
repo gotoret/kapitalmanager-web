@@ -2361,21 +2361,59 @@ function deleteDividend(id){ state.dividends=state.dividends.filter(d=>d.id!==id
 // TAB 3 — TRANSACCIONES
 // ─────────────────────────────────────────────
 function renderTransactions() {
+  if (!state._txSort) state._txSort = "date";
+  if (!state._txDir)  state._txDir  = "desc";
+
+  const COLS = [
+    {key:"id",    label:"ID"},
+    {key:"date",  label:"Fecha"},
+    {key:"ticker",label:"Ticker"},
+    {key:"type",  label:"Tipo"},
+    {key:"shares",label:"Acciones"},
+    {key:"price", label:"Precio"},
+    {key:"commission",label:"Comisión"},
+    {key:"currency",label:"Divisa"},
+    {key:"total", label:"Total"},
+    {key:"broker",label:"Broker"},
+    {key:"notes", label:"Notas"},
+    {key:"",      label:""},
+  ];
+
   const sel = state._selTx || null;
-  const rows = state.transactions.map(t => {
+  const dir = state._txDir === "asc" ? 1 : -1;
+  const sorted = [...state.transactions].sort((a,b) => {
+    const k = state._txSort;
+    const va = k==="total" ? (a.shares||0)*(a.price||0) : (a[k]||"");
+    const vb = k==="total" ? (b.shares||0)*(b.price||0) : (b[k]||"");
+    if (typeof va === "number") return dir*(va-vb);
+    return dir*String(va).localeCompare(String(vb));
+  });
+
+  const thStyle = (k) => {
+    const active = state._txSort === k;
+    return `style="cursor:${k?"pointer":"default"};user-select:none;white-space:nowrap;background:${active?"#dbeafe":"#f8fafc"};color:${active?"#1d4ed8":"#475569"}"`;
+  };
+  const arrow = (k) => state._txSort===k ? (state._txDir==="asc"?" ↑":" ↓") : "";
+  const sortClick = (k) => k ? `onclick="txSort('${k}')"` : "";
+
+  const headers = COLS.map(c =>
+    `<th ${thStyle(c.key)} ${sortClick(c.key)}>${c.label}${arrow(c.key)}</th>`
+  ).join("");
+
+  const rows = sorted.map(t => {
     const isSel = sel === t.id;
-    return `<tr style="cursor:pointer;background:${isSel?"#eff6ff":""}" onclick="state._selTx=${t.id===sel?null:t.id};renderActiveTab()">
+    return `<tr style="cursor:pointer;background:${isSel?"#eff6ff":""}" onclick="state._selTx=${t.id===sel?"null":t.id};renderActiveTab()">
       <td style="color:#94a3b8;font-size:10px">${t.id}</td>
-      <td style="color:#64748b;white-space:nowrap">${String(t.date || "").slice(0,10)}</td>
+      <td style="color:#64748b;white-space:nowrap">${String(t.date||"").slice(0,10)}</td>
       <td><div style="display:flex;align-items:center;gap:6px">${logoImg(t.ticker,"",22)}<span style="color:#1d4ed8;font-weight:700">${esc(t.ticker)}</span></div></td>
       <td><span class="badge" style="background:${t.type==="BUY"?"#2563eb22":t.type==="SELL"?"#dc262622":"#b4530922"};color:${t.type==="BUY"?"#2563eb":t.type==="SELL"?"#dc2626":"#b45309"}">${esc(t.type)}</span></td>
       <td style="text-align:right">${t.shares}</td>
-      <td style="text-align:right">${fmtNum(t.price || 0)}</td>
-      <td style="text-align:right">${fmtNum(t.commission || 0)}</td>
-      <td>${esc(t.currency || "")}</td>
+      <td style="text-align:right">${fmtNum(t.price||0)}</td>
+      <td style="text-align:right">${fmtNum(t.commission||0)}</td>
+      <td>${esc(t.currency||"")}</td>
       <td style="font-weight:600;text-align:right">${fmtNum((t.shares||0)*(t.price||0)+(t.commission||0))}</td>
-      <td style="color:#64748b;font-size:11px;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.broker||"—")}</td>
-      <td style="color:#64748b;font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.notes||"")}</td>
+      <td style="color:#64748b;font-size:11px;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.broker||"—")}</td>
+      <td style="color:#64748b;font-size:11px;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.notes||"")}</td>
       <td style="white-space:nowrap">
         <button class="btn" style="font-size:10px;padding:2px 7px;margin-right:3px" onclick="event.stopPropagation();openEditTransaction(${t.id})">✏️</button>
         <button class="btn-danger-sm" onclick="event.stopPropagation();deleteTransaction(${t.id})">✕</button>
@@ -2383,24 +2421,32 @@ function renderTransactions() {
     </tr>`;
   }).join("");
 
-  return `
-    <div style="padding:14px">
-      <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button class="btn" style="font-size:11px;padding:5px 12px" onclick="openAddTxManual()">＋ Nueva transacción</button>
-        ${sel!=null?`<button class="btn" style="font-size:11px;padding:5px 12px;background:#475569" onclick="openEditTransaction(${sel})">✏️ Editar seleccionada</button>`:""}
-        <span style="font-size:11px;color:#94a3b8;margin-left:4px">${state.transactions.length} transacciones · Click en fila para seleccionar</span>
-      </div>
-      <div style="overflow-x:auto">
-        <table style="min-width:980px">
-          <thead>
-            <tr>${["ID","Fecha","Ticker","Tipo","Acciones","Precio","Comisión","Divisa","Total","Broker","Notas",""].map(h=>`<th>${h}</th>`).join("")}</tr>
-          </thead>
-          <tbody>
-            ${rows||`<tr><td colspan="12" style="text-align:center;color:#94a3b8;padding:28px">Sin transacciones registradas</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </div>`;
+  return `<div style="padding:14px">
+    <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <button class="btn" style="font-size:11px;padding:5px 12px" onclick="openAddTxManual()">＋ Nueva transacción</button>
+      ${sel!=null?`<button class="btn" style="font-size:11px;padding:5px 12px;background:#475569" onclick="openEditTransaction(${sel})">✏️ Editar seleccionada</button>`:""}
+      <span style="font-size:11px;color:#94a3b8">${state.transactions.length} transacciones · Click cabecera para ordenar</span>
+    </div>
+    <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:11px;color:#92400e;margin-bottom:10px">
+      ℹ️ <strong>Las posiciones se calculan automáticamente desde las transacciones (método FIFO).</strong> Al añadir, editar o borrar una transacción, la cartera se actualiza sola.
+    </div>
+    <div style="overflow-x:auto">
+      <table style="min-width:1000px">
+        <thead><tr>${headers}</tr></thead>
+        <tbody>${rows||`<tr><td colspan="12" style="text-align:center;color:#94a3b8;padding:28px">Sin transacciones</td></tr>`}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function txSort(col) {
+  if (state._txSort === col) {
+    state._txDir = state._txDir === "asc" ? "desc" : "asc";
+  } else {
+    state._txSort = col;
+    state._txDir = col === "date" ? "desc" : "asc";
+  }
+  renderActiveTab();
 }
 
 function openAddTxManual() {
@@ -4136,12 +4182,84 @@ function saveEditPos(ticker) {
 }
 
 function deletePosition(ticker) {
-  const tk=ticker||state.selectedTicker;
-  if(!tk){alert("Selecciona una posición primero");return;}
-  if(!confirm(`¿Eliminar ${tk} de la cartera?`))return;
-  state.positions=state.positions.filter(p=>p.ticker!==tk);
-  state.selectedTicker=null;
+  const tk = ticker || state.selectedTicker;
+  if (!tk) { alert("Selecciona una posición primero"); return; }
+  const nTx = state.transactions.filter(t=>t.ticker===tk).length;
+  const msg = nTx > 0
+    ? `¿Eliminar ${tk} de la cartera?\n\nEsto también eliminará sus ${nTx} transacciones del historial.`
+    : `¿Eliminar ${tk} de la cartera?`;
+  if (!confirm(msg)) return;
+  state.positions = state.positions.filter(p=>p.ticker!==tk);
+  state.transactions = state.transactions.filter(t=>t.ticker!==tk);
+  state.selectedTicker = null;
   buildDivInfo(); save(); renderHeader(); renderActiveTab();
+}
+
+function saveEditPos(ticker) {
+  const idx = state.positions.findIndex(p=>p.ticker===ticker);
+  if (idx<0) return;
+  const currency = document.getElementById("m-cur").value;
+  const fxRawInput = +document.getElementById("m-fx-rate")?.value || 0;
+  const fx_rate = currency==="EUR" ? 1 : (fxRawInput>0 ? fxRawInput : (state.positions[idx].fx_rate||1));
+  const newShares   = +document.getElementById("m-shares").value;
+  const newAvgCost  = +document.getElementById("m-cost").value;
+  const oldShares   = state.positions[idx].shares;
+  const oldAvgCost  = state.positions[idx].avg_cost;
+  const name        = document.getElementById("m-name").value;
+  const sector      = document.getElementById("m-sector").value;
+  const date        = document.getElementById("m-date").value;
+
+  // Actualizar metadatos en la posición
+  state.positions[idx] = {...state.positions[idx], name, shares:newShares, avg_cost:newAvgCost, currency, sector, date, fx_rate};
+
+  // Propagar nombre, divisa y sector a las transacciones de este ticker
+  state.transactions = state.transactions.map(t =>
+    t.ticker===ticker ? {...t, currency, name} : t
+  );
+
+  // Si shares o avg_cost cambiaron manualmente, crear/ajustar transacción de ajuste
+  // para que el historial siempre refleje la realidad
+  if (Math.abs(newShares-oldShares) > 0.0001 || Math.abs(newAvgCost-oldAvgCost) > 0.0001) {
+    // Recalcular desde transacciones para ver cuánto hay actualmente
+    const txShares = _calcSharesFromTx(ticker);
+    const diffShares = newShares - txShares;
+    if (Math.abs(diffShares) > 0.0001) {
+      // Añadir transacción de ajuste para cuadrar
+      state.transactions.push({
+        id: uid(),
+        ticker, type: diffShares > 0 ? "BUY" : "SELL",
+        date: (date ? new Date(date) : new Date()).toISOString(),
+        shares: Math.abs(diffShares),
+        price: newAvgCost,
+        commission: 0,
+        currency,
+        broker: "",
+        notes: "Ajuste manual de posición"
+      });
+    }
+  }
+
+  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
+}
+
+// Calcula las shares actuales de un ticker desde el historial de transacciones
+function _calcSharesFromTx(ticker) {
+  const lots = [];
+  [...state.transactions]
+    .filter(t=>t.ticker===ticker && (t.type==="BUY"||t.type==="SELL"))
+    .sort((a,b)=>(a.date||"").localeCompare(b.date||""))
+    .forEach(t => {
+      if (t.type==="BUY") lots.push({shares:t.shares});
+      else {
+        let s=t.shares;
+        while(s>0&&lots.length){
+          const take=Math.min(lots[0].shares,s);
+          lots[0].shares-=take; s-=take;
+          if(lots[0].shares<=0.0001) lots.shift();
+        }
+      }
+    });
+  return lots.reduce((s,l)=>s+l.shares,0);
 }
 
 function deleteCartera() {
