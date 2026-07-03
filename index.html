@@ -408,31 +408,59 @@ const save = () => {
 const getFX = (cur) => state.fxCache[cur] || FX_FALLBACK[cur] || 1;
 
 // Los tickers .L cotizan en PENIQUES (GBp), no en libras (GBP).
-// Esta función convierte a libras si es necesario antes de cualquier cálculo.
+// IMPORTANTE: hay dos contextos distintos:
+//   - avg_cost guardado en posición = precio en GBp (peniques, como viene del broker/CSV)
+//   - priceCache[ticker] = precio ya en GBP (dividido entre 100 al obtenerlo de Yahoo)
+// Por tanto:
+//   - posToEUR(p.shares * p.avg_cost, p)  → necesita dividir entre 100 (viene en GBp)
+//   - posToEUR(priceCache[t] * p.shares, p) → NO debe dividir entre 100 (ya en GBP)
+// Para evitar la confusión, usamos posToEUR solo para avg_cost (GBp nativo),
+// y para precios del cache usamos directamente toEUR (ya en GBP).
+
 const isGBpTicker = (ticker) => String(ticker || "").toUpperCase().endsWith(".L");
+
+// Convierte GBp → GBP dividiendo entre 100 (solo para avg_cost y precios de transacciones)
 const gbpToGBP = (v, ticker) => isGBpTicker(ticker) ? (v || 0) / 100 : (v || 0);
 
-// toEUR ahora acepta ticker opcional para aplicar corrección de peniques
+// toEUR: sin corrección GBp (para valores ya en la divisa base: priceCache, totales)
 const toEUR = (v, cur, ticker) => {
   const val = ticker ? gbpToGBP(v, ticker) : (v || 0);
   return val * getFX(cur);
 };
 
-// Versión histórica: usa el tipo guardado en la posición para el coste
+// toEURhist: para costes históricos (avg_cost en GBp)
 const toEURhist = (v, pos) => {
   if (!pos || pos.currency === "EUR") return v || 0;
-  const val = gbpToGBP(v, pos.ticker);
+  const val = gbpToGBP(v, pos.ticker); // avg_cost viene en GBp → dividir entre 100
   if (pos.fx_rate && pos.fx_rate !== 1) return val / pos.fx_rate;
   return val * getFX(pos.currency);
 };
-// Helper: convierte valor en divisa local de una posición a EUR, corrigiendo peniques para .L
+
+// posToEUR: para avg_cost (en GBp nativos del broker) → aplica corrección
 const posToEUR = (v, pos) => {
   if (!v || isNaN(v)) return 0;
   const ticker = pos?.ticker || "";
   const currency = pos?.currency || "EUR";
-  const val = gbpToGBP(v, ticker);
+  const val = gbpToGBP(v, ticker); // corrige GBp → GBP
   return val * getFX(currency);
 };
+
+// priceToEUR: para precios del priceCache (ya en GBP, NO en GBp) → SIN corrección
+const priceToEUR = (v, pos) => {
+  if (!v || isNaN(v)) return 0;
+  return (v || 0) * getFX(pos?.currency || "EUR");
+};
+
+// Calcula el valor actual de una posición en EUR correctamente:
+//   - Si hay precio en priceCache → ya está en GBP (fetchWithProxy lo corrige) → priceToEUR
+//   - Si no hay precio → usamos avg_cost que está en GBp → posToEUR
+const posValEUR = (p) => {
+  const cp = state.priceCache[p.ticker];
+  return cp ? priceToEUR(p.shares * cp, p) : posToEUR(p.shares * p.avg_cost, p);
+};
+
+// Calcula el coste invertido de una posición en EUR (avg_cost siempre en GBp → posToEUR)
+const posInvEUR = (p) => posToEUR(p.shares * p.avg_cost, p);
 const fmtEUR = v => "€"+((v||0).toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2}));
 const fmtPct = v => (v>=0?"+":"")+((v||0).toFixed(2))+"%";
 const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
@@ -773,7 +801,7 @@ async function openSnapshotCartera() {
   const totalInv = state.positions.reduce((s,p)=>s+posToEUR(p.shares*p.avg_cost,p),0);
   const totalCur = state.positions.reduce((s,p)=>{
     const cp=state.priceCache[p.ticker];
-    return s+(cp?posToEUR(p.shares*cp,p):posToEUR(p.shares*p.avg_cost,p));
+    return s+posValEUR(p);
   },0);
   const pnlTotal = totalCur-totalInv;
   const pnlPct   = totalInv?pnlTotal/totalInv*100:0;
@@ -781,9 +809,8 @@ async function openSnapshotCartera() {
   const yieldOnCost = totalInv?divAnual/totalInv*100:0;
 
   const posWithVal = state.positions.map(p=>{
-    const cp=state.priceCache[p.ticker]||p.avg_cost;
-    const val=posToEUR(p.shares*cp,p);
-    const inv=posToEUR(p.shares*p.avg_cost,p);
+    const val=posValEUR(p);
+    const inv=posInvEUR(p);
     const pct=totalCur?val/totalCur*100:0;
     const retPct=inv?(val-inv)/inv*100:0;
     const di=state.divInfo?.find(d=>d.ticker===p.ticker);
@@ -1280,7 +1307,7 @@ function checkAlerts() {
     if (!a.active || a.triggered) return;
     const pos = state.positions.find(p=>p.ticker===a.ticker);
     const cp = state.priceCache[a.ticker]; if (!cp) return;
-    const cpE = pos ? posToEUR(cp, pos) : toEUR(cp, pos?.currency||"EUR");
+    const cpE = pos ? priceToEUR(cp, pos) : toEUR(cp, pos?.currency||"EUR");
     if ((a.direction==="ABOVE"&&cpE>=a.price)||(a.direction==="BELOW"&&cpE<=a.price)) {
       a.triggered=true; a.active=false;
     }
@@ -1872,7 +1899,7 @@ function renderHeader() {
   try {
   const totals = state.positions.reduce((acc,p)=>{
     const inv = posToEUR(p.shares*p.avg_cost, p);
-    const cur = state.priceCache[p.ticker] ? posToEUR(p.shares*state.priceCache[p.ticker], p) : inv;
+    const cur = state.priceCache[p.ticker] ? priceToEUR(p.shares*state.priceCache[p.ticker], p) : inv;
     acc.inv+=inv; acc.cur+=cur; return acc;
   },{inv:0,cur:0});
   const pnl = totals.cur - totals.inv;
@@ -1949,8 +1976,8 @@ function renderPortfolio() {
 
   const getV = (p,col) => {
     const cp=state.priceCache[p.ticker];
-    const inv=posToEUR(p.shares*p.avg_cost, p);
-    const cpEUR=cp?posToEUR(cp, p):null;
+    const inv=posInvEUR(p);
+    const cpEUR=cp?priceToEUR(cp, p):null;
     const curV=cpEUR!==null?p.shares*cpEUR:null;
     const pnl=curV!==null?curV-inv:null;
     const di=state.divInfo.find(d=>d.ticker===p.ticker);
@@ -1973,9 +2000,9 @@ function renderPortfolio() {
 
   const tbody = rows.map(pos => {
     const cp=state.priceCache[pos.ticker];
-    const inv=posToEUR(pos.shares*pos.avg_cost, pos);
-    const cpE=cp?posToEUR(cp, pos):null;           // precio/acción en EUR (ya corregido de peniques)
-    const curE=cpE!==null?pos.shares*cpE:null;     // valor total en EUR
+    const inv=posInvEUR(pos);
+    const cpE=cp?priceToEUR(cp, pos):null;
+    const curE=cpE!==null?pos.shares*cpE:null;
     const pnl=curE!==null?curE-inv:null;
     const pct=pnl!==null&&inv?pnl/inv*100:null;
     const pc=pnl!==null?pnlColor(pnl):"#94a3b8";
@@ -2030,8 +2057,8 @@ function renderPortfolio() {
         ["Coste medio (local)",`${selPos.avg_cost?.toFixed(4)} ${selPos.currency}`],
         ["Coste medio (EUR)",fmtEUR(toEURhist(selPos.avg_cost, selPos))],
         ...(selPos.currency!=="EUR"&&selPos.fx_rate&&selPos.fx_rate!==1?[["TC compra (EUR/"+selPos.currency+")",selPos.fx_rate?.toFixed(4)],["TC actual (EUR/"+selPos.currency+")",+(1/getFX(selPos.currency)).toFixed(4)],["Impacto divisa",`${(((1/getFX(selPos.currency))/selPos.fx_rate-1)*100).toFixed(2)}%`]]:[]),
-        ["Precio actual",state.priceCache[selPos.ticker]?fmtEUR(posToEUR(state.priceCache[selPos.ticker],selPos)):"Sin datos"],
-        ["Valor total",fmtEUR(posToEUR((state.priceCache[selPos.ticker]||selPos.avg_cost)*selPos.shares, selPos))],
+        ["Precio actual",state.priceCache[selPos.ticker]?fmtEUR(priceToEUR(state.priceCache[selPos.ticker], selPos)):"Sin datos"],
+        ["Valor total",fmtEUR(state.priceCache[selPos.ticker] ? priceToEUR(state.priceCache[selPos.ticker]*selPos.shares, selPos) : posToEUR(selPos.avg_cost*selPos.shares, selPos))],
         ["Coste total (EUR)",fmtEUR(toEURhist(selPos.avg_cost*selPos.shares,selPos))],
         ["Sector",selPos.sector||"—"],["Divisa",selPos.currency],["Fecha",selPos.date||"—"]
       ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #e2e8f0;font-size:11px"><span style="color:#64748b">${k}</span><span style="font-weight:600;text-align:right;max-width:160px">${v}</span></div>`).join("")}
@@ -2713,7 +2740,7 @@ function logoImg(ticker, name, size=28) {
 
 function renderDonutByPosition(totalVal) {
   const allPos = [...state.positions]
-    .map(p => ({ ...p, val: posToEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares, p) }))
+    .map(p => ({ ...p, val: posValEUR(p) }))
     .filter(p => p.val > 0)
     .sort((a,b) => b.val - a.val);
 
@@ -2783,14 +2810,14 @@ function renderDonutByPosition(totalVal) {
 function renderCharts() {
   const sectorData={},currData={};
   state.positions.forEach(p=>{
-    const v=posToEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares, p);
+    const v=posValEUR(p);
     sectorData[p.sector||"Otro"]=(sectorData[p.sector||"Otro"]||0)+v;
     currData[p.currency||"EUR"]=(currData[p.currency||"EUR"]||0)+v;
   });
   const total=Object.values(sectorData).reduce((a,b)=>a+b,0)||1;
   const sectors=Object.entries(sectorData).sort((a,b)=>b[1]-a[1]);
   const currencies=Object.entries(currData).sort((a,b)=>b[1]-a[1]);
-  const top=[...state.positions].sort((a,b)=>posToEUR((state.priceCache[b.ticker]||b.avg_cost)*b.shares,b)-posToEUR((state.priceCache[a.ticker]||a.avg_cost)*a.shares,a)).slice(0,8);
+  const top=[...state.positions].sort((a,b)=>posValEUR(b)-posValEUR(a)).slice(0,8);
 
   const barChart=(data,cFn)=>data.map(([lbl,v],i)=>`
     <div style="margin-bottom:9px">
@@ -2805,9 +2832,8 @@ function renderCharts() {
 
   const posCards=state.positions.map(p=>{
     const cp=state.priceCache[p.ticker];
-    const inv=posToEUR(p.shares*p.avg_cost, p);
-    const cpEUR=cp?posToEUR(cp, p):null;
-    const cur=cpEUR!==null?p.shares*cpEUR:null;
+    const inv=posInvEUR(p);
+    const cur=cp ? priceToEUR(p.shares*cp, p) : null;
     const pnl=cur!==null?cur-inv:null,pct=pnl!==null&&inv?pnl/inv*100:null;
     const c=pnl!==null?pnlColor(pnl):"#94a3b8";
     return `<div style="background:#f8fafc;border-radius:8px;padding:10px;border:1px solid #e2e8f0;border-left:3px solid ${c}">
@@ -2819,7 +2845,7 @@ function renderCharts() {
   }).join("");
 
   const topBars=top.map((p,i)=>{
-    const v=posToEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares, p);
+    const v=posValEUR(p);
     return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
       <span style="color:#94a3b8;font-size:11px;min-width:18px">#${i+1}</span>
       <span style="color:#1d4ed8;font-weight:700;font-size:12px;min-width:72px">${esc(p.ticker)}</span>
@@ -2865,7 +2891,7 @@ function renderCharts() {
 // TAB 5 — OBJETIVOS
 // ─────────────────────────────────────────────
 function renderGoals() {
-  const curVal=state.positions.reduce((s,p)=>s+posToEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares, p),0);
+  const curVal=state.positions.reduce((s,p)=>s+posValEUR(p),0);
   const goal=parseFloat((document.getElementById("g-goal")||{}).value||100000);
   const pg=parseFloat((document.getElementById("g-pg")||{}).value||7);
   const dg=parseFloat((document.getElementById("g-dg")||{}).value||3);
@@ -2922,7 +2948,7 @@ function calcProjection() {
   const yrs=parseInt(document.getElementById("g-yrs")?.value||10);
   const dy=parseFloat(document.getElementById("g-dy")?.value||4)/100;
   const reinvest=document.getElementById("g-reinvest")?.checked!==false;
-  const curVal=state.positions.reduce((s,p)=>s+posToEUR((state.priceCache[p.ticker]||p.avg_cost)*p.shares, p),0);
+  const curVal=state.positions.reduce((s,p)=>s+posValEUR(p),0);
   let v=curVal,da=0,rows=[{y:0,total:v,aport:v,divAcc:0,goal}];
   for(let y=1;y<=yrs;y++){
     const ann=v*dy; da+=ann*(1+dg*y);
