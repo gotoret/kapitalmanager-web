@@ -137,8 +137,6 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
   <div id="modal-box" class="modal"></div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -407,59 +405,46 @@ const save = () => {
 // ─────────────────────────────────────────────
 const getFX = (cur) => state.fxCache[cur] || FX_FALLBACK[cur] || 1;
 
-// Los tickers .L cotizan en PENIQUES (GBp), no en libras (GBP).
-// IMPORTANTE: hay dos contextos distintos:
-//   - avg_cost guardado en posición = precio en GBp (peniques, como viene del broker/CSV)
-//   - priceCache[ticker] = precio ya en GBP (dividido entre 100 al obtenerlo de Yahoo)
-// Por tanto:
-//   - posToEUR(p.shares * p.avg_cost, p)  → necesita dividir entre 100 (viene en GBp)
-//   - posToEUR(priceCache[t] * p.shares, p) → NO debe dividir entre 100 (ya en GBP)
-// Para evitar la confusión, usamos posToEUR solo para avg_cost (GBp nativo),
-// y para precios del cache usamos directamente toEUR (ya en GBP).
+// ── CONVERSIÓN DE DIVISAS ────────────────────────────────────────
+// REGLA CLARA:
+//   - avg_cost en posición/transacciones = precio en la divisa local TAL COMO LO INTRODUCE
+//     EL USUARIO o viene del CSV (GBP para .L, USD para americanas, EUR para .MC)
+//     → NO se divide entre 100. Se convierte con getFX directamente.
+//   - priceCache[ticker] para .L = Yahoo devuelve GBp (peniques), fetchWithProxy ya divide /100
+//     → está en GBP, se convierte con getFX directamente. NO dividir entre 100 de nuevo.
+// En resumen: NINGÚN valor pasa por división /100 aquí. Todo en la divisa base del ticker.
 
 const isGBpTicker = (ticker) => String(ticker || "").toUpperCase().endsWith(".L");
 
-// Convierte GBp → GBP dividiendo entre 100 (solo para avg_cost y precios de transacciones)
-const gbpToGBP = (v, ticker) => isGBpTicker(ticker) ? (v || 0) / 100 : (v || 0);
+// toEUR: conversión directa divisa → EUR sin corrección GBp
+const toEUR = (v, cur) => (v || 0) * getFX(cur || "EUR");
 
-// toEUR: sin corrección GBp (para valores ya en la divisa base: priceCache, totales)
-const toEUR = (v, cur, ticker) => {
-  const val = ticker ? gbpToGBP(v, ticker) : (v || 0);
-  return val * getFX(cur);
-};
-
-// toEURhist: para costes históricos (avg_cost en GBp)
+// toEURhist: para costes históricos usando fx_rate guardado en la posición
 const toEURhist = (v, pos) => {
   if (!pos || pos.currency === "EUR") return v || 0;
-  const val = gbpToGBP(v, pos.ticker); // avg_cost viene en GBp → dividir entre 100
-  if (pos.fx_rate && pos.fx_rate !== 1) return val / pos.fx_rate;
-  return val * getFX(pos.currency);
+  if (pos.fx_rate && pos.fx_rate !== 1) return (v || 0) / pos.fx_rate;
+  return (v || 0) * getFX(pos.currency);
 };
 
-// posToEUR: para avg_cost (en GBp nativos del broker) → aplica corrección
+// posToEUR: convierte valor en divisa local de posición a EUR (avg_cost ya en GBP, no GBp)
 const posToEUR = (v, pos) => {
   if (!v || isNaN(v)) return 0;
-  const ticker = pos?.ticker || "";
-  const currency = pos?.currency || "EUR";
-  const val = gbpToGBP(v, ticker); // corrige GBp → GBP
-  return val * getFX(currency);
+  return (v || 0) * getFX(pos?.currency || "EUR");
 };
 
-// priceToEUR: para precios del priceCache (ya en GBP, NO en GBp) → SIN corrección
+// priceToEUR: igual que posToEUR, para precios del priceCache (ya en GBP gracias a fetchWithProxy)
 const priceToEUR = (v, pos) => {
   if (!v || isNaN(v)) return 0;
   return (v || 0) * getFX(pos?.currency || "EUR");
 };
 
-// Calcula el valor actual de una posición en EUR correctamente:
-//   - Si hay precio en priceCache → ya está en GBP (fetchWithProxy lo corrige) → priceToEUR
-//   - Si no hay precio → usamos avg_cost que está en GBp → posToEUR
+// Valor actual de mercado de una posición en EUR
 const posValEUR = (p) => {
   const cp = state.priceCache[p.ticker];
   return cp ? priceToEUR(p.shares * cp, p) : posToEUR(p.shares * p.avg_cost, p);
 };
 
-// Calcula el coste invertido de una posición en EUR (avg_cost siempre en GBp → posToEUR)
+// Coste invertido de una posición en EUR
 const posInvEUR = (p) => posToEUR(p.shares * p.avg_cost, p);
 const fmtEUR = v => "€"+((v||0).toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2}));
 const fmtPct = v => (v>=0?"+":"")+((v||0).toFixed(2))+"%";
@@ -789,293 +774,262 @@ async function refreshDividendYields() {
   if (state.activeTab === 2) renderActiveTab();
 }
 
-async function openSnapshotCartera() {
-  // Mostrar indicador de carga
+function openSnapshotCartera() {
   const btn = event?.target?.closest("button");
   const origText = btn?.innerHTML;
   if (btn) { btn.innerHTML = "⏳"; btn.disabled = true; }
 
   const today = new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"long",year:"numeric"});
+  const fecha = new Date().toISOString().slice(0,10);
 
   // ── Datos ────────────────────────────────────────────────────
-  const totalInv = state.positions.reduce((s,p)=>s+posToEUR(p.shares*p.avg_cost,p),0);
-  const totalCur = state.positions.reduce((s,p)=>{
-    const cp=state.priceCache[p.ticker];
-    return s+posValEUR(p);
-  },0);
-  const pnlTotal = totalCur-totalInv;
-  const pnlPct   = totalInv?pnlTotal/totalInv*100:0;
+  const totalInv = state.positions.reduce((s,p)=>s+posInvEUR(p),0);
+  const totalCur = state.positions.reduce((s,p)=>s+posValEUR(p),0);
+  const pnlTotal = totalCur - totalInv;
+  const pnlPct   = totalInv ? pnlTotal/totalInv*100 : 0;
   const divAnual  = (state.divInfo||[]).reduce((s,d)=>s+toEUR(d.annual_income||0,d.currency||"EUR"),0);
-  const yieldOnCost = totalInv?divAnual/totalInv*100:0;
+  const yieldOnCost = totalInv ? divAnual/totalInv*100 : 0;
 
   const posWithVal = state.positions.map(p=>{
-    const val=posValEUR(p);
-    const inv=posInvEUR(p);
-    const pct=totalCur?val/totalCur*100:0;
-    const retPct=inv?(val-inv)/inv*100:0;
+    const val=posValEUR(p), inv=posInvEUR(p);
+    const pct=totalCur?val/totalCur*100:0, retPct=inv?(val-inv)/inv*100:0;
     const di=state.divInfo?.find(d=>d.ticker===p.ticker);
-    return {...p,val,inv,pct,retPct,cp,divAnual:toEUR(di?.annual_income||0,p.currency||"EUR")};
+    return {...p, val, inv, pct, retPct, divAnual:toEUR(di?.annual_income||0,p.currency||"EUR")};
   }).sort((a,b)=>b.val-a.val);
 
   const sectors={};
   posWithVal.forEach(p=>{const s=p.sector||"Otros";sectors[s]=(sectors[s]||0)+p.val;});
   const sectorList=Object.entries(sectors).sort((a,b)=>b[1]-a[1]);
-  const PIE=["#2563eb","#16a34a","#dc2626","#f59e0b","#7c3aed","#0891b2","#be185d","#065f46","#9333ea","#ea580c","#84cc16","#64748b"];
+  const PIE=["#3b82f6","#22c55e","#ef4444","#f59e0b","#a855f7","#06b6d4","#ec4899","#10b981","#8b5cf6","#f97316","#84cc16","#64748b"];
 
-  // ── SVG Donut ────────────────────────────────────────────────
-  const donutSvg=(()=>{
-    const total=sectorList.reduce((s,[,v])=>s+v,0)||1;
-    const R=65,r=40,cx=75,cy=75;let angle=-Math.PI/2;
-    const paths=sectorList.map(([,v],i)=>{
-      const pct=v/total,sweep=pct*2*Math.PI;
-      const a1=angle,a2=angle+sweep;angle=a2;
-      const x1=cx+R*Math.cos(a1),y1=cy+R*Math.sin(a1);
-      const x2=cx+R*Math.cos(a2),y2=cy+R*Math.sin(a2);
-      const xi1=cx+r*Math.cos(a1),yi1=cy+r*Math.sin(a1);
-      const xi2=cx+r*Math.cos(a2),yi2=cy+r*Math.sin(a2);
-      const lg=sweep>Math.PI?1:0;
-      return `<path d="M${x1.toFixed(1)},${y1.toFixed(1)} A${R},${R} 0 ${lg},1 ${x2.toFixed(1)},${y2.toFixed(1)} L${xi2.toFixed(1)},${yi2.toFixed(1)} A${r},${r} 0 ${lg},0 ${xi1.toFixed(1)},${yi1.toFixed(1)} Z" fill="${PIE[i%PIE.length]}" stroke="#1e293b" stroke-width="1.5"/>`;
-    }).join("");
-    return `<svg viewBox="0 0 150 150" width="150" height="150">${paths}
-      <text x="${cx}" y="${cy-5}" text-anchor="middle" fill="#f1f5f9" font-size="14" font-weight="800" font-family="system-ui">${state.positions.length}</text>
-      <text x="${cx}" y="${cy+10}" text-anchor="middle" fill="#64748b" font-size="9" font-family="system-ui">posiciones</text>
-    </svg>`;
-  })();
+  // ── Canvas setup ─────────────────────────────────────────────
+  const W = 1200, ROWH = 28;
+  const tableRows = posWithVal.length;
+  const H = 820 + Math.max(0, tableRows - 10) * ROWH;
 
-  // ── SVG Barras dividendos ────────────────────────────────────
-  const divByPos=posWithVal.filter(p=>p.divAnual>0).sort((a,b)=>b.divAnual-a.divAnual).slice(0,12);
-  const divBarSvg=(()=>{
-    if(!divByPos.length) return `<div style="color:#475569;font-size:11px;padding:10px">Sin dividendos</div>`;
-    const maxD=Math.max(...divByPos.map(p=>p.divAnual));
-    const W=260,bH=15,gap=3,PL=58,PR=10,PT=6;
-    const H=divByPos.length*(bH+gap)+PT+8;
-    const bars=divByPos.map((p,i)=>{
-      const bw=maxD>0?((p.divAnual/maxD)*(W-PL-PR)):0;
-      const y=PT+i*(bH+gap);
-      return `<text x="${PL-4}" y="${y+bH*0.72}" text-anchor="end" font-size="8.5" fill="#94a3b8" font-family="system-ui">${p.ticker.replace(".MC","").replace(".L","").slice(0,7)}</text>
-        <rect x="${PL}" y="${y}" width="${bw.toFixed(1)}" height="${bH}" fill="#16a34a" rx="2" opacity="0.9"/>
-        <text x="${(PL+bw+3).toFixed(1)}" y="${y+bH*0.72}" font-size="7.5" fill="#4ade80" font-family="system-ui">${fmtEUR(p.divAnual)}</text>`;
-    }).join("");
-    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${bars}</svg>`;
-  })();
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
 
-  // ── SVG Barras rentabilidad ──────────────────────────────────
-  const retByPos=[...posWithVal].sort((a,b)=>b.retPct-a.retPct).slice(0,12);
-  const retBarSvg=(()=>{
-    const maxR=Math.max(...retByPos.map(p=>Math.abs(p.retPct)),1);
-    const W=260,bH=13,gap=3,CX=80,PR=60,PT=6;
-    const H=retByPos.length*(bH+gap)+PT+8;
-    const bars=retByPos.map((p,i)=>{
-      const y=PT+i*(bH+gap);
-      const bw=(Math.abs(p.retPct)/maxR)*(W-CX-PR);
-      const x=p.retPct>=0?CX:CX-bw;
-      const col=p.retPct>=0?"#16a34a":"#dc2626";
-      return `<text x="${CX-4}" y="${y+bH*0.75}" text-anchor="end" font-size="8" fill="#94a3b8" font-family="system-ui">${p.ticker.replace(".MC","").replace(".L","").slice(0,7)}</text>
-        <line x1="${CX}" y1="${y}" x2="${CX}" y2="${y+bH}" stroke="#334155" stroke-width="1"/>
-        <rect x="${x.toFixed(1)}" y="${y}" width="${bw.toFixed(1)}" height="${bH}" fill="${col}" rx="2" opacity="0.85"/>
-        <text x="${(p.retPct>=0?CX+bw+3:CX-bw-3).toFixed(1)}" y="${y+bH*0.75}" font-size="7.5" fill="${col}" text-anchor="${p.retPct>=0?"start":"end"}" font-family="system-ui">${p.retPct>=0?"+":""}${p.retPct.toFixed(1)}%</text>`;
-    }).join("");
-    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${bars}</svg>`;
-  })();
+  // Fondo
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(0, 0, W, H);
 
-  // ── HTML del informe ─────────────────────────────────────────
-  const snapshotHtml = `
-  <div id="km-snapshot-pdf" style="background:#0f172a;color:#e2e8f0;font-family:system-ui,Arial,sans-serif;padding:24px;width:794px;box-sizing:border-box">
+  // Helper texto
+  const txt = (text, x, y, {size=12, color="#e2e8f0", weight="normal", align="left"}={}) => {
+    ctx.font = `${weight} ${size}px system-ui, Arial, sans-serif`;
+    ctx.fillStyle = color;
+    ctx.textAlign = align;
+    ctx.fillText(String(text), x, y);
+    ctx.textAlign = "left";
+  };
 
-    <!-- CABECERA -->
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid #334155">
-      <div>
-        <div style="font-size:20px;font-weight:900;color:#f1f5f9;letter-spacing:-0.5px">📊 Kapital Manager</div>
-        <div style="font-size:10px;color:#64748b;margin-top:2px">Snapshot de cartera · ${today} · ${state.authUser||""}</div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:11px;color:#64748b">${state.positions.length} posiciones activas</div>
-        <div style="font-size:11px;color:#64748b">Generado: ${new Date().toLocaleTimeString("es-ES")}</div>
-      </div>
-    </div>
+  // Helper rect redondeado
+  const rr = (x, y, w, h, r=8, fill="#1e293b") => {
+    ctx.beginPath();
+    ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r);
+    ctx.lineTo(x+w,y+h-r); ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
+    ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r);
+    ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r);
+    ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill();
+  };
 
-    <!-- KPIs -->
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
-      ${[
-        ["INVERTIDO",fmtEUR(totalInv),"#60a5fa"],
-        ["VALOR ACTUAL",fmtEUR(totalCur),"#34d399"],
-        ["P&L TOTAL",(pnlTotal>=0?"+":"")+fmtEUR(pnlTotal),pnlTotal>=0?"#4ade80":"#f87171"],
-        ["RENTABILIDAD",(pnlPct>=0?"+":"")+pnlPct.toFixed(2)+"%",pnlPct>=0?"#4ade80":"#f87171"],
-        ["DIV. ANUAL",fmtEUR(divAnual),"#fbbf24"],
-        ["DIV. MENSUAL",fmtEUR(divAnual/12),"#fbbf24"],
-        ["YIELD ON COST",yieldOnCost.toFixed(2)+"%","#a78bfa"],
-        ["TRANSACCIONES",state.transactions.length.toString(),"#94a3b8"],
-      ].map(([l,v,c])=>`<div style="background:#1e293b;border-radius:8px;padding:10px 12px;border-left:3px solid ${c}">
-        <div style="font-size:8px;color:#64748b;font-weight:700;letter-spacing:.5px;margin-bottom:3px">${l}</div>
-        <div style="font-size:15px;font-weight:900;color:${c}">${v}</div>
-      </div>`).join("")}
-    </div>
+  const fmtK = v => Math.abs(v)>=1000 ? (v/1000).toFixed(1)+"k" : v.toFixed(2);
 
-    <!-- FILA 1: Sector + Top posiciones + Yield -->
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
+  // ── CABECERA ─────────────────────────────────────────────────
+  ctx.fillStyle = "#1e293b";
+  ctx.fillRect(0, 0, W, 52);
+  ctx.fillStyle = "#3b82f6";
+  ctx.fillRect(0, 0, 4, 52);
+  txt("📊 Kapital Manager — Snapshot de Cartera", 20, 22, {size:18, weight:"bold", color:"#f1f5f9"});
+  txt(`${today} · ${state.positions.length} posiciones · ${state.authUser||""}`, 20, 42, {size:11, color:"#64748b"});
+  txt(`gotoret.github.io/kapitalmanager-web`, W-16, 32, {size:10, color:"#334155", align:"right"});
 
-      <div style="background:#1e293b;border-radius:10px;padding:12px">
-        <div style="font-size:11px;font-weight:700;color:#f1f5f9;margin-bottom:8px">🍩 Distribución Sector</div>
-        <div style="display:flex;align-items:center;gap:8px">
-          ${donutSvg}
-          <div style="flex:1;font-size:8px">
-            ${sectorList.slice(0,8).map(([s,v],i)=>`<div style="display:flex;justify-content:space-between;margin-bottom:3px">
-              <span style="display:flex;align-items:center;gap:3px"><span style="width:7px;height:7px;border-radius:50%;background:${PIE[i%PIE.length]};display:inline-block;flex-shrink:0"></span><span style="color:#94a3b8">${s.slice(0,13)}</span></span>
-              <span style="color:#e2e8f0;font-weight:700">${totalCur?(v/totalCur*100).toFixed(1):0}%</span>
-            </div>`).join("")}
-          </div>
-        </div>
-      </div>
+  // ── KPIs (8 tarjetas) ────────────────────────────────────────
+  const kpis = [
+    ["INVERTIDO",    fmtEUR(totalInv),                              "#3b82f6"],
+    ["VALOR ACTUAL", fmtEUR(totalCur),                             "#22c55e"],
+    ["P&L TOTAL",    (pnlTotal>=0?"+":"")+fmtEUR(pnlTotal),       pnlTotal>=0?"#4ade80":"#f87171"],
+    ["RENTABILIDAD", (pnlPct>=0?"+":"")+pnlPct.toFixed(2)+"%",    pnlPct>=0?"#4ade80":"#f87171"],
+    ["DIV. ANUAL",   fmtEUR(divAnual),                             "#fbbf24"],
+    ["DIV. MENSUAL", fmtEUR(divAnual/12),                          "#fbbf24"],
+    ["YIELD/COST",   yieldOnCost.toFixed(2)+"%",                   "#a855f7"],
+    ["POSICIONES",   state.positions.length.toString(),             "#94a3b8"],
+  ];
+  const kW = (W-32)/8, kY = 60;
+  kpis.forEach(([l,v,c], i) => {
+    const x = 16 + i*kW;
+    rr(x, kY, kW-6, 64, 8, "#1e293b");
+    ctx.fillStyle = c; ctx.fillRect(x, kY, 3, 64);
+    txt(l, x+10, kY+16, {size:8, color:"#64748b", weight:"bold"});
+    txt(v, x+10, kY+44, {size:14, color:c, weight:"bold"});
+  });
 
-      <div style="background:#1e293b;border-radius:10px;padding:12px">
-        <div style="font-size:11px;font-weight:700;color:#f1f5f9;margin-bottom:8px">🏆 Top Posiciones</div>
-        ${posWithVal.slice(0,9).map(p=>`
-          <div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #0f172a">
-            <div style="flex:1;min-width:0">
-              <span style="font-size:9px;font-weight:700;color:#60a5fa">${p.ticker}</span>
-              <span style="font-size:8px;color:#475569;margin-left:3px">${p.pct.toFixed(1)}%</span>
-            </div>
-            <div style="text-align:right">
-              <div style="font-size:9px;font-weight:700;color:#e2e8f0">${fmtEUR(p.val)}</div>
-              <div style="font-size:8px;color:${p.retPct>=0?"#4ade80":"#f87171"}">${p.retPct>=0?"+":""}${p.retPct.toFixed(1)}%</div>
-            </div>
-          </div>`).join("")}
-      </div>
+  // ── DONUT SECTOR ─────────────────────────────────────────────
+  const DX=160, DY=170, DR=70, dr=44;
+  rr(16, 138, 300, 230, 10, "#1e293b");
+  txt("Distribución por Sector", 26, 158, {size:11, weight:"bold", color:"#f1f5f9"});
+  const total = sectorList.reduce((s,[,v])=>s+v,0)||1;
+  let ang = -Math.PI/2;
+  sectorList.forEach(([,v],i)=>{
+    const sw = v/total*2*Math.PI;
+    ctx.beginPath(); ctx.moveTo(DX,DY);
+    ctx.arc(DX,DY,DR,ang,ang+sw); ctx.closePath();
+    ctx.fillStyle = PIE[i%PIE.length]; ctx.fill();
+    ctx.fillStyle="#0f172a"; ctx.lineWidth=1.5; ctx.stroke();
+    ang+=sw;
+  });
+  // Hueco central
+  ctx.beginPath(); ctx.arc(DX,DY,dr,0,2*Math.PI);
+  ctx.fillStyle="#1e293b"; ctx.fill();
+  txt(state.positions.length, DX, DY+5, {size:16, weight:"bold", color:"#f1f5f9", align:"center"});
+  txt("pos.", DX, DY+18, {size:8, color:"#64748b", align:"center"});
+  // Leyenda
+  sectorList.slice(0,8).forEach(([s,v],i)=>{
+    const ly = 168+i*24, lx=242;
+    ctx.fillStyle=PIE[i%PIE.length]; ctx.fillRect(lx,ly-8,8,8);
+    txt(s.slice(0,14), lx+12, ly, {size:8, color:"#94a3b8"});
+    txt(`${(v/total*100).toFixed(1)}%`, 308, ly, {size:8, color:"#e2e8f0", weight:"bold", align:"right"});
+  });
 
-      <div style="background:#1e293b;border-radius:10px;padding:12px">
-        <div style="font-size:11px;font-weight:700;color:#f1f5f9;margin-bottom:8px">💸 Top Yield on Cost</div>
-        ${posWithVal.filter(p=>p.divAnual>0).sort((a,b)=>(b.divAnual/b.inv)-(a.divAnual/a.inv)).slice(0,7).map(p=>{
-          const yoc=p.inv?(p.divAnual/p.inv*100):0;
-          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid #0f172a">
-            <div>
-              <div style="font-size:9px;font-weight:700;color:#60a5fa">${p.ticker}</div>
-              <div style="font-size:8px;color:#64748b">${fmtEUR(p.divAnual)}/año</div>
-            </div>
-            <div style="font-size:11px;font-weight:800;color:#fbbf24">${yoc.toFixed(1)}%</div>
-          </div>`;
-        }).join("")}
-        <div style="margin-top:8px;background:#0f172a;border-radius:6px;padding:7px;text-align:center">
-          <div style="font-size:8px;color:#64748b;margin-bottom:1px">INGRESOS PASIVOS ESTIMADOS</div>
-          <div style="font-size:16px;font-weight:900;color:#fbbf24">${fmtEUR(divAnual/12)}<span style="font-size:9px;color:#64748b">/mes</span></div>
-        </div>
-      </div>
-    </div>
+  // ── TOP POSICIONES ────────────────────────────────────────────
+  rr(326, 138, 300, 230, 10, "#1e293b");
+  txt("Top Posiciones por Valor", 336, 158, {size:11, weight:"bold", color:"#f1f5f9"});
+  posWithVal.slice(0,8).forEach((p,i)=>{
+    const py=172+i*24;
+    txt(p.ticker, 336, py, {size:9, weight:"bold", color:"#60a5fa"});
+    txt(`${p.pct.toFixed(1)}%`, 455, py, {size:8, color:"#475569"});
+    txt(fmtEUR(p.val), 600, py, {size:9, weight:"bold", color:"#e2e8f0", align:"right"});
+    const retC = p.retPct>=0?"#4ade80":"#f87171";
+    txt((p.retPct>=0?"+":"")+p.retPct.toFixed(1)+"%", 618, py, {size:9, weight:"bold", color:retC});
+  });
 
-    <!-- FILA 2: Dividendos + Rentabilidad + Gainers/Losers -->
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
+  // ── DIV ANUALES (barras) ──────────────────────────────────────
+  rr(636, 138, 550, 230, 10, "#1e293b");
+  txt("Dividendos Anuales por Empresa", 648, 158, {size:11, weight:"bold", color:"#f1f5f9"});
+  const divPos = posWithVal.filter(p=>p.divAnual>0).sort((a,b)=>b.divAnual-a.divAnual).slice(0,9);
+  const maxDiv = Math.max(...divPos.map(p=>p.divAnual),1);
+  divPos.forEach((p,i)=>{
+    const by=174+i*22, bxStart=720, bMaxW=420;
+    txt(p.ticker.replace(".MC","").replace(".L","").slice(0,8), 714, by, {size:8, color:"#94a3b8", align:"right"});
+    const bw = (p.divAnual/maxDiv)*bMaxW;
+    ctx.fillStyle="#22c55e"; ctx.globalAlpha=0.85;
+    ctx.beginPath(); ctx.roundRect(bxStart, by-12, bw, 14, 3); ctx.fill();
+    ctx.globalAlpha=1;
+    txt(fmtEUR(p.divAnual), bxStart+bw+4, by, {size:7.5, color:"#4ade80"});
+  });
 
-      <div style="background:#1e293b;border-radius:10px;padding:12px">
-        <div style="font-size:11px;font-weight:700;color:#f1f5f9;margin-bottom:8px">📊 Dividendos anuales</div>
-        ${divBarSvg}
-      </div>
+  // ── RENTABILIDAD (barras) ─────────────────────────────────────
+  const midCX = 540;
+  rr(16, 378, 560, 230, 10, "#1e293b");
+  txt("Rentabilidad por Posición", 26, 398, {size:11, weight:"bold", color:"#f1f5f9"});
+  const maxR = Math.max(...posWithVal.map(p=>Math.abs(p.retPct)),1);
+  posWithVal.slice(0,9).forEach((p,i)=>{
+    const ry=414+i*22, maxBW=230;
+    txt(p.ticker.replace(".MC","").replace(".L","").slice(0,8), midCX-6, ry, {size:8, color:"#94a3b8", align:"right"});
+    const bw=(Math.abs(p.retPct)/maxR)*maxBW;
+    const col=p.retPct>=0?"#22c55e":"#ef4444";
+    ctx.fillStyle=col; ctx.globalAlpha=0.85;
+    const bx=p.retPct>=0?midCX:midCX-bw;
+    ctx.beginPath(); ctx.roundRect(bx, ry-12, bw||1, 14, 3); ctx.fill();
+    ctx.globalAlpha=1;
+    txt((p.retPct>=0?"+":"")+p.retPct.toFixed(1)+"%", p.retPct>=0?midCX+bw+4:midCX-bw-4, ry,
+        {size:7.5, color:col, align:p.retPct>=0?"left":"right"});
+  });
 
-      <div style="background:#1e293b;border-radius:10px;padding:12px">
-        <div style="font-size:11px;font-weight:700;color:#f1f5f9;margin-bottom:8px">📈 Rentabilidad</div>
-        ${retBarSvg}
-      </div>
+  // ── MEJORES / PEORES ──────────────────────────────────────────
+  rr(586, 378, 290, 115, 10, "#1e293b");
+  txt("🟢 Mejores", 596, 398, {size:10, weight:"bold", color:"#4ade80"});
+  posWithVal.filter(p=>p.retPct>0).slice(0,5).forEach((p,i)=>{
+    txt(p.ticker, 596, 416+i*18, {size:9, color:"#94a3b8"});
+    txt("+"+p.retPct.toFixed(1)+"%", 870, 416+i*18, {size:9, weight:"bold", color:"#4ade80", align:"right"});
+    txt(fmtEUR(p.val), 870, 426+i*18, {size:7, color:"#475569", align:"right"});
+  });
 
-      <div style="background:#1e293b;border-radius:10px;padding:12px">
-        <div style="font-size:10px;font-weight:700;color:#4ade80;margin-bottom:6px">🟢 Mejores posiciones</div>
-        ${posWithVal.filter(p=>p.retPct>0).slice(0,5).map(p=>`
-          <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #0f172a">
-            <div style="font-size:9px;color:#94a3b8">${p.ticker.replace(".MC","")}</div>
-            <div style="font-size:9px;font-weight:700;color:#4ade80">+${p.retPct.toFixed(1)}%</div>
-          </div>`).join("")}
-        <div style="font-size:10px;font-weight:700;color:#f87171;margin:8px 0 6px">🔴 Peores posiciones</div>
-        ${[...posWithVal].reverse().filter(p=>p.retPct<0).slice(0,5).map(p=>`
-          <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #0f172a">
-            <div style="font-size:9px;color:#94a3b8">${p.ticker.replace(".MC","")}</div>
-            <div style="font-size:9px;font-weight:700;color:#f87171">${p.retPct.toFixed(1)}%</div>
-          </div>`).join("")||`<div style="font-size:9px;color:#475569">Sin pérdidas 🎉</div>`}
-      </div>
-    </div>
+  rr(886, 378, 300, 115, 10, "#1e293b");
+  txt("🔴 Peores", 896, 398, {size:10, weight:"bold", color:"#f87171"});
+  [...posWithVal].reverse().filter(p=>p.retPct<0).slice(0,5).forEach((p,i)=>{
+    txt(p.ticker, 896, 416+i*18, {size:9, color:"#94a3b8"});
+    txt(p.retPct.toFixed(1)+"%", 1178, 416+i*18, {size:9, weight:"bold", color:"#f87171", align:"right"});
+  });
 
-    <!-- TABLA POSICIONES COMPLETA -->
-    <div style="background:#1e293b;border-radius:10px;padding:12px">
-      <div style="font-size:11px;font-weight:700;color:#f1f5f9;margin-bottom:8px">📋 Detalle de posiciones</div>
-      <table style="width:100%;border-collapse:collapse;font-size:8.5px">
-        <thead>
-          <tr style="border-bottom:1px solid #334155">
-            ${["Ticker","Empresa","Acc.","Coste medio","P. actual","Invertido","Valor","P&L €","P&L %","Div. anual"].map(h=>`<th style="padding:4px 6px;text-align:${["Acc.","Coste medio","P. actual","Invertido","Valor","P&L €","P&L %","Div. anual"].includes(h)?"right":"left"};color:#64748b;font-weight:700">${h}</th>`).join("")}
-          </tr>
-        </thead>
-        <tbody>
-          ${posWithVal.map((p,i)=>`
-            <tr style="background:${i%2?"#0f172a":"transparent"}">
-              <td style="padding:3px 6px;color:#60a5fa;font-weight:700">${p.ticker}</td>
-              <td style="padding:3px 6px;color:#94a3b8;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name||""}</td>
-              <td style="padding:3px 6px;text-align:right;color:#e2e8f0">${p.shares}</td>
-              <td style="padding:3px 6px;text-align:right;color:#94a3b8">${fmtNum(p.avg_cost)}</td>
-              <td style="padding:3px 6px;text-align:right;color:#94a3b8">${fmtNum(p.cp)}</td>
-              <td style="padding:3px 6px;text-align:right;color:#e2e8f0">${fmtEUR(p.inv)}</td>
-              <td style="padding:3px 6px;text-align:right;color:#e2e8f0">${fmtEUR(p.val)}</td>
-              <td style="padding:3px 6px;text-align:right;color:${p.val-p.inv>=0?"#4ade80":"#f87171"};font-weight:700">${(p.val-p.inv>=0?"+":"")+fmtEUR(p.val-p.inv)}</td>
-              <td style="padding:3px 6px;text-align:right;color:${p.retPct>=0?"#4ade80":"#f87171"};font-weight:700">${(p.retPct>=0?"+":"")+p.retPct.toFixed(2)}%</td>
-              <td style="padding:3px 6px;text-align:right;color:#fbbf24">${p.divAnual>0?fmtEUR(p.divAnual):"—"}</td>
-            </tr>`).join("")}
-          <tr style="border-top:2px solid #334155;font-weight:700">
-            <td colspan="5" style="padding:4px 6px;color:#f1f5f9">TOTAL</td>
-            <td style="padding:4px 6px;text-align:right;color:#60a5fa">${fmtEUR(totalInv)}</td>
-            <td style="padding:4px 6px;text-align:right;color:#34d399">${fmtEUR(totalCur)}</td>
-            <td style="padding:4px 6px;text-align:right;color:${pnlTotal>=0?"#4ade80":"#f87171"}">${(pnlTotal>=0?"+":"")+fmtEUR(pnlTotal)}</td>
-            <td style="padding:4px 6px;text-align:right;color:${pnlTotal>=0?"#4ade80":"#f87171"}">${(pnlPct>=0?"+":"")+pnlPct.toFixed(2)}%</td>
-            <td style="padding:4px 6px;text-align:right;color:#fbbf24">${fmtEUR(divAnual)}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+  // ── INGRESOS PASIVOS ─────────────────────────────────────────
+  rr(586, 503, 600, 100, 10, "#1e293b");
+  ctx.fillStyle="#fbbf24"; ctx.fillRect(586,503,4,100);
+  txt("INGRESOS PASIVOS ESTIMADOS", 600, 523, {size:9, color:"#64748b", weight:"bold"});
+  txt(fmtEUR(divAnual), 600, 556, {size:26, weight:"bold", color:"#fbbf24"});
+  txt("/ año", 600, 574, {size:10, color:"#94a3b8"});
+  txt(fmtEUR(divAnual/12)+" / mes", 900, 556, {size:18, weight:"bold", color:"#fbbf24", align:"right"});
+  txt(yieldOnCost.toFixed(2)+"% yield on cost", 900, 576, {size:10, color:"#a78bfa", align:"right"});
 
-    <!-- FOOTER -->
-    <div style="text-align:center;font-size:8px;color:#334155;margin-top:10px">
-      Kapital Manager · ${today} · Datos orientativos · Los valores se basan en precios de mercado en el momento de la generación
-    </div>
-  </div>`;
+  // ── TABLA COMPLETA ────────────────────────────────────────────
+  const tY = 614;
+  rr(16, tY, W-32, 30+tableRows*ROWH+10, 10, "#1e293b");
+  txt("Detalle completo de posiciones", 28, tY+18, {size:11, weight:"bold", color:"#f1f5f9"});
+  const cols = [
+    {l:"Ticker",    x:28,   w:90,  align:"left"},
+    {l:"Empresa",   x:118,  w:150, align:"left"},
+    {l:"Acc.",      x:268,  w:50,  align:"right"},
+    {l:"Coste €",   x:318,  w:90,  align:"right"},
+    {l:"Precio €",  x:408,  w:90,  align:"right"},
+    {l:"Invertido", x:498,  w:100, align:"right"},
+    {l:"Valor",     x:598,  w:100, align:"right"},
+    {l:"P&L €",     x:698,  w:100, align:"right"},
+    {l:"P&L %",     x:798,  w:75,  align:"right"},
+    {l:"Div/año",   x:873,  w:90,  align:"right"},
+    {l:"Sector",    x:963,  w:220, align:"left"},
+  ];
+  // Cabecera tabla
+  const thY = tY+30;
+  ctx.fillStyle="#0f172a"; ctx.fillRect(16, thY-14, W-32, 20);
+  cols.forEach(c=>txt(c.l, c.x+(c.align==="right"?c.w:0), thY, {size:8, color:"#64748b", weight:"bold", align:c.align}));
+  ctx.fillStyle="#334155"; ctx.fillRect(16, thY+4, W-32, 1);
 
-  // ── Renderizar en div oculto y capturar con html2canvas ──────
-  const container = document.createElement("div");
-  container.style.cssText = "position:fixed;left:-9999px;top:0;z-index:-1";
-  container.innerHTML = snapshotHtml;
-  document.body.appendChild(container);
+  posWithVal.forEach((p,i)=>{
+    const ry = thY+14+i*ROWH;
+    if(i%2===0){ctx.fillStyle="#0f172a22"; ctx.fillRect(16,ry-14,W-32,ROWH);}
+    const inv=posInvEUR(p), val=posValEUR(p), pnl=val-inv;
+    const pnlC=pnl>=0?"#4ade80":"#f87171";
+    const cp=state.priceCache[p.ticker];
+    const cpEUR=cp?priceToEUR(cp,p):posToEUR(p.avg_cost,p);
+    txt(p.ticker, 28, ry, {size:8.5, color:"#60a5fa", weight:"bold"});
+    txt((p.name||"").slice(0,18), 118, ry, {size:8, color:"#94a3b8"});
+    txt(p.shares, 268+50, ry, {size:8, color:"#e2e8f0", align:"right"});
+    txt(fmtNum(posToEUR(p.avg_cost,p)), 318+90, ry, {size:8, color:"#64748b", align:"right"});
+    txt(fmtNum(cpEUR), 408+90, ry, {size:8, color:"#94a3b8", align:"right"});
+    txt(fmtEUR(inv), 498+100, ry, {size:8, color:"#e2e8f0", align:"right"});
+    txt(fmtEUR(val), 598+100, ry, {size:8.5, weight:"bold", color:"#e2e8f0", align:"right"});
+    txt((pnl>=0?"+":"")+fmtEUR(pnl), 698+100, ry, {size:8.5, weight:"bold", color:pnlC, align:"right"});
+    txt((p.retPct>=0?"+":"")+p.retPct.toFixed(1)+"%", 798+75, ry, {size:8.5, weight:"bold", color:pnlC, align:"right"});
+    txt(p.divAnual>0?fmtEUR(p.divAnual):"—", 873+90, ry, {size:8, color:"#fbbf24", align:"right"});
+    txt((p.sector||"").slice(0,22), 963, ry, {size:7.5, color:"#475569"});
+  });
 
-  try {
-    const el = container.querySelector("#km-snapshot-pdf");
-    const canvas = await html2canvas(el, {
-      scale: 2,
-      useCORS: true,
-      backgroundColor: "#0f172a",
-      logging: false,
-      width: 794,
-    });
+  // Fila totales
+  const totY = thY+14+tableRows*ROWH+4;
+  ctx.fillStyle="#1e3a5f"; ctx.fillRect(16, totY-14, W-32, ROWH);
+  txt("TOTAL", 28, totY, {size:9, weight:"bold", color:"#f1f5f9"});
+  txt(fmtEUR(totalInv), 498+100, totY, {size:9, weight:"bold", color:"#60a5fa", align:"right"});
+  txt(fmtEUR(totalCur), 598+100, totY, {size:9, weight:"bold", color:"#22c55e", align:"right"});
+  txt((pnlTotal>=0?"+":"")+fmtEUR(pnlTotal), 698+100, totY, {size:9, weight:"bold", color:pnlTotal>=0?"#4ade80":"#f87171", align:"right"});
+  txt((pnlPct>=0?"+":"")+pnlPct.toFixed(2)+"%", 798+75, totY, {size:9, weight:"bold", color:pnlTotal>=0?"#4ade80":"#f87171", align:"right"});
+  txt(fmtEUR(divAnual), 873+90, totY, {size:9, weight:"bold", color:"#fbbf24", align:"right"});
 
-    const imgData = canvas.toDataURL("image/png");
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF({ orientation:"portrait", unit:"px", format:"a4" });
+  // Footer
+  txt(`Kapital Manager · ${today} · Datos orientativos`, W/2, H-8, {size:8, color:"#1e293b", align:"center"});
 
-    const pdfW = pdf.internal.pageSize.getWidth();
-    const pdfH = pdf.internal.pageSize.getHeight();
-    const imgW = canvas.width / 2;  // dividir por scale
-    const imgH = canvas.height / 2;
-    const ratio = Math.min(pdfW / imgW, pdfH / imgH);
-    const finalW = imgW * ratio;
-    const finalH = imgH * ratio;
+  // ── Descargar como PNG ────────────────────────────────────────
+  const link = document.createElement("a");
+  link.download = `KapitalManager_Snapshot_${fecha}.png`;
+  link.href = canvas.toDataURL("image/png");
+  link.click();
 
-    // Si el contenido es más alto que una página, añadir páginas
-    const pages = Math.ceil(finalH / pdfH);
-    for (let page = 0; page < pages; page++) {
-      if (page > 0) pdf.addPage();
-      pdf.addImage(imgData, "PNG", 0, -page * pdfH, finalW, finalH);
-    }
-
-    const fecha = new Date().toISOString().slice(0,10);
-    pdf.save(`KapitalManager_Snapshot_${fecha}.pdf`);
-  } catch(e) {
-    console.error("Error generando PDF:", e);
-    alert("Error al generar el PDF: " + e.message);
-  } finally {
-    document.body.removeChild(container);
-    if (btn) { btn.innerHTML = origText; btn.disabled = false; }
-  }
+  if (btn) { btn.innerHTML = origText; btn.disabled = false; }
 }
+
+
 
 function exportCarteraExcel() {
   const fecha = new Date().toISOString().slice(0, 10);
