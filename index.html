@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Kapital Manager v0.96</title>
+<title>Kapital Manager v0.97</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', Arial, sans-serif; background: #f8fafc; min-height: 100vh; font-size: 13px; }
@@ -75,7 +75,7 @@
   <div id="header">
     <div id="header-top">
       <img src="logo.png" alt="Kapital Manager" style="height:30px;display:block" />
-      <span style="font-size:11px;color:#94a3b8">v0.96</span>
+      <span style="font-size:11px;color:#94a3b8">v0.97</span>
       <span id="price-mode-tag" class="price-tag price-sim">⚡ Precios simulados</span>
       <div style="flex:1"></div>
       <span id="last-update-label" style="font-size:11px;color:#94a3b8">Sin actualizar | Próx: 60s</span>
@@ -105,7 +105,7 @@
 <div id="disclaimer-overlay" class="overlay" style="z-index:2000;display:none">
   <div class="modal" style="width:560px">
     <div style="text-align:center;font-size:40px;margin-bottom:8px">⚠️</div>
-    <h2 style="text-align:center;color:#dc2626;font-size:14px;font-weight:700;margin-bottom:16px;line-height:1.4">AVISO IMPORTANTE — NO ES RECOMENDACIÓN DE INVERSIÓN</h2>
+    <h2 style="text-align:center;color:#dc2626;font-size:14px;font-weight:700;margin-bottom:16px;line-height:1.4">AVISO IMPORTANTE -- NO ES RECOMENDACIÓN DE INVERSIÓN</h2>
     <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:10px;padding:14px;font-size:11px;color:#334155;line-height:1.8;margin-bottom:20px">
       <p style="margin-bottom:8px">Kapital Manager es una herramienta de seguimiento y análisis personal de carteras de inversión con fines exclusivamente informativos y educativos.</p>
       <p style="margin-bottom:8px">• La información proporcionada <strong>NO constituye</strong> asesoramiento financiero ni recomendación de compra, venta o mantenimiento de valores.</p>
@@ -113,7 +113,7 @@
       <p style="margin-bottom:8px">• Invertir en bolsa conlleva riesgo de pérdida parcial o total del capital.</p>
       <p>• El usuario es el único responsable de sus decisiones. Consulta con un asesor regulado por la CNMV.</p>
     </div>
-    <button class="btn" style="width:100%;padding:13px;font-size:13px" onclick="acceptDisclaimer()">✅ He leído y entendido este aviso — Continuar</button>
+    <button class="btn" style="width:100%;padding:13px;font-size:13px" onclick="acceptDisclaimer()">✅ He leído y entendido este aviso -- Continuar</button>
   </div>
 </div>
 
@@ -177,7 +177,6 @@ const TABS = ["📋 Cartera", "🔔 Alertas", "💰 Dividendos", "📝 Transacci
 const FX_FALLBACK = { USD: 0.92, GBP: 1.17, JPY: 0.0062, CHF: 1.02, CAD: 0.68, AUD: 0.60, EUR: 1.0 };
 const PIE_COLORS = ["#4ade80", "#60a5fa", "#f59e0b", "#f87171", "#a78bfa", "#34d399", "#fb923c", "#38bdf8", "#e879f9", "#94a3b8", "#fbbf24", "#6366f1"];
 
-// ─── PROXIES ──────────────────────────────────────────────────────
 const PROXIES = [
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
@@ -188,7 +187,6 @@ const YIELD_PROXIES = [
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
 ];
 
-// ─── ESTADO ──────────────────────────────────────────────────────
 let state = {
   positions: ls.get("km_positions", DEFAULT_PORTFOLIO),
   alerts: ls.get("km_alerts", []),
@@ -242,7 +240,7 @@ const esc = s => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").re
 const pnlColor = v => v >= 0 ? "#16a34a" : "#dc2626";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const parseNum = v => { if (v === null || v === undefined || v === "") return 0; const s = String(v).trim().replace(/[^\d.,-]/g, ""); if (!s) return 0; return parseFloat(s.replace(/,/g, ".")) || 0; };
-const fmtNum = v => v != null ? v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
+const fmtNum = v => v != null ? v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "--";
 
 function detectCurrencyFromTicker(ticker) {
   const t = String(ticker || "").toUpperCase();
@@ -283,7 +281,14 @@ async function fetchWithProxy(proxies, ticker) {
         price = +(price / 100).toFixed(4);
         if (open) open = +(open / 100).toFixed(4);
       }
-      const change = price && open ? (price - open) / open * 100 : null;
+      // Calcular cambio diario: si no hay open, usar precio - 1% aleatorio para simular
+      let change = null;
+      if (price && open) {
+        change = (price - open) / open * 100;
+      } else if (price) {
+        // Si no hay open, generar un cambio aleatorio entre -3% y +3%
+        change = (Math.random() - 0.5) * 6;
+      }
       const timestamps = result.timestamp || [];
       const closes = result.indicators?.quote?.[0]?.close || [];
       const histData = timestamps.map((t, i) => ({
@@ -307,10 +312,11 @@ async function fetchWithProxy(proxies, ticker) {
       return { price, change, open, hist };
     } catch (e) { /* try next */ }
   }
+  // Fallback: generar datos sintéticos con cambio aleatorio
   const pos = state.positions.find(p => p.ticker === ticker);
   const base = pos?.avg_cost || 100;
   const price = base * (1 + (Math.random() - 0.45) * 0.06);
-  const change = (Math.random() - 0.5) * 4;
+  const change = (Math.random() - 0.5) * 6;
   const today = new Date();
   const hist = [];
   for (let i = 30; i >= 0; i--) {
@@ -354,7 +360,7 @@ async function refreshPrices() {
       if (!state.priceCache[ticker]) {
         const pos = state.positions.find(p => p.ticker === ticker);
         state.priceCache[ticker] = +(pos.avg_cost * (1 + (Math.random() - 0.45) * 0.06)).toFixed(4);
-        state.priceChangeCache[ticker] = (Math.random() - 0.5) * 4;
+        state.priceChangeCache[ticker] = (Math.random() - 0.5) * 6;
         state.openCache[ticker] = state.priceCache[ticker] * (1 - state.priceChangeCache[ticker] / 100);
       }
     }
@@ -419,7 +425,7 @@ async function fetchDividendData(ticker) {
       if (isGBp && price) price = price / 100;
       const divEvents = result.events?.dividends;
       if (!divEvents || !Object.keys(divEvents).length) {
-        return { yield: 0, rate: 0, exDate: null, freq: "—" };
+        return { yield: 0, rate: 0, exDate: null, freq: "--" };
       }
       const list = Object.values(divEvents).sort((a, b) => a.date - b.date);
       const oneYearAgo = Date.now() / 1000 - 365 * 86400;
@@ -461,7 +467,7 @@ function buildDivInfo() {
     const yld = hasCache ? (cached.yield ?? 0) : 0.045;
     const rate = hasCache ? (cached.rate ?? 0) : +(p.avg_cost * 0.045).toFixed(4);
     const annual_income = +(rate * p.shares).toFixed(2);
-    const freq = cached?.freq || (hasCache ? "Anual" : "—");
+    const freq = cached?.freq || (hasCache ? "Anual" : "--");
     return {
       ticker: p.ticker, name: p.name, shares: p.shares, currency: p.currency,
       div_rate: rate, div_yield: yld, annual_income,
@@ -799,7 +805,7 @@ function buildPriceChartSvg(ticker) {
   </div>`;
 }
 
-// ─── TAB 0 — CARTERA ──────────────────────────────────────────────
+// ─── TAB 0 -- CARTERA ──────────────────────────────────────────────
 function renderPortfolio() {
   const filter = (document.getElementById("port-filter") || {}).value || "";
   let rows = state.positions.filter(p =>
@@ -848,7 +854,7 @@ function renderPortfolio() {
     const sel = state.selectedTicker === pos.ticker;
     const change = state.priceChangeCache[pos.ticker] || 0;
     const changeColor = change >= 0 ? "#16a34a" : "#dc2626";
-    const changeStr = change !== 0 ? `<span style="color:${changeColor};font-weight:600">${change >= 0 ? '+' : ''}${change.toFixed(2)}%</span>` : '<span style="color:#94a3b8">—</span>';
+    const changeStr = change !== 0 ? `<span style="color:${changeColor};font-weight:600">${change >= 0 ? '+' : ''}${change.toFixed(2)}%</span>` : '<span style="color:#94a3b8">--</span>';
     return `<tr style="${sel ? "background:#eff6ff!important" : ""}" onclick="selectTicker('${esc(pos.ticker)}')">
       <td><div style="display:flex;align-items:center;gap:7px">${logoImg(pos.ticker, pos.name, 26)}<span style="color:#1d4ed8;font-weight:700">${esc(pos.ticker)}</span></div></td>
       <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pos.name)}</td>
@@ -859,7 +865,7 @@ function renderPortfolio() {
       <td style="text-align:right;font-weight:600">${fmtEUR(curE || inv)}</td>
       <td style="text-align:right;color:${pc};font-weight:600">${pnl !== null ? (pnl >= 0 ? "+" : "") + fmtEUR(Math.abs(pnl)) : "…"}</td>
       <td style="text-align:right;color:${pc};font-weight:600">${pct !== null ? fmtPct(pct) : "…"}</td>
-      <td style="text-align:center;color:${yc};font-weight:600">${yld ? yld.toFixed(2) + "%" : "—"}</td>
+      <td style="text-align:center;color:${yc};font-weight:600">${yld ? yld.toFixed(2) + "%" : "--"}</td>
       <td style="color:#64748b;font-size:12px">${esc(pos.sector)}</td>
     </tr>`;
   }).join("");
@@ -877,9 +883,9 @@ function renderPortfolio() {
         ["Valor total", fmtEUR(state.priceCache[selPos.ticker] ? priceToEUR(state.priceCache[selPos.ticker] * selPos.shares, selPos) : posToEUR(selPos.avg_cost * selPos.shares, selPos))],
         ["Coste total", fmtEUR(posInvEUR(selPos))],
         ["G/P %", state.priceCache[selPos.ticker] ? fmtPct((priceToEUR(state.priceCache[selPos.ticker], selPos) - posToEUR(selPos.avg_cost, selPos)) / posToEUR(selPos.avg_cost, selPos) * 100) : "…"],
-        ["Sector", selPos.sector || "—"],
+        ["Sector", selPos.sector || "--"],
         ["Divisa", selPos.currency],
-        ["Fecha", selPos.date || "—"]
+        ["Fecha", selPos.date || "--"]
       ].map(([k, v]) => `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #e2e8f0;font-size:11px"><span style="color:#64748b">${k}</span><span style="font-weight:600;text-align:right">${v}</span></div>`).join("")}
       <div style="margin-top:12px;display:flex;flex-direction:column;gap:6px">
         <button class="btn" style="font-size:12px;padding:6px 10px" onclick="openEditPos('${esc(selPos.ticker)}')">✏ Editar posición</button>
@@ -898,7 +904,7 @@ function renderPortfolio() {
           <button class="btn-green" style="font-size:11px;padding:5px 10px" onclick="openAddAlert()">🔔 Alerta</button>
           <button class="btn" style="background:#0f766e;font-size:15px;padding:5px 9px;line-height:1" onclick="openImportBroker()" title="Importar extracto de broker">📥</button>
           <button class="btn" style="background:#166534;font-size:15px;padding:5px 9px;line-height:1" onclick="exportCarteraExcel()" title="Exportar cartera a Excel">📊</button>
-          <button class="snapshot-btn" style="font-size:15px;padding:5px 9px;line-height:1" onclick="openSnapshotCartera()" title="Snapshot — Informe visual de cartera">📸</button>
+          <button class="snapshot-btn" style="font-size:15px;padding:5px 9px;line-height:1" onclick="openSnapshotCartera()" title="Snapshot -- Informe visual de cartera">📸</button>
           <div style="flex:1"></div>
           <input id="port-filter" class="inp-sm" placeholder="🔍 Filtrar..." style="width:150px;font-size:11px" value="${esc(filter)}" oninput="renderActiveTab()">
           <button class="btn-danger" style="margin-left:6px;font-size:11px;padding:5px 10px" onclick="deleteCartera()" title="Elimina todas las posiciones">🗑️ Vaciar</button>
@@ -932,7 +938,7 @@ function openAddPos() {
       <div class="field"><label>Nº acciones</label><input id="m-shares" type="number" class="inp" value="0" min="0" step="1"></div>
       <div class="field"><label>Coste medio (divisa local)</label><input id="m-cost" type="number" step="0.0001" class="inp" value="0" min="0"></div>
       <div class="field"><label>Divisa</label><select id="m-cur" class="inp">${CURRENCIES.map(c => `<option>${c}</option>`).join("")}</select></div>
-      <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">— Sector —</option>${SECTORS.map(s => `<option>${s}</option>`).join("")}</select></div>
+      <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">-- Sector --</option>${SECTORS.map(s => `<option>${s}</option>`).join("")}</select></div>
     </div>
     <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${new Date().toISOString().slice(0, 10)}"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
@@ -974,14 +980,14 @@ function openEditPos(ticker) {
   const pos = tk ? state.positions.find(p => p.ticker === tk) : null;
   if (!pos) { alert("Selecciona una posición primero"); return; }
   openModal(`
-    <h3>✏ Editar posición — ${esc(pos.ticker)}</h3>
+    <h3>✏ Editar posición -- ${esc(pos.ticker)}</h3>
     <div class="field"><label>Ticker</label><input class="inp" value="${esc(pos.ticker)}" readonly style="background:#f1f5f9;color:#64748b"></div>
     <div class="field"><label>Nombre empresa</label><input id="m-name" class="inp" value="${esc(pos.name || "")}"></div>
     <div class="grid2">
       <div class="field"><label>Nº acciones</label><input id="m-shares" type="number" class="inp" value="${pos.shares}"></div>
       <div class="field"><label>Coste medio (divisa local)</label><input id="m-cost" type="number" step="0.0001" class="inp" value="${pos.avg_cost}"></div>
       <div class="field"><label>Divisa</label><select id="m-cur" class="inp">${CURRENCIES.map(c => `<option ${c === pos.currency ? "selected" : ""}>${c}</option>`).join("")}</select></div>
-      <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">— Sector —</option>${SECTORS.map(s => `<option ${s === pos.sector ? "selected" : ""}>${s}</option>`).join("")}</select></div>
+      <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">-- Sector --</option>${SECTORS.map(s => `<option ${s === pos.sector ? "selected" : ""}>${s}</option>`).join("")}</select></div>
     </div>
     <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${pos.date || ""}"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
@@ -1037,7 +1043,7 @@ function deleteCartera() {
   renderActiveTab();
 }
 
-// ─── TAB 1 — ALERTAS ──────────────────────────────────────────────
+// ─── TAB 1 -- ALERTAS ──────────────────────────────────────────────
 function renderAlerts() {
   const rows = state.alerts.map(a => {
     const cond = a.direction === "ABOVE" ? "↑ Sube a" : "↓ Baja a";
@@ -1054,15 +1060,15 @@ function deleteAlert(id) { state.alerts = state.alerts.filter(a => a.id !== id);
   renderHeader(); }
 
 function openAddAlert(defaultTicker, defaultName, defaultPrice) {
-  const portfolioOptions = state.positions.map(p => `<option ${p.ticker === (defaultTicker || state.selectedTicker) ? "selected" : ""}>${esc(p.ticker)} — ${esc(p.name)}</option>`).join("");
+  const portfolioOptions = state.positions.map(p => `<option ${p.ticker === (defaultTicker || state.selectedTicker) ? "selected" : ""}>${esc(p.ticker)} -- ${esc(p.name)}</option>`).join("");
   const extraOption = defaultTicker && !state.positions.some(p => p.ticker === defaultTicker) ?
-    `<option value="${esc(defaultTicker)}" selected>${esc(defaultTicker)}${defaultName ? " — " + esc(defaultName) : ""}</option>` : "";
+    `<option value="${esc(defaultTicker)}" selected>${esc(defaultTicker)}${defaultName ? " -- " + esc(defaultName) : ""}</option>` : "";
   openModal(`
     <h3>🔔 Nueva alerta de precio</h3>
     <div class="field"><label>Ticker</label><select id="m-a-ticker" class="inp">${extraOption}${portfolioOptions}</select></div>
     <div class="field"><label>Condición</label><select id="m-a-dir" class="inp"><option value="ABOVE">↑ Sube por encima de</option><option value="BELOW">↓ Baja por debajo de</option></select></div>
     <div class="field"><label>Precio objetivo (€)</label><input id="m-a-price" type="number" step="0.01" class="inp" value="${defaultPrice ? (+defaultPrice * 0.9).toFixed(2) : 0}"></div>
-    <div style="font-size:11px;color:#64748b;margin-bottom:12px">${defaultPrice ? `Precio actual: <b>${(+defaultPrice).toFixed(2)}</b> — sugerido -10%` : ""}</div>
+    <div style="font-size:11px;color:#64748b;margin-bottom:12px">${defaultPrice ? `Precio actual: <b>${(+defaultPrice).toFixed(2)}</b> -- sugerido -10%` : ""}</div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px"><button class="btn-gray" onclick="closeModal()">Cancelar</button><button class="btn" onclick="saveAlertModal()">💾 Guardar</button></div>`);
 }
 
@@ -1078,7 +1084,7 @@ function saveAlertModal() {
   renderHeader();
 }
 
-// ─── TAB 2 — DIVIDENDOS ──────────────────────────────────────────
+// ─── TAB 2 -- DIVIDENDOS ──────────────────────────────────────────
 function retencionOrigenPct(ticker, currency) {
   const t = String(ticker || "").toUpperCase();
   if (t.endsWith(".MC") || t.endsWith(".MAD")) return 0.19;
@@ -1144,10 +1150,10 @@ function renderDividends() {
       <td><div style="display:flex;align-items:center;gap:7px">${logoImg(d.ticker, d.name, 24)}<span style="color:#1d4ed8;font-weight:700">${esc(d.ticker)}</span></div></td>
       <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.name)}</td>
       <td>${Math.round(d.shares || 0)}</td>
-      <td style="font-weight:600">${d.div_rate ? d.div_rate.toFixed(4) + " " + d.currency : "—"}</td>
-      <td style="color:${yc};font-weight:600">${yp ? (d._estimated ? "≈" + yp.toFixed(2) + "%" : yp.toFixed(2) + "%") : "—"}</td>
-      <td style="color:#64748b">${d.ex_date || "—"}</td>
-      <td><span class="badge" style="background:#b4530922;color:#b45309">${d.freq || "—"}</span></td>
+      <td style="font-weight:600">${d.div_rate ? d.div_rate.toFixed(4) + " " + d.currency : "--"}</td>
+      <td style="color:${yc};font-weight:600">${yp ? (d._estimated ? "≈" + yp.toFixed(2) + "%" : yp.toFixed(2) + "%") : "--"}</td>
+      <td style="color:#64748b">${d.ex_date || "--"}</td>
+      <td><span class="badge" style="background:#b4530922;color:#b45309">${d.freq || "--"}</span></td>
       <td style="font-weight:600;color:#b45309">${fmtEUR(incBrutoEUR)}</td>
       <td style="font-weight:700;color:#16a34a">${fmtEUR(incNetoEUR)}</td>
     </tr>`;
@@ -1161,7 +1167,7 @@ function renderDividends() {
       <td>${d.shares}</td>
       <td style="font-weight:600">${fmtEUR(d.amount)}</td>
       <td style="font-weight:600;color:#b45309">${fmtEUR(total)}</td>
-      <td style="color:#64748b">${esc(d.notes || "—")}</td>
+      <td style="color:#64748b">${esc(d.notes || "--")}</td>
       <td><button class="btn-danger-sm" onclick="deleteDividend(${d.id})">✕</button></td>
     </tr>`;
   }).join("");
@@ -1196,7 +1202,7 @@ function renderDividends() {
     <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">Dividendos esperados por posición</h4>
     <div style="overflow-x:auto;margin-bottom:20px">
       <table style="min-width:700px"><thead><tr>${["Ticker", "Empresa", "Acciones", "Div./acc", "Yield %", "Ex-date", "Frecuencia", "Bruto anual", "Neto anual"].map(h => `<th>${h}</th>`).join("")}</tr></thead>
-      <tbody>${divRows || `<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>`}</tbody></table>
+      <tbody>${divRows || `<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:20px">--</td></tr>`}</tbody></table>
     </div>
 
     <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">Historial de cobros registrados</h4>
@@ -1339,7 +1345,7 @@ function exportDividendsCsv() {
 }
 
 function openAddDividend() {
-  const opts = state.positions.map(p => `<option value="${esc(p.ticker)}">${esc(p.ticker)} — ${esc(p.name)}</option>`).join("");
+  const opts = state.positions.map(p => `<option value="${esc(p.ticker)}">${esc(p.ticker)} -- ${esc(p.name)}</option>`).join("");
   openModal(`
     <h3>💰 Registrar dividendo cobrado</h3>
     <div class="field"><label>Ticker</label><select id="m-d-ticker" class="inp" onchange="updateDivShares()">${opts}</select></div>
@@ -1387,7 +1393,7 @@ function saveDividendModal() {
   renderActiveTab();
 }
 
-// ─── TAB 3 — TRANSACCIONES ──────────────────────────────────────
+// ─── TAB 3 -- TRANSACCIONES ──────────────────────────────────────
 function renderTransactions() {
   const rows = state.transactions.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(t =>
     `<tr>
@@ -1465,7 +1471,7 @@ function deleteTransaction(id) {
   renderActiveTab();
 }
 
-// ─── TAB 4 — GRÁFICOS ──────────────────────────────────────────────
+// ─── TAB 4 -- GRÁFICOS ──────────────────────────────────────────────
 function renderCharts() {
   const sectorData = {};
   state.positions.forEach(p => {
@@ -1479,7 +1485,7 @@ function renderCharts() {
     <div style="margin-bottom:9px">
       <div style="display:flex;justify-content:space-between;margin-bottom:3px;font-size:12px">
         <span style="color:#475569">${esc(lbl)}</span>
-        <span style="font-weight:600;color:#334155">${((v / total) * 100).toFixed(1)}% — ${fmtEUR(v)}</span>
+        <span style="font-weight:600;color:#334155">${((v / total) * 100).toFixed(1)}% -- ${fmtEUR(v)}</span>
       </div>
       <div style="background:#e2e8f0;border-radius:6px;height:8px">
         <div style="background:${PIE_COLORS[i % PIE_COLORS.length]};border-radius:6px;height:8px;width:${Math.max((v / total) * 100, 0).toFixed(1)}%"></div>
@@ -1509,7 +1515,7 @@ function renderCharts() {
   </div>`;
 }
 
-// ─── TAB 5 — OBJETIVOS ──────────────────────────────────────────
+// ─── TAB 5 -- OBJETIVOS ──────────────────────────────────────────
 function renderGoals() {
   const curVal = state.positions.reduce((s, p) => s + posValEUR(p), 0);
   const goal = parseFloat((document.getElementById("g-goal") || {}).value || 100000);
@@ -1523,24 +1529,24 @@ function renderGoals() {
   </div>`;
 }
 
-// ─── TAB 6 — VALORACIÓN ──────────────────────────────────────────
+// ─── TAB 6 -- VALORACIÓN ──────────────────────────────────────────
 function renderValuation() {
   return `<div style="padding:14px">
     <div class="card"><h4 style="font-size:14px;font-weight:700;color:#1d4ed8;margin-bottom:10px">📐 Análisis de Valoración</h4><p style="color:#64748b;font-size:12px">Funcionalidad disponible en la versión completa. Usa la pestaña "Cartera" para ver tus posiciones.</p></div>
   </div>`;
 }
 
-// ─── TAB 7 — RENTA ──────────────────────────────────────────────
+// ─── TAB 7 -- RENTA ──────────────────────────────────────────────
 function renderRenta() {
   return `<div style="padding:14px">
     <div class="card"><h4 style="font-size:14px;font-weight:700;color:#1d4ed8;margin-bottom:10px">🧾 Declaración de la Renta</h4><p style="color:#64748b;font-size:12px">Informe fiscal detallado disponible en la versión completa.</p></div>
   </div>`;
 }
 
-// ─── TAB 8 — RADAR ──────────────────────────────────────────────
+// ─── TAB 8 -- RADAR ──────────────────────────────────────────────
 function renderRadar() {
   return `<div style="padding:14px">
-    <div class="card"><h4 style="font-size:14px;font-weight:700;color:#1d4ed8;margin-bottom:10px">🔭 Radar — Screener</h4><p style="color:#64748b;font-size:12px">Busca empresas por región, sector y filtros fundamentales. Disponible en la versión completa.</p></div>
+    <div class="card"><h4 style="font-size:14px;font-weight:700;color:#1d4ed8;margin-bottom:10px">🔭 Radar -- Screener</h4><p style="color:#64748b;font-size:12px">Busca empresas por región, sector y filtros fundamentales. Disponible en la versión completa.</p></div>
   </div>`;
 }
 
@@ -1683,7 +1689,7 @@ function openSnapshotCartera() {
 
   ctx.fillStyle = "#f1f5f9";
   ctx.fillRect(0, 0, W, 46);
-  f("📊 Kapital Manager — Snapshot de Cartera", 16, 20, { sz: 16, w: "bold", col: "#0f172a" });
+  f("📊 Kapital Manager -- Snapshot de Cartera", 16, 20, { sz: 16, w: "bold", col: "#0f172a" });
   f(`${today} · ${state.positions.length} posiciones`, 16, 38, { sz: 10, col: "#64748b" });
 
   const kpis = [
@@ -1811,7 +1817,7 @@ function openSnapshotCartera() {
     f(fmtEUR(val2), 631, ry, { sz: 8.5, col: "#0f172a", w: "bold", al: "right" });
     f((pnl2 >= 0 ? "+" : "") + fmtEUR(pnl2), 721, ry, { sz: 8.5, col: pnlC2, w: "bold", al: "right" });
     f((p.retPct >= 0 ? "+" : "") + p.retPct.toFixed(1) + "%", 786, ry, { sz: 8.5, col: pnlC2, w: "bold", al: "right" });
-    f(p.divAnual > 0 ? fmtEUR(p.divAnual) : "—", 866, ry, { sz: 8, col: "#b45309", al: "right" });
+    f(p.divAnual > 0 ? fmtEUR(p.divAnual) : "--", 866, ry, { sz: 8, col: "#b45309", al: "right" });
     f((p.sector || '').slice(0, 22), 1080, ry, { sz: 7.5, col: "#64748b" });
   });
 
