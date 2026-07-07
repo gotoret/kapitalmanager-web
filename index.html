@@ -774,10 +774,12 @@ async function refreshDividendYields() {
   if (state.activeTab === 2) renderActiveTab();
 }
 
-function openSnapshotCartera() {
-  const btn = event?.target?.closest("button");
+function openSnapshotCartera(btnEl) {
+  const btn = btnEl || document.querySelector('[onclick*="openSnapshotCartera"]');
   const origText = btn?.innerHTML;
   if (btn) { btn.innerHTML = "⏳"; btn.disabled = true; }
+
+  try {
 
   const today = new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"long",year:"numeric"});
   const fecha = new Date().toISOString().slice(0,10);
@@ -803,228 +805,243 @@ function openSnapshotCartera() {
   const PIE=["#3b82f6","#22c55e","#ef4444","#f59e0b","#a855f7","#06b6d4","#ec4899","#10b981","#8b5cf6","#f97316","#84cc16","#64748b"];
 
   // ── Canvas setup ─────────────────────────────────────────────
-  const W = 1200, ROWH = 28;
+  const W = 1200, ROWH = 24;
   const tableRows = posWithVal.length;
-  const H = 820 + Math.max(0, tableRows - 10) * ROWH;
+  const H = 640 + tableRows * ROWH + 60;
 
   const canvas = document.createElement("canvas");
-  canvas.width = W; canvas.height = H;
+  canvas.width = W * 2; canvas.height = H * 2; // retina
+  canvas.style.width = W + "px"; canvas.style.height = H + "px";
   const ctx = canvas.getContext("2d");
+  ctx.scale(2, 2); // retina scale
   ctx.imageSmoothingEnabled = true;
 
-  // Fondo
-  ctx.fillStyle = "#0f172a";
-  ctx.fillRect(0, 0, W, H);
+  const bg = "#0f172a", card = "#1e293b", border = "#334155";
 
-  // Helper texto
-  const txt = (text, x, y, {size=12, color="#e2e8f0", weight="normal", align="left"}={}) => {
-    ctx.font = `${weight} ${size}px system-ui, Arial, sans-serif`;
-    ctx.fillStyle = color;
-    ctx.textAlign = align;
-    ctx.fillText(String(text), x, y);
+  // Helpers
+  const f = (text, x, y, {sz=11,col="#e2e8f0",w="normal",al="left"}={}) => {
+    ctx.font = `${w} ${sz}px "Inter", system-ui, Arial, sans-serif`;
+    ctx.fillStyle = col; ctx.textAlign = al;
+    ctx.fillText(String(text??''), x, y);
     ctx.textAlign = "left";
   };
-
-  // Helper rect redondeado
-  const rr = (x, y, w, h, r=8, fill="#1e293b") => {
+  const rr = (x,y,W2,H2,r=8,fill=card) => {
     ctx.beginPath();
-    ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r);
-    ctx.lineTo(x+w,y+h-r); ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
-    ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r);
+    ctx.moveTo(x+r,y); ctx.lineTo(x+W2-r,y); ctx.arcTo(x+W2,y,x+W2,y+r,r);
+    ctx.lineTo(x+W2,y+H2-r); ctx.arcTo(x+W2,y+H2,x+W2-r,y+H2,r);
+    ctx.lineTo(x+r,y+H2); ctx.arcTo(x,y+H2,x,y+H2-r,r);
     ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r);
-    ctx.closePath();
-    ctx.fillStyle = fill; ctx.fill();
+    ctx.closePath(); ctx.fillStyle=fill; ctx.fill();
   };
+  const hline = (y,col=border) => { ctx.fillStyle=col; ctx.fillRect(16,y,W-32,1); };
 
-  const fmtK = v => Math.abs(v)>=1000 ? (v/1000).toFixed(1)+"k" : v.toFixed(2);
+  // Fondo
+  ctx.fillStyle = bg; ctx.fillRect(0,0,W,H);
 
-  // ── CABECERA ─────────────────────────────────────────────────
-  ctx.fillStyle = "#1e293b";
-  ctx.fillRect(0, 0, W, 52);
-  ctx.fillStyle = "#3b82f6";
-  ctx.fillRect(0, 0, 4, 52);
-  txt("📊 Kapital Manager — Snapshot de Cartera", 20, 22, {size:18, weight:"bold", color:"#f1f5f9"});
-  txt(`${today} · ${state.positions.length} posiciones · ${state.authUser||""}`, 20, 42, {size:11, color:"#64748b"});
-  txt(`gotoret.github.io/kapitalmanager-web`, W-16, 32, {size:10, color:"#334155", align:"right"});
+  // ── HEADER (y=0..46) ─────────────────────────────────────────
+  ctx.fillStyle = card; ctx.fillRect(0,0,W,46);
+  ctx.fillStyle = "#3b82f6"; ctx.fillRect(0,0,4,46);
+  f("📊 Kapital Manager — Snapshot de Cartera", 16, 20, {sz:16, w:"bold", col:"#f1f5f9"});
+  f(`${today} · ${state.positions.length} posiciones · ${state.authUser||''}`, 16, 38, {sz:10, col:"#64748b"});
+  f("gotoret.github.io", W-16, 28, {sz:9, col:"#334155", al:"right"});
 
-  // ── KPIs (8 tarjetas) ────────────────────────────────────────
-  const kpis = [
-    ["INVERTIDO",    fmtEUR(totalInv),                              "#3b82f6"],
-    ["VALOR ACTUAL", fmtEUR(totalCur),                             "#22c55e"],
-    ["P&L TOTAL",    (pnlTotal>=0?"+":"")+fmtEUR(pnlTotal),       pnlTotal>=0?"#4ade80":"#f87171"],
-    ["RENTABILIDAD", (pnlPct>=0?"+":"")+pnlPct.toFixed(2)+"%",    pnlPct>=0?"#4ade80":"#f87171"],
-    ["DIV. ANUAL",   fmtEUR(divAnual),                             "#fbbf24"],
-    ["DIV. MENSUAL", fmtEUR(divAnual/12),                          "#fbbf24"],
-    ["YIELD/COST",   yieldOnCost.toFixed(2)+"%",                   "#a855f7"],
-    ["POSICIONES",   state.positions.length.toString(),             "#94a3b8"],
+  // ── KPIs 8 tarjetas (y=54..118) ──────────────────────────────
+  const kpis=[
+    ["INVERTIDO",    fmtEUR(totalInv),                           "#3b82f6"],
+    ["VALOR ACTUAL", fmtEUR(totalCur),                          "#22c55e"],
+    ["P&L TOTAL",    (pnlTotal>=0?"+":"")+fmtEUR(pnlTotal),    pnlTotal>=0?"#4ade80":"#f87171"],
+    ["RENTAB.",      (pnlPct>=0?"+":"")+pnlPct.toFixed(2)+"%", pnlPct>=0?"#4ade80":"#f87171"],
+    ["DIV. ANUAL",   fmtEUR(divAnual),                          "#fbbf24"],
+    ["DIV. MENSUAL", fmtEUR(divAnual/12),                       "#fbbf24"],
+    ["YIELD/COST",   yieldOnCost.toFixed(2)+"%",                "#a855f7"],
+    ["POSICIONES",   state.positions.length.toString(),          "#94a3b8"],
   ];
-  const kW = (W-32)/8, kY = 60;
-  kpis.forEach(([l,v,c], i) => {
-    const x = 16 + i*kW;
-    rr(x, kY, kW-6, 64, 8, "#1e293b");
-    ctx.fillStyle = c; ctx.fillRect(x, kY, 3, 64);
-    txt(l, x+10, kY+16, {size:8, color:"#64748b", weight:"bold"});
-    txt(v, x+10, kY+44, {size:14, color:c, weight:"bold"});
+  const kW = (W-32)/8;
+  kpis.forEach(([l,v,c],i) => {
+    const x=16+i*kW, y=54;
+    rr(x,y,kW-4,58,7,card);
+    ctx.fillStyle=c; ctx.fillRect(x,y,3,58);
+    f(l, x+8, y+16, {sz:8, col:"#64748b", w:"bold"});
+    f(v, x+8, y+42, {sz:i<4?15:13, col:c, w:"bold"});
   });
 
-  // ── DONUT SECTOR ─────────────────────────────────────────────
-  const DX=160, DY=170, DR=70, dr=44;
-  rr(16, 138, 300, 230, 10, "#1e293b");
-  txt("Distribución por Sector", 26, 158, {size:11, weight:"bold", color:"#f1f5f9"});
-  const total = sectorList.reduce((s,[,v])=>s+v,0)||1;
-  let ang = -Math.PI/2;
+  // ── FILA 2: DONUT | TOP | DIVIDENDOS (y=124..340) ────────────
+  const ROW2_Y=124, ROW2_H=210;
+  const C1W=280, C2W=290, C3W=W-32-C1W-C2W-16;
+
+  // --- Donut sectores ---
+  rr(16,ROW2_Y,C1W,ROW2_H,10,card);
+  f("Distribución por Sector", 26, ROW2_Y+18, {sz:11, w:"bold", col:"#f1f5f9"});
+  const DX=90, DY=ROW2_Y+120, DR=68, dr=44;
+  const tot2 = sectorList.reduce((s,[,v])=>s+v,0)||1;
+  let ang=-Math.PI/2;
   sectorList.forEach(([,v],i)=>{
-    const sw = v/total*2*Math.PI;
+    const sw=v/tot2*2*Math.PI;
     ctx.beginPath(); ctx.moveTo(DX,DY);
     ctx.arc(DX,DY,DR,ang,ang+sw); ctx.closePath();
-    ctx.fillStyle = PIE[i%PIE.length]; ctx.fill();
-    ctx.fillStyle="#0f172a"; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.fillStyle=PIE[i%PIE.length]; ctx.fill();
+    ctx.strokeStyle=bg; ctx.lineWidth=1.5; ctx.stroke();
     ang+=sw;
   });
-  // Hueco central
   ctx.beginPath(); ctx.arc(DX,DY,dr,0,2*Math.PI);
-  ctx.fillStyle="#1e293b"; ctx.fill();
-  txt(state.positions.length, DX, DY+5, {size:16, weight:"bold", color:"#f1f5f9", align:"center"});
-  txt("pos.", DX, DY+18, {size:8, color:"#64748b", align:"center"});
-  // Leyenda
+  ctx.fillStyle=card; ctx.fill();
+  f(state.positions.length, DX, DY+6, {sz:16, w:"bold", col:"#f1f5f9", al:"center"});
+  f("pos.", DX, DY+19, {sz:8, col:"#64748b", al:"center"});
   sectorList.slice(0,8).forEach(([s,v],i)=>{
-    const ly = 168+i*24, lx=242;
-    ctx.fillStyle=PIE[i%PIE.length]; ctx.fillRect(lx,ly-8,8,8);
-    txt(s.slice(0,14), lx+12, ly, {size:8, color:"#94a3b8"});
-    txt(`${(v/total*100).toFixed(1)}%`, 308, ly, {size:8, color:"#e2e8f0", weight:"bold", align:"right"});
+    const ly=ROW2_Y+28+i*22, lx=168;
+    ctx.fillStyle=PIE[i%PIE.length]; ctx.fillRect(lx,ly-7,7,7);
+    f(s.slice(0,13), lx+10, ly, {sz:8, col:"#94a3b8"});
+    f(`${(v/tot2*100).toFixed(1)}%`, C1W+8, ly, {sz:8, col:"#e2e8f0", w:"bold", al:"right"});
   });
 
-  // ── TOP POSICIONES ────────────────────────────────────────────
-  rr(326, 138, 300, 230, 10, "#1e293b");
-  txt("Top Posiciones por Valor", 336, 158, {size:11, weight:"bold", color:"#f1f5f9"});
+  // --- Top posiciones ---
+  const C2X=16+C1W+8;
+  rr(C2X,ROW2_Y,C2W,ROW2_H,10,card);
+  f("Top Posiciones por Valor", C2X+10, ROW2_Y+18, {sz:11, w:"bold", col:"#f1f5f9"});
   posWithVal.slice(0,8).forEach((p,i)=>{
-    const py=172+i*24;
-    txt(p.ticker, 336, py, {size:9, weight:"bold", color:"#60a5fa"});
-    txt(`${p.pct.toFixed(1)}%`, 455, py, {size:8, color:"#475569"});
-    txt(fmtEUR(p.val), 600, py, {size:9, weight:"bold", color:"#e2e8f0", align:"right"});
-    const retC = p.retPct>=0?"#4ade80":"#f87171";
-    txt((p.retPct>=0?"+":"")+p.retPct.toFixed(1)+"%", 618, py, {size:9, weight:"bold", color:retC});
+    const py=ROW2_Y+34+i*22;
+    f(p.ticker, C2X+10, py, {sz:9, w:"bold", col:"#60a5fa"});
+    f(p.pct.toFixed(1)+"%", C2X+105, py, {sz:8, col:"#475569"});
+    f(fmtEUR(p.val), C2X+C2W-10, py, {sz:9, w:"bold", col:"#e2e8f0", al:"right"});
+    const rc=p.retPct>=0?"#4ade80":"#f87171";
+    f((p.retPct>=0?"+":"")+p.retPct.toFixed(1)+"%", C2X+185, py, {sz:8, col:rc});
   });
 
-  // ── DIV ANUALES (barras) ──────────────────────────────────────
-  rr(636, 138, 550, 230, 10, "#1e293b");
-  txt("Dividendos Anuales por Empresa", 648, 158, {size:11, weight:"bold", color:"#f1f5f9"});
-  const divPos = posWithVal.filter(p=>p.divAnual>0).sort((a,b)=>b.divAnual-a.divAnual).slice(0,9);
-  const maxDiv = Math.max(...divPos.map(p=>p.divAnual),1);
+  // --- Dividendos anuales ---
+  const C3X=C2X+C2W+8;
+  rr(C3X,ROW2_Y,C3W,ROW2_H,10,card);
+  f("Dividendos Anuales por Empresa", C3X+10, ROW2_Y+18, {sz:11, w:"bold", col:"#f1f5f9"});
+  const divPos=posWithVal.filter(p=>p.divAnual>0).sort((a,b)=>b.divAnual-a.divAnual).slice(0,9);
+  const maxDiv=Math.max(...divPos.map(p=>p.divAnual),1);
   divPos.forEach((p,i)=>{
-    const by=174+i*22, bxStart=720, bMaxW=420;
-    txt(p.ticker.replace(".MC","").replace(".L","").slice(0,8), 714, by, {size:8, color:"#94a3b8", align:"right"});
-    const bw = (p.divAnual/maxDiv)*bMaxW;
+    const by=ROW2_Y+34+i*19, bxStart=C3X+70, bMaxW=C3W-130;
+    f(p.ticker.replace(".MC","").replace(".L","").slice(0,7), C3X+65, by, {sz:8, col:"#94a3b8", al:"right"});
+    const bw=(p.divAnual/maxDiv)*bMaxW;
     ctx.fillStyle="#22c55e"; ctx.globalAlpha=0.85;
-    ctx.beginPath(); ctx.roundRect(bxStart, by-12, bw, 14, 3); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(bxStart,by-11,Math.max(bw,2),13,3); ctx.fill();
     ctx.globalAlpha=1;
-    txt(fmtEUR(p.divAnual), bxStart+bw+4, by, {size:7.5, color:"#4ade80"});
+    f(fmtEUR(p.divAnual), bxStart+bw+4, by, {sz:7.5, col:"#4ade80"});
   });
 
-  // ── RENTABILIDAD (barras) ─────────────────────────────────────
-  const midCX = 540;
-  rr(16, 378, 560, 230, 10, "#1e293b");
-  txt("Rentabilidad por Posición", 26, 398, {size:11, weight:"bold", color:"#f1f5f9"});
-  const maxR = Math.max(...posWithVal.map(p=>Math.abs(p.retPct)),1);
-  posWithVal.slice(0,9).forEach((p,i)=>{
-    const ry=414+i*22, maxBW=230;
-    txt(p.ticker.replace(".MC","").replace(".L","").slice(0,8), midCX-6, ry, {size:8, color:"#94a3b8", align:"right"});
-    const bw=(Math.abs(p.retPct)/maxR)*maxBW;
-    const col=p.retPct>=0?"#22c55e":"#ef4444";
-    ctx.fillStyle=col; ctx.globalAlpha=0.85;
-    const bx=p.retPct>=0?midCX:midCX-bw;
-    ctx.beginPath(); ctx.roundRect(bx, ry-12, bw||1, 14, 3); ctx.fill();
+  // ── FILA 3: RENTABILIDAD | MEJORES+PEORES | INGRESOS (y=344..510) ──
+  const ROW3_Y=344, ROW3_H=180;
+  const R1W=520, R2W=380, R3W=W-32-R1W-R2W-16;
+
+  // --- Rentabilidad ---
+  rr(16,ROW3_Y,R1W,ROW3_H,10,card);
+  f("Rentabilidad por Posición", 26, ROW3_Y+18, {sz:11, w:"bold", col:"#f1f5f9"});
+  const maxR=Math.max(...posWithVal.map(p=>Math.abs(p.retPct)),1);
+  const midX=200;
+  posWithVal.slice(0,8).forEach((p,i)=>{
+    const ry=ROW3_Y+32+i*18;
+    f(p.ticker.replace(".MC","").replace(".L","").slice(0,7), 16+midX-4, ry, {sz:8, col:"#94a3b8", al:"right"});
+    const bw=(Math.abs(p.retPct)/maxR)*(R1W-midX-40);
+    const col2=p.retPct>=0?"#22c55e":"#ef4444";
+    const bx=p.retPct>=0?16+midX:16+midX-bw;
+    ctx.fillStyle=col2; ctx.globalAlpha=0.85;
+    ctx.beginPath(); ctx.roundRect(bx,ry-11,Math.max(bw,2),13,3); ctx.fill();
     ctx.globalAlpha=1;
-    txt((p.retPct>=0?"+":"")+p.retPct.toFixed(1)+"%", p.retPct>=0?midCX+bw+4:midCX-bw-4, ry,
-        {size:7.5, color:col, align:p.retPct>=0?"left":"right"});
+    const lx=p.retPct>=0?16+midX+bw+3:16+midX-bw-3;
+    f((p.retPct>=0?"+":"")+p.retPct.toFixed(1)+"%", lx, ry, {sz:7.5, col:col2, al:p.retPct>=0?"left":"right"});
   });
 
-  // ── MEJORES / PEORES ──────────────────────────────────────────
-  rr(586, 378, 290, 115, 10, "#1e293b");
-  txt("🟢 Mejores", 596, 398, {size:10, weight:"bold", color:"#4ade80"});
-  posWithVal.filter(p=>p.retPct>0).slice(0,5).forEach((p,i)=>{
-    txt(p.ticker, 596, 416+i*18, {size:9, color:"#94a3b8"});
-    txt("+"+p.retPct.toFixed(1)+"%", 870, 416+i*18, {size:9, weight:"bold", color:"#4ade80", align:"right"});
-    txt(fmtEUR(p.val), 870, 426+i*18, {size:7, color:"#475569", align:"right"});
-  });
+  // --- Mejores / Peores ---
+  const R2X=16+R1W+8;
+  rr(R2X,ROW3_Y,R2W,ROW3_H,10,card);
+  f("🟢 Mejores", R2X+10, ROW3_Y+18, {sz:10, w:"bold", col:"#4ade80"});
+  f("🔴 Peores", R2X+R2W/2, ROW3_Y+18, {sz:10, w:"bold", col:"#f87171"});
+  const gainers2=posWithVal.filter(p=>p.retPct>0).slice(0,6);
+  const losers2=[...posWithVal].reverse().filter(p=>p.retPct<0).slice(0,6);
+  const maxL=Math.max(gainers2.length,losers2.length);
+  for(let i=0;i<maxL;i++){
+    const ry=ROW3_Y+34+i*22;
+    if(gainers2[i]){
+      f(gainers2[i].ticker, R2X+10, ry, {sz:9, col:"#94a3b8"});
+      f("+"+gainers2[i].retPct.toFixed(1)+"%", R2X+R2W/2-8, ry, {sz:9, w:"bold", col:"#4ade80", al:"right"});
+    }
+    if(losers2[i]){
+      f(losers2[i].ticker, R2X+R2W/2+4, ry, {sz:9, col:"#94a3b8"});
+      f(losers2[i].retPct.toFixed(1)+"%", R2X+R2W-8, ry, {sz:9, w:"bold", col:"#f87171", al:"right"});
+    }
+  }
 
-  rr(886, 378, 300, 115, 10, "#1e293b");
-  txt("🔴 Peores", 896, 398, {size:10, weight:"bold", color:"#f87171"});
-  [...posWithVal].reverse().filter(p=>p.retPct<0).slice(0,5).forEach((p,i)=>{
-    txt(p.ticker, 896, 416+i*18, {size:9, color:"#94a3b8"});
-    txt(p.retPct.toFixed(1)+"%", 1178, 416+i*18, {size:9, weight:"bold", color:"#f87171", align:"right"});
-  });
+  // --- Ingresos pasivos ---
+  const R3X=R2X+R2W+8;
+  rr(R3X,ROW3_Y,R3W,ROW3_H,10,card);
+  ctx.fillStyle="#fbbf24"; ctx.fillRect(R3X,ROW3_Y,4,ROW3_H);
+  f("INGRESOS PASIVOS", R3X+14, ROW3_Y+20, {sz:9, col:"#64748b", w:"bold"});
+  f(fmtEUR(divAnual), R3X+14, ROW3_Y+58, {sz:22, w:"bold", col:"#fbbf24"});
+  f("/ año", R3X+14, ROW3_Y+78, {sz:10, col:"#94a3b8"});
+  f(fmtEUR(divAnual/12), R3X+14, ROW3_Y+110, {sz:17, w:"bold", col:"#fbbf24"});
+  f("/ mes", R3X+14, ROW3_Y+128, {sz:10, col:"#94a3b8"});
+  f(yieldOnCost.toFixed(2)+"% yield/cost", R3X+14, ROW3_Y+155, {sz:10, col:"#a855f7", w:"bold"});
 
-  // ── INGRESOS PASIVOS ─────────────────────────────────────────
-  rr(586, 503, 600, 100, 10, "#1e293b");
-  ctx.fillStyle="#fbbf24"; ctx.fillRect(586,503,4,100);
-  txt("INGRESOS PASIVOS ESTIMADOS", 600, 523, {size:9, color:"#64748b", weight:"bold"});
-  txt(fmtEUR(divAnual), 600, 556, {size:26, weight:"bold", color:"#fbbf24"});
-  txt("/ año", 600, 574, {size:10, color:"#94a3b8"});
-  txt(fmtEUR(divAnual/12)+" / mes", 900, 556, {size:18, weight:"bold", color:"#fbbf24", align:"right"});
-  txt(yieldOnCost.toFixed(2)+"% yield on cost", 900, 576, {size:10, color:"#a78bfa", align:"right"});
+  // ── TABLA POSICIONES (y=536+) ─────────────────────────────────
+  const TY=536;
+  rr(16,TY,W-32,H-TY-8,10,card);
+  f("Detalle completo de posiciones", 28, TY+18, {sz:11, w:"bold", col:"#f1f5f9"});
 
-  // ── TABLA COMPLETA ────────────────────────────────────────────
-  const tY = 614;
-  rr(16, tY, W-32, 30+tableRows*ROWH+10, 10, "#1e293b");
-  txt("Detalle completo de posiciones", 28, tY+18, {size:11, weight:"bold", color:"#f1f5f9"});
-  const cols = [
-    {l:"Ticker",    x:28,   w:90,  align:"left"},
-    {l:"Empresa",   x:118,  w:150, align:"left"},
-    {l:"Acc.",      x:268,  w:50,  align:"right"},
-    {l:"Coste €",   x:318,  w:90,  align:"right"},
-    {l:"Precio €",  x:408,  w:90,  align:"right"},
-    {l:"Invertido", x:498,  w:100, align:"right"},
-    {l:"Valor",     x:598,  w:100, align:"right"},
-    {l:"P&L €",     x:698,  w:100, align:"right"},
-    {l:"P&L %",     x:798,  w:75,  align:"right"},
-    {l:"Div/año",   x:873,  w:90,  align:"right"},
-    {l:"Sector",    x:963,  w:220, align:"left"},
+  const COLS=[
+    {l:"Ticker",    x:26,   r:false, w:90 },
+    {l:"Empresa",   x:116,  r:false, w:150},
+    {l:"Acc.",      x:266,  r:true,  w:45 },
+    {l:"Coste €",   x:311,  r:true,  w:75 },
+    {l:"Precio €",  x:386,  r:true,  w:75 },
+    {l:"Invertido", x:461,  r:true,  w:90 },
+    {l:"Valor",     x:551,  r:true,  w:90 },
+    {l:"P&L €",     x:641,  r:true,  w:90 },
+    {l:"P&L %",     x:731,  r:true,  w:65 },
+    {l:"Div/año",   x:796,  r:true,  w:80 },
+    {l:"Sector",    x:876,  r:false, w:200},
   ];
-  // Cabecera tabla
-  const thY = tY+30;
-  ctx.fillStyle="#0f172a"; ctx.fillRect(16, thY-14, W-32, 20);
-  cols.forEach(c=>txt(c.l, c.x+(c.align==="right"?c.w:0), thY, {size:8, color:"#64748b", weight:"bold", align:c.align}));
-  ctx.fillStyle="#334155"; ctx.fillRect(16, thY+4, W-32, 1);
+
+  const THY=TY+30;
+  COLS.forEach(c=>f(c.l, c.r?c.x+c.w:c.x, THY, {sz:8, col:"#64748b", w:"bold", al:c.r?"right":"left"}));
+  hline(THY+5,"#334155");
 
   posWithVal.forEach((p,i)=>{
-    const ry = thY+14+i*ROWH;
-    if(i%2===0){ctx.fillStyle="#0f172a22"; ctx.fillRect(16,ry-14,W-32,ROWH);}
-    const inv=posInvEUR(p), val=posValEUR(p), pnl=val-inv;
-    const pnlC=pnl>=0?"#4ade80":"#f87171";
-    const cp=state.priceCache[p.ticker];
-    const cpEUR=cp?priceToEUR(cp,p):posToEUR(p.avg_cost,p);
-    txt(p.ticker, 28, ry, {size:8.5, color:"#60a5fa", weight:"bold"});
-    txt((p.name||"").slice(0,18), 118, ry, {size:8, color:"#94a3b8"});
-    txt(p.shares, 268+50, ry, {size:8, color:"#e2e8f0", align:"right"});
-    txt(fmtNum(posToEUR(p.avg_cost,p)), 318+90, ry, {size:8, color:"#64748b", align:"right"});
-    txt(fmtNum(cpEUR), 408+90, ry, {size:8, color:"#94a3b8", align:"right"});
-    txt(fmtEUR(inv), 498+100, ry, {size:8, color:"#e2e8f0", align:"right"});
-    txt(fmtEUR(val), 598+100, ry, {size:8.5, weight:"bold", color:"#e2e8f0", align:"right"});
-    txt((pnl>=0?"+":"")+fmtEUR(pnl), 698+100, ry, {size:8.5, weight:"bold", color:pnlC, align:"right"});
-    txt((p.retPct>=0?"+":"")+p.retPct.toFixed(1)+"%", 798+75, ry, {size:8.5, weight:"bold", color:pnlC, align:"right"});
-    txt(p.divAnual>0?fmtEUR(p.divAnual):"—", 873+90, ry, {size:8, color:"#fbbf24", align:"right"});
-    txt((p.sector||"").slice(0,22), 963, ry, {size:7.5, color:"#475569"});
+    const ry=THY+18+i*ROWH;
+    if(i%2===0){ctx.fillStyle="#ffffff08"; ctx.fillRect(16,ry-14,W-32,ROWH);}
+    const inv2=posInvEUR(p), val2=posValEUR(p), pnl2=val2-inv2;
+    const pnlC2=pnl2>=0?"#4ade80":"#f87171";
+    const cp2=state.priceCache[p.ticker];
+    const cpEUR2=cp2?priceToEUR(cp2,p):posToEUR(p.avg_cost,p);
+    f(p.ticker,                              26,       ry, {sz:8.5, col:"#60a5fa", w:"bold"});
+    f((p.name||'').slice(0,18),              116,      ry, {sz:8,   col:"#94a3b8"});
+    f(p.shares,                              311,      ry, {sz:8,   col:"#e2e8f0", al:"right"});
+    f(fmtNum(posToEUR(p.avg_cost,p)),        386,      ry, {sz:8,   col:"#64748b", al:"right"});
+    f(fmtNum(cpEUR2),                        461,      ry, {sz:8,   col:"#94a3b8", al:"right"});
+    f(fmtEUR(inv2),                          551,      ry, {sz:8,   col:"#e2e8f0", al:"right"});
+    f(fmtEUR(val2),                          641,      ry, {sz:8.5, col:"#e2e8f0", w:"bold", al:"right"});
+    f((pnl2>=0?"+":"")+fmtEUR(pnl2),        731,      ry, {sz:8.5, col:pnlC2, w:"bold", al:"right"});
+    f((p.retPct>=0?"+":"")+p.retPct.toFixed(1)+"%", 796, ry, {sz:8.5, col:pnlC2, w:"bold", al:"right"});
+    f(p.divAnual>0?fmtEUR(p.divAnual):"—",  876,      ry, {sz:8,   col:"#fbbf24", al:"right"});
+    f((p.sector||'').slice(0,22),           1080,      ry, {sz:7.5, col:"#475569"});
   });
 
-  // Fila totales
-  const totY = thY+14+tableRows*ROWH+4;
-  ctx.fillStyle="#1e3a5f"; ctx.fillRect(16, totY-14, W-32, ROWH);
-  txt("TOTAL", 28, totY, {size:9, weight:"bold", color:"#f1f5f9"});
-  txt(fmtEUR(totalInv), 498+100, totY, {size:9, weight:"bold", color:"#60a5fa", align:"right"});
-  txt(fmtEUR(totalCur), 598+100, totY, {size:9, weight:"bold", color:"#22c55e", align:"right"});
-  txt((pnlTotal>=0?"+":"")+fmtEUR(pnlTotal), 698+100, totY, {size:9, weight:"bold", color:pnlTotal>=0?"#4ade80":"#f87171", align:"right"});
-  txt((pnlPct>=0?"+":"")+pnlPct.toFixed(2)+"%", 798+75, totY, {size:9, weight:"bold", color:pnlTotal>=0?"#4ade80":"#f87171", align:"right"});
-  txt(fmtEUR(divAnual), 873+90, totY, {size:9, weight:"bold", color:"#fbbf24", align:"right"});
+  // Totales
+  const totY2=THY+18+tableRows*ROWH+4;
+  ctx.fillStyle="#1e3a5f"; ctx.fillRect(16,totY2-14,W-32,ROWH);
+  f("TOTAL", 26, totY2, {sz:9, w:"bold", col:"#f1f5f9"});
+  f(fmtEUR(totalInv), 551, totY2, {sz:9, w:"bold", col:"#3b82f6", al:"right"});
+  f(fmtEUR(totalCur), 641, totY2, {sz:9, w:"bold", col:"#22c55e", al:"right"});
+  f((pnlTotal>=0?"+":"")+fmtEUR(pnlTotal), 731, totY2, {sz:9, w:"bold", col:pnlTotal>=0?"#4ade80":"#f87171", al:"right"});
+  f((pnlPct>=0?"+":"")+pnlPct.toFixed(2)+"%", 796, totY2, {sz:9, w:"bold", col:pnlTotal>=0?"#4ade80":"#f87171", al:"right"});
+  f(fmtEUR(divAnual), 876, totY2, {sz:9, w:"bold", col:"#fbbf24", al:"right"});
 
   // Footer
-  txt(`Kapital Manager · ${today} · Datos orientativos`, W/2, H-8, {size:8, color:"#1e293b", align:"center"});
+  f(`Kapital Manager · ${today} · Datos orientativos`, W/2, H-6, {sz:8, col:"#1e293b", al:"center"});
 
-  // ── Descargar como PNG ────────────────────────────────────────
-  const link = document.createElement("a");
   link.download = `KapitalManager_Snapshot_${fecha}.png`;
   link.href = canvas.toDataURL("image/png");
+  document.body.appendChild(link);
   link.click();
+  document.body.removeChild(link);
+
+  } catch(e) {
+    console.error("Snapshot error:", e);
+    alert("Error al generar la imagen: " + e.message);
+  }
 
   if (btn) { btn.innerHTML = origText; btn.disabled = false; }
 }
@@ -2033,7 +2050,7 @@ function renderPortfolio() {
   <button class="btn-green" style="font-size:11px;padding:5px 10px" onclick="openAddAlert()">🔔 Alerta</button>
   <button class="btn" style="background:#0f766e;font-size:15px;padding:5px 9px;line-height:1" onclick="openImportBroker()" title="Importar extracto de broker">📥</button>
   <button class="btn" style="background:#166534;font-size:15px;padding:5px 9px;line-height:1" onclick="exportCarteraExcel()" title="Exportar cartera a Excel">📊</button>
-  <button class="btn" style="background:#7c3aed;font-size:15px;padding:5px 9px;line-height:1" onclick="openSnapshotCartera()" title="Snapshot — Informe visual de cartera">📸</button>
+  <button class="btn" style="background:#7c3aed;font-size:15px;padding:5px 9px;line-height:1" onclick="openSnapshotCartera(this)" title="Snapshot — Informe visual de cartera">📸</button>
           <div style="flex:1"></div>
           <input id="port-filter" class="inp-sm" placeholder="🔍 Filtrar..." style="width:150px;font-size:11px" value="${esc(filter)}" oninput="renderActiveTab()">
           <button class="btn-danger" style="margin-left:6px;font-size:11px;padding:5px 10px" onclick="deleteCartera()" title="Elimina todas las posiciones">🗑️ Vaciar</button>
