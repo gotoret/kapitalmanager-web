@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Kapital Manager v0.92</title>
+<title>Kapital Manager v0.93</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', Arial, sans-serif; background: #f8fafc; min-height: 100vh; font-size: 13px; }
@@ -75,7 +75,7 @@
   <div id="header">
     <div id="header-top">
       <img src="logo.png" alt="Kapital Manager" style="height:30px;display:block" />
-      <span style="font-size:11px;color:#94a3b8">v0.92</span>
+      <span style="font-size:11px;color:#94a3b8">v0.93</span>
       <span id="price-mode-tag" class="price-tag price-sim">⚡ Precios simulados</span>
       <div style="flex:1"></div>
       <span id="last-update-label" style="font-size:11px;color:#94a3b8">Sin actualizar | Próx: 60s</span>
@@ -212,6 +212,7 @@ let state = {
   importHeaders: [],
   importFileName: "",
   priceChangeCache: {},
+  openCache: {},
 };
 
 const save = () => {
@@ -219,6 +220,7 @@ const save = () => {
   ls.set("km_alerts", state.alerts);
   ls.set("km_dividends", state.dividends);
   ls.set("km_transactions", state.transactions);
+  if (state.authUserId) saveCloud();
 };
 
 // ─── HELPERS ──────────────────────────────────────────────────────
@@ -273,11 +275,13 @@ async function fetchWithProxy(proxies, ticker) {
       const result = data?.chart?.result?.[0];
       if (!result) continue;
       let price = result.meta?.regularMarketPrice;
-      if (price && String(ticker).toUpperCase().endsWith(".L")) price = +(price / 100).toFixed(4);
-      // Obtener precio de apertura para calcular cambio del día
-      const openPrice = result.meta?.regularMarketOpen || result.meta?.previousClose || price;
-      const change = price && openPrice ? (price - openPrice) / openPrice * 100 : null;
-      return { price, change, open: openPrice };
+      let open = result.meta?.regularMarketOpen || result.meta?.previousClose || price;
+      if (price && String(ticker).toUpperCase().endsWith(".L")) {
+        price = +(price / 100).toFixed(4);
+        if (open) open = +(open / 100).toFixed(4);
+      }
+      const change = price && open ? (price - open) / open * 100 : null;
+      return { price, change, open };
     } catch (e) { /* try next */ }
   }
   return null;
@@ -303,13 +307,15 @@ async function refreshPrices() {
     const data = await fetchWithProxy(PROXIES, ticker);
     if (data && data.price) {
       state.priceCache[ticker] = data.price;
-      if (data.change !== null) state.priceChangeCache[ticker] = data.change;
+      state.priceChangeCache[ticker] = data.change || 0;
+      state.openCache[ticker] = data.open || data.price;
       liveCount++;
     } else {
       if (!state.priceCache[ticker]) {
         const pos = state.positions.find(p => p.ticker === ticker);
         state.priceCache[ticker] = +(pos.avg_cost * (1 + (Math.random() - 0.45) * 0.06)).toFixed(4);
         state.priceChangeCache[ticker] = (Math.random() - 0.5) * 2;
+        state.openCache[ticker] = state.priceCache[ticker] * (1 - state.priceChangeCache[ticker] / 100);
       }
     }
     await sleep(120);
@@ -584,14 +590,16 @@ function renderHeader() {
     const activeAlerts = state.alerts.filter(a => a.active && !a.triggered).length;
     const triggered = state.alerts.filter(a => a.triggered);
 
-    // Cambio del día en valor actual (simulado)
-    const dayChange = state.positions.reduce((acc, p) => {
-      const change = state.priceChangeCache[p.ticker] || 0;
+    // Cambio del día en valor actual (ponderado por valor)
+    let dayChangeTotal = 0;
+    let totalVal = 0;
+    state.positions.forEach(p => {
       const val = posValEUR(p);
-      acc += val * (change / 100);
-      return acc;
-    }, 0);
-    const dayChangePct = totals.cur ? (dayChange / totals.cur * 100) : 0;
+      const change = state.priceChangeCache[p.ticker] || 0;
+      dayChangeTotal += val * (change / 100);
+      totalVal += val;
+    });
+    const dayChangePct = totalVal ? (dayChangeTotal / totalVal * 100) : 0;
 
     document.getElementById("metrics-grid").innerHTML = `
       <div class="metric-card" style="border-left:3px solid #2563eb">
@@ -1518,7 +1526,6 @@ function closeModal() {
 
 // ─── SNAPSHOT ────────────────────────────────────────────────────
 function openSnapshotCartera() {
-  // Generar un informe visual con fondo blanco
   const today = new Date().toLocaleDateString("es-ES", { day: "2-digit", month: "long", year: "numeric" });
   const fecha = new Date().toISOString().slice(0, 10);
 
@@ -1554,7 +1561,6 @@ function openSnapshotCartera() {
   ctx.scale(2, 2);
   ctx.imageSmoothingEnabled = true;
 
-  // Fondo blanco
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, W, H);
 
@@ -1583,13 +1589,11 @@ function openSnapshotCartera() {
   const hline = (y, col = "#e2e8f0") => { ctx.fillStyle = col;
     ctx.fillRect(16, y, W - 32, 1); };
 
-  // HEADER
   ctx.fillStyle = "#f1f5f9";
   ctx.fillRect(0, 0, W, 46);
   f("📊 Kapital Manager — Snapshot de Cartera", 16, 20, { sz: 16, w: "bold", col: "#0f172a" });
   f(`${today} · ${state.positions.length} posiciones`, 16, 38, { sz: 10, col: "#64748b" });
 
-  // KPIs
   const kpis = [
     ["INVERTIDO", fmtEUR(totalInv), "#2563eb"],
     ["VALOR ACTUAL", fmtEUR(totalCur), "#0284c7"],
@@ -1609,7 +1613,6 @@ function openSnapshotCartera() {
     f(v, x + 8, 54 + 42, { sz: i < 4 ? 15 : 13, col: c, w: "bold" });
   });
 
-  // DONUT SECTORES
   const ROW2_Y = 124, ROW2_H = 190;
   const C1W = 320, C2W = 250, C3W = W - 32 - C1W - C2W - 16;
 
@@ -1647,7 +1650,6 @@ function openSnapshotCartera() {
     f(`${(v / tot2 * 100).toFixed(1)}%`, C1W + 8, ly, { sz: 8, col: "#0f172a", w: "bold", al: "right" });
   });
 
-  // TOP POSICIONES
   const C2X = 16 + C1W + 8;
   rr(C2X, ROW2_Y, C2W, ROW2_H, 10, "#f8fafc");
   f("Top Posiciones", C2X + 10, ROW2_Y + 18, { sz: 11, w: "bold", col: "#0f172a" });
@@ -1659,7 +1661,6 @@ function openSnapshotCartera() {
     f((p.retPct >= 0 ? "+" : "") + p.retPct.toFixed(1) + "%", C2X + 160, py, { sz: 8, col: rc });
   });
 
-  // DIVIDENDOS
   const C3X = C2X + C2W + 8;
   rr(C3X, ROW2_Y, C3W, ROW2_H, 10, "#f8fafc");
   f("Dividendos Anuales", C3X + 10, ROW2_Y + 18, { sz: 11, w: "bold", col: "#0f172a" });
@@ -1679,7 +1680,6 @@ function openSnapshotCartera() {
     f(fmtEUR(p.divAnual), bxStart + bw + 4, by, { sz: 7.5, col: "#b45309" });
   });
 
-  // TABLA
   const TY = 330;
   rr(16, TY, W - 32, H - TY - 8, 10, "#f8fafc");
   f("Detalle de posiciones", 28, TY + 18, { sz: 11, w: "bold", col: "#0f172a" });
@@ -1723,7 +1723,6 @@ function openSnapshotCartera() {
     f((p.sector || '').slice(0, 22), 1080, ry, { sz: 7.5, col: "#64748b" });
   });
 
-  // Totales
   const totY2 = THY + 18 + tableRows * ROWH + 4;
   ctx.fillStyle = "#e2e8f0";
   ctx.fillRect(16, totY2 - 14, W - 32, ROWH);
@@ -1736,7 +1735,6 @@ function openSnapshotCartera() {
 
   f(`Kapital Manager · ${today} · Datos orientativos`, W / 2, H - 6, { sz: 8, col: "#94a3b8", al: "center" });
 
-  // Descarga
   const link = document.createElement("a");
   link.download = `KapitalManager_Snapshot_${fecha}.png`;
   link.href = canvas.toDataURL("image/png");
