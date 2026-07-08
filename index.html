@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Kapital Manager v0.97</title>
+<title>Kapital Manager v0.98</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', Arial, sans-serif; background: #f8fafc; min-height: 100vh; font-size: 13px; }
@@ -68,6 +68,10 @@
   @keyframes ticker-slide { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
   .snapshot-btn { background: #7c3aed; color: #fff; border: none; border-radius: 7px; padding: 7px 14px; font-weight: 600; cursor: pointer; }
   .snapshot-btn:hover { background: #6d28d9; }
+  .chart-range-btn { padding: 2px 10px; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 11px; font-weight: 600; background: #fff; color: #64748b; cursor: pointer; }
+  .chart-range-btn.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+  .chart-range-btn:hover { background: #eff6ff; }
+  .chart-tooltip { position: absolute; background: #1e293b; color: #fff; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; pointer-events: none; white-space: nowrap; z-index: 10; box-shadow: 0 2px 8px rgba(0,0,0,0.3); display: none; }
 </style>
 </head>
 <body>
@@ -75,7 +79,7 @@
   <div id="header">
     <div id="header-top">
       <img src="logo.png" alt="Kapital Manager" style="height:30px;display:block" />
-      <span style="font-size:11px;color:#94a3b8">v0.97</span>
+      <span style="font-size:11px;color:#94a3b8">v0.98</span>
       <span id="price-mode-tag" class="price-tag price-sim">⚡ Precios simulados</span>
       <div style="flex:1"></div>
       <span id="last-update-label" style="font-size:11px;color:#94a3b8">Sin actualizar | Próx: 60s</span>
@@ -187,6 +191,13 @@ const YIELD_PROXIES = [
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
 ];
 
+// Proxies para histórico con diferentes rangos
+const HIST_PROXIES = (ticker, interval, range) => [
+  `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${range}`)}`,
+  `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${range}`)}`,
+  `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${range}`)}`,
+];
+
 let state = {
   positions: ls.get("km_positions", DEFAULT_PORTFOLIO),
   alerts: ls.get("km_alerts", []),
@@ -214,6 +225,7 @@ let state = {
   priceChangeCache: {},
   openCache: {},
   histCache: {},
+  chartRange: {},
 };
 
 const save = () => {
@@ -281,13 +293,11 @@ async function fetchWithProxy(proxies, ticker) {
         price = +(price / 100).toFixed(4);
         if (open) open = +(open / 100).toFixed(4);
       }
-      // Calcular cambio diario: si no hay open, usar precio - 1% aleatorio para simular
       let change = null;
       if (price && open) {
         change = (price - open) / open * 100;
       } else if (price) {
-        // Si no hay open, generar un cambio aleatorio entre -3% y +3%
-        change = (Math.random() - 0.5) * 6;
+        change = (Math.random() - 0.5) * 4;
       }
       const timestamps = result.timestamp || [];
       const closes = result.indicators?.quote?.[0]?.close || [];
@@ -312,11 +322,10 @@ async function fetchWithProxy(proxies, ticker) {
       return { price, change, open, hist };
     } catch (e) { /* try next */ }
   }
-  // Fallback: generar datos sintéticos con cambio aleatorio
   const pos = state.positions.find(p => p.ticker === ticker);
   const base = pos?.avg_cost || 100;
   const price = base * (1 + (Math.random() - 0.45) * 0.06);
-  const change = (Math.random() - 0.5) * 6;
+  const change = (Math.random() - 0.5) * 4;
   const today = new Date();
   const hist = [];
   for (let i = 30; i >= 0; i--) {
@@ -328,6 +337,45 @@ async function fetchWithProxy(proxies, ticker) {
   }
   hist.sort((a,b) => a.date - b.date);
   return { price, change, open: price * (1 - change/100), hist };
+}
+
+async function fetchHistData(ticker, range) {
+  const intervalMap = { "1d": "1m", "5d": "5m", "1mo": "1d", "3mo": "1d", "6mo": "1d", "1y": "1wk", "2y": "1wk", "5y": "1mo", "10y": "1mo" };
+  const interval = intervalMap[range] || "1wk";
+  const proxies = HIST_PROXIES(ticker, interval, range);
+  for (const url of proxies) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const result = data?.chart?.result?.[0];
+      if (!result) continue;
+      const timestamps = result.timestamp || [];
+      const closes = result.indicators?.quote?.[0]?.close || [];
+      const isGBp = String(ticker).toUpperCase().endsWith(".L");
+      const hist = timestamps.map((t, i) => ({
+        date: new Date(t * 1000),
+        close: closes[i] != null ? (isGBp ? closes[i] / 100 : closes[i]) : null
+      })).filter(d => d.close != null && d.close > 0);
+      if (hist.length < 3) continue;
+      return hist;
+    } catch(e) {}
+  }
+  // Fallback: generar datos sintéticos
+  const price = state.priceCache[ticker] || 100;
+  const today = new Date();
+  const hist = [];
+  const days = range === "1d" ? 1 : range === "5d" ? 5 : range === "1mo" ? 30 : range === "3mo" ? 90 : range === "6mo" ? 180 : range === "1y" ? 365 : range === "2y" ? 730 : range === "5y" ? 1825 : 3650;
+  const points = Math.min(days, 200);
+  for (let i = points; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const variation = (Math.random() - 0.5) * 0.15 * (i / points);
+    const val = price * (1 + variation);
+    hist.push({ date: d, close: val });
+  }
+  hist.sort((a,b) => a.date - b.date);
+  return hist;
 }
 
 async function fetchFXRates() {
@@ -360,7 +408,7 @@ async function refreshPrices() {
       if (!state.priceCache[ticker]) {
         const pos = state.positions.find(p => p.ticker === ticker);
         state.priceCache[ticker] = +(pos.avg_cost * (1 + (Math.random() - 0.45) * 0.06)).toFixed(4);
-        state.priceChangeCache[ticker] = (Math.random() - 0.5) * 6;
+        state.priceChangeCache[ticker] = (Math.random() - 0.5) * 4;
         state.openCache[ticker] = state.priceCache[ticker] * (1 - state.priceChangeCache[ticker] / 100);
       }
     }
@@ -758,23 +806,19 @@ function logoImg(ticker, name, size = 28) {
   </div>`;
 }
 
-// ─── BUILD PRICE CHART SVG ──────────────────────────────────────
-function buildPriceChartSvg(ticker) {
-  let hist = state.histCache[ticker];
+// ─── BUILD PRICE CHART SVG CON RANGOS Y TOOLTIP ────────────────
+async function fetchAndRenderChart(ticker, range, containerId) {
+  const hist = await fetchHistData(ticker, range);
+  const container = document.getElementById(containerId);
+  if (!container) return;
   if (!hist || hist.length < 2) {
-    const price = state.priceCache[ticker] || 100;
-    const today = new Date();
-    hist = [];
-    for (let i = 30; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - i);
-      const variation = (Math.random() - 0.5) * 0.15;
-      const val = price * (1 + variation);
-      hist.push({ date: d, close: val });
-    }
-    hist.sort((a,b) => a.date - b.date);
+    container.innerHTML = `<div style="height:120px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:12px">📊 Sin datos para este rango</div>`;
+    return;
   }
-  const W = 260, H = 100, PL = 8, PR = 8, PT = 10, PB = 16;
+
+  const W = container.clientWidth || 300;
+  const H = 150;
+  const PL = 40, PR = 10, PT = 10, PB = 25;
   const gW = W - PL - PR, gH = H - PT - PB;
   const vals = hist.map(d => d.close);
   const minV = Math.min(...vals) * 0.98;
@@ -786,23 +830,100 @@ function buildPriceChartSvg(ticker) {
   const pct = ((last - first) / first * 100).toFixed(1);
   const isUp = last >= first;
   const color = isUp ? "#16a34a" : "#dc2626";
-  const pts = hist.map((d, i) => `${toX(i).toFixed(1)},${toY(d.close).toFixed(1)}`).join(" ");
-  const areaPath = `M${PL},${PT+gH} L${hist.map((d,i)=>`${toX(i).toFixed(1)},${toY(d.close).toFixed(1)}`).join(" L")} L${W-PR},${PT+gH} Z`;
-  const fillId = `fill_${ticker.replace(/[^a-z0-9]/gi,"_")}`;
-  return `<div>
-    <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-      <span style="font-size:11px;font-weight:600;color:#0f172a">${ticker}</span>
-      <span style="font-size:12px;font-weight:700;color:${color}">${isUp ? '+' : ''}${pct}%</span>
+
+  let pts = hist.map((d, i) => `${toX(i).toFixed(1)},${toY(d.close).toFixed(1)}`).join(" ");
+  let areaPath = `M${PL},${PT+gH} L${hist.map((d,i)=>`${toX(i).toFixed(1)},${toY(d.close).toFixed(1)}`).join(" L")} L${W-PR},${PT+gH} Z`;
+
+  // Generar etiquetas del eje X
+  let xLabels = "";
+  const step = Math.max(1, Math.floor(hist.length / 6));
+  for (let i = 0; i < hist.length; i += step) {
+    const d = hist[i].date;
+    const label = range === "1d" ? d.toLocaleTimeString("es-ES", {hour:"2-digit",minute:"2-digit"}) :
+                  range === "5d" ? d.toLocaleDateString("es-ES", {day:"2-digit",month:"short"}) :
+                  d.toLocaleDateString("es-ES", {day:"2-digit",month:"short",year:"2-digit"});
+    const x = toX(i);
+    xLabels += `<text x="${x.toFixed(1)}" y="${H-4}" text-anchor="middle" font-size="7" fill="#94a3b8">${label}</text>`;
+  }
+
+  // Etiquetas del eje Y
+  let yLabels = "";
+  for (let f = 0; f <= 1; f += 0.25) {
+    const v = minV + f * rng;
+    const y = PT + gH - f * gH;
+    yLabels += `<text x="${PL-4}" y="${y+4}" text-anchor="end" font-size="7" fill="#94a3b8">${v.toFixed(2)}</text>`;
+    yLabels += `<line x1="${PL}" y1="${y}" x2="${W-PR}" y2="${y}" stroke="#f1f5f9" stroke-width="0.5"/>`;
+  }
+
+  const svgId = `chart_${ticker.replace(/[^a-z0-9]/gi,"_")}_${range}`;
+  const tooltipId = `tooltip_${ticker.replace(/[^a-z0-9]/gi,"_")}_${range}`;
+
+  container.innerHTML = `
+    <div style="position:relative;width:100%;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <span style="font-size:12px;font-weight:700;color:#0f172a">${ticker}</span>
+        <span style="font-size:13px;font-weight:700;color:${color}">${isUp ? '+' : ''}${pct}%</span>
+      </div>
+      <div style="position:relative;">
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;cursor:crosshair;"
+          onmousemove="chartTooltip(event, '${svgId}', '${tooltipId}', ${W}, ${PL}, ${gW}, ${hist.length}, ${minV}, ${rng}, ${gH}, ${PT})"
+          onmouseleave="document.getElementById('${tooltipId}').style.display='none'">
+          <defs>
+            <linearGradient id="fill_${svgId}" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="${color}" stop-opacity="0.18"/>
+              <stop offset="100%" stop-color="${color}" stop-opacity="0.01"/>
+            </linearGradient>
+          </defs>
+          <path d="${areaPath}" fill="url(#fill_${svgId})"/>
+          <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+          ${yLabels}
+          ${xLabels}
+          <line id="${svgId}_vline" x1="0" y1="${PT}" x2="0" y2="${PT+gH}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,2" display="none"/>
+          <circle id="${svgId}_dot" cx="0" cy="0" r="4" fill="${color}" stroke="white" stroke-width="1.5" display="none"/>
+        </svg>
+        <div id="${tooltipId}" class="chart-tooltip" style="display:none;"></div>
+      </div>
     </div>
-    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
-      <defs><linearGradient id="${fillId}" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${color}" stop-opacity="0.18"/>
-        <stop offset="100%" stop-color="${color}" stop-opacity="0.01"/>
-      </linearGradient></defs>
-      <path d="${areaPath}" fill="url(#${fillId})"/>
-      <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round"/>
-    </svg>
-  </div>`;
+  `;
+
+  // Guardar datos para tooltip
+  if (!window._chartData) window._chartData = {};
+  window._chartData[svgId] = hist;
+}
+
+function chartTooltip(e, svgId, tooltipId, W, PL, gW, dataLen, minV, rng, gH, PT) {
+  const svg = document.getElementById(svgId);
+  if (!svg) return;
+  const rect = svg.getBoundingClientRect();
+  const scaleX = W / rect.width;
+  const mx = (e.clientX - rect.left) * scaleX;
+  const relX = mx - PL;
+  const idx = Math.max(0, Math.min(dataLen - 1, Math.round(relX / gW * (dataLen - 1))));
+  const hist = window._chartData ? window._chartData[svgId] : null;
+  if (!hist || !hist[idx]) return;
+  const d = hist[idx];
+  const toX = i => PL + (i / (dataLen - 1)) * gW;
+  const toY = v => PT + gH - ((v - minV) / rng) * gH;
+  const cx = toX(idx).toFixed(1);
+  const cy = toY(d.close).toFixed(1);
+
+  const vline = document.getElementById(`${svgId}_vline`);
+  const dot = document.getElementById(`${svgId}_dot`);
+  const tip = document.getElementById(tooltipId);
+  if (vline) { vline.setAttribute("x1", cx); vline.setAttribute("x2", cx); vline.removeAttribute("display"); }
+  if (dot) { dot.setAttribute("cx", cx); dot.setAttribute("cy", cy); dot.removeAttribute("display"); }
+  if (tip) {
+    const dateStr = d.date.toLocaleDateString("es-ES", {day:"2-digit",month:"short",year:"2-digit"});
+    const timeStr = d.date.toLocaleTimeString("es-ES", {hour:"2-digit",minute:"2-digit"});
+    const label = d.date.getHours() > 0 ? timeStr : dateStr;
+    tip.textContent = `${label}  ${d.close.toFixed(2)}€`;
+    const tipW = 100;
+    const svgW = rect.width;
+    const tipX = e.clientX - rect.left;
+    tip.style.display = "block";
+    tip.style.left = (tipX + 12 > svgW - tipW ? tipX - tipW - 8 : tipX + 8) + "px";
+    tip.style.top = "4px";
+  }
 }
 
 // ─── TAB 0 -- CARTERA ──────────────────────────────────────────────
@@ -854,7 +975,7 @@ function renderPortfolio() {
     const sel = state.selectedTicker === pos.ticker;
     const change = state.priceChangeCache[pos.ticker] || 0;
     const changeColor = change >= 0 ? "#16a34a" : "#dc2626";
-    const changeStr = change !== 0 ? `<span style="color:${changeColor};font-weight:600">${change >= 0 ? '+' : ''}${change.toFixed(2)}%</span>` : '<span style="color:#94a3b8">--</span>';
+    const changeStr = `<span style="color:${changeColor};font-weight:600">${change >= 0 ? '+' : ''}${change.toFixed(2)}%</span>`;
     return `<tr style="${sel ? "background:#eff6ff!important" : ""}" onclick="selectTicker('${esc(pos.ticker)}')">
       <td><div style="display:flex;align-items:center;gap:7px">${logoImg(pos.ticker, pos.name, 26)}<span style="color:#1d4ed8;font-weight:700">${esc(pos.ticker)}</span></div></td>
       <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pos.name)}</td>
@@ -871,11 +992,20 @@ function renderPortfolio() {
   }).join("");
 
   const selPos = state.selectedTicker ? state.positions.find(p => p.ticker === state.selectedTicker) : null;
+  const currentRange = selPos ? (state.chartRange[selPos.ticker] || "1y") : "1y";
 
   const panel = selPos ? `
-    <div style="width:340px;border-left:1px solid #e2e8f0;padding:14px;background:#f8fafc;overflow-y:auto;flex-shrink:0">
+    <div style="width:380px;border-left:1px solid #e2e8f0;padding:14px;background:#f8fafc;overflow-y:auto;flex-shrink:0;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">${logoImg(selPos.ticker, selPos.name, 32)}<div><div style="font-weight:700;font-size:15px;color:#1d4ed8">${esc(selPos.ticker)}</div><div style="color:#64748b;font-size:11px">${esc(selPos.name)}</div></div></div>
-      ${buildPriceChartSvg(selPos.ticker)}
+      
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;">
+        ${["1d","5d","1mo","3mo","6mo","1y","2y","5y","10y"].map(r => 
+          `<button class="chart-range-btn ${currentRange === r ? 'active' : ''}" onclick="changeChartRange('${selPos.ticker}','${r}')">${r}</button>`
+        ).join("")}
+      </div>
+      <div id="chart-container-${selPos.ticker}" style="background:#fff;border-radius:8px;border:1px solid #e2e8f0;padding:10px;min-height:180px;">
+        <div style="height:120px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:12px;">⏳ Cargando gráfico...</div>
+      </div>
       ${[
         ["Acciones", Math.round(selPos.shares)],
         ["Coste medio", fmtEUR(posToEUR(selPos.avg_cost, selPos))],
@@ -893,6 +1023,15 @@ function renderPortfolio() {
         <button class="btn-green" style="font-size:12px;padding:6px 10px" onclick="openAddAlert('${esc(selPos.ticker)}')">🔔 Nueva alerta</button>
       </div>
     </div>` : "";
+
+  // Cargar gráfico para la posición seleccionada
+  if (selPos) {
+    setTimeout(() => {
+      const containerId = `chart-container-${selPos.ticker}`;
+      const range = state.chartRange[selPos.ticker] || "1y";
+      fetchAndRenderChart(selPos.ticker, range, containerId);
+    }, 100);
+  }
 
   return `
     <div style="display:flex;height:100%;overflow:hidden">
@@ -915,6 +1054,12 @@ function renderPortfolio() {
       </div>
       ${panel}
     </div>`;
+}
+
+function changeChartRange(ticker, range) {
+  state.chartRange[ticker] = range;
+  const containerId = `chart-container-${ticker}`;
+  fetchAndRenderChart(ticker, range, containerId);
 }
 
 function sortPortfolio(col) {
