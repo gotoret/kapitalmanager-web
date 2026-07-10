@@ -30,6 +30,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 .btn-danger{background:#dc2626;color:#fff;border:none;border-radius:7px;padding:7px 14px;font-weight:600;}
 .btn-danger:hover{background:#b91c1c;}
 .btn-danger-sm{background:#dc2626;color:#fff;border:none;border-radius:5px;padding:3px 9px;font-weight:600;font-size:11px;}
+.btn-edit-sm{background:#2563eb;color:#fff;border:none;border-radius:5px;padding:3px 9px;font-weight:600;font-size:11px;margin-right:4px;}
 .btn-green{background:#059669;color:#fff;border:none;border-radius:7px;padding:7px 14px;font-weight:600;}
 .inp{width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:6px 10px;}
 .inp-sm{border:1px solid #cbd5e1;border-radius:6px;padding:5px 8px;}
@@ -2713,7 +2714,7 @@ function renderDividends() {
     <td>${fmtEUR(d.amount)}</td>
     <td style="font-weight:600;color:#b45309">${fmtEUR(d.total)}</td>
     <td style="color:#64748b">${esc(d.notes)}</td>
-    <td><button class="btn-danger-sm" onclick="deleteDividend(${d.id})">✕</button></td>
+    <td><button class="btn-edit-sm" onclick="editDividend(${d.id})">✏️</button><button class="btn-danger-sm" onclick="deleteDividend(${d.id})">✕</button></td>
   </tr>`).join("");
 
   // ── Construir tablas colapsables ──
@@ -4903,6 +4904,51 @@ function saveDividendModal() {
   if(!ticker||amount<=0||shares<=0){alert("Completa todos los campos");return;}
   const pos = state.positions.find(p=>p.ticker===ticker);
   state.dividends.unshift({id:uid(),ticker,amount,shares,notes,fee,currency:pos?.currency||"EUR",date:new Date(date).toISOString()});
+  save(); closeModal(); renderActiveTab();
+}
+
+function editDividend(id) {
+  const d = state.dividends.find(x=>x.id===id);
+  if(!d) return;
+  // Aseguramos que el ticker del cobro exista como opción, aunque ya no esté en cartera actual
+  const tickerSet = new Set(state.positions.map(p=>p.ticker));
+  const extraOpt = tickerSet.has(d.ticker) ? "" : `<option value="${esc(d.ticker)}" selected>${esc(d.ticker)} (fuera de cartera actual)</option>`;
+  const opts = extraOpt + state.positions.map(p=>`<option value="${esc(p.ticker)}" ${p.ticker===d.ticker?"selected":""}>${esc(p.ticker)} — ${esc(p.name)}</option>`).join("");
+  openModal(`
+    <h3>✏️ Editar dividendo cobrado</h3>
+    <div class="field"><label>Ticker</label><select id="m-d-ticker" class="inp" onchange="updateDivTotal()">${opts}</select></div>
+    <div class="grid2">
+      <div class="field"><label>Importe por acción</label><input id="m-d-amount" type="number" step="0.0001" class="inp" value="${d.amount}" oninput="updateDivTotal()"></div>
+      <div class="field"><label>Nº acciones</label><input id="m-d-shares" type="number" class="inp" value="${d.shares}" oninput="updateDivTotal()"></div>
+    </div>
+    <div class="field"><label>Fecha de cobro</label><input id="m-d-date" type="date" class="inp" value="${(d.date||"").slice(0,10)}"></div>
+    <div class="field"><label>Gastos de custodia/admin (€, opcional)</label><input id="m-d-fee" type="number" step="0.01" class="inp" value="${d.fee||0}"></div>
+    <div class="field"><label>Notas</label><input id="m-d-notes" class="inp" placeholder="Opcional..." value="${esc(d.notes||"")}"></div>
+    <div id="div-total-preview" style="margin-top:8px;padding:10px;background:#fef9c3;border-radius:8px;font-size:12px;color:#b45309;font-weight:600">Total cobrado: ${fmtEUR(d.amount*d.shares)}</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
+      <button class="btn" onclick="saveDividendEditModal(${d.id})">💾 Guardar cambios</button>
+    </div>`);
+}
+
+function saveDividendEditModal(id) {
+  const d = state.dividends.find(x=>x.id===id);
+  if(!d) return;
+  const ticker=(document.getElementById("m-d-ticker").value||"").split(" ")[0];
+  const amount=+document.getElementById("m-d-amount").value;
+  const shares=+document.getElementById("m-d-shares").value;
+  const notes=document.getElementById("m-d-notes").value;
+  const date=document.getElementById("m-d-date")?.value || (d.date||"").slice(0,10);
+  const fee=+(document.getElementById("m-d-fee")?.value||0);
+  if(!ticker||amount<=0||shares<=0){alert("Completa todos los campos");return;}
+  const pos = state.positions.find(p=>p.ticker===ticker);
+  d.ticker = ticker;
+  d.amount = amount;
+  d.shares = shares;
+  d.notes = notes;
+  d.fee = fee;
+  d.currency = pos?.currency || d.currency || "EUR";
+  d.date = new Date(date).toISOString();
   save(); closeModal(); renderActiveTab();
 }
 
