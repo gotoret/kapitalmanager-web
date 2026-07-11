@@ -1051,6 +1051,7 @@ function openSnapshotCartera(btnEl) {
   // Footer
   f(`Kapital Manager · ${today} · Datos orientativos`, W/2, H-6, {sz:8, col:"#1e293b", al:"center"});
 
+  const link = document.createElement("a");
   link.download = `KapitalManager_Snapshot_${fecha}.png`;
   link.href = canvas.toDataURL("image/png");
   document.body.appendChild(link);
@@ -2405,6 +2406,12 @@ function toggleDivHistorial() {
 // ─── FUNCIONES PARA PESTAÑAS DE GRÁFICOS DE DIVIDENDOS ──────
 function setDivChartTab(idx) {
   state._divChartTab = idx;
+  if (idx !== 0) {
+    // En "Total por empresa" y "Crecimiento anual" mostramos por defecto el total del último año
+    const dividends = state.dividends || [];
+    const years = [...new Set(dividends.map(d => new Date(d.date).getFullYear()).filter(y=>!isNaN(y)))].sort((a,b)=>b-a);
+    state._divYearSel = years.length > 0 ? years[0] : "Anual";
+  }
   renderActiveTab();
 }
 
@@ -2678,7 +2685,7 @@ function renderDivDashboard(totalAnnExpected) {
     <!-- Contenido del gráfico activo -->
     ${activeChart}
 
-    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:10px;align-items:center">${yearBtns}</div>
+    ${state._divChartTab === 0 ? `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:10px;align-items:center">${yearBtns}</div>` : ''}
   </div>`;
 }
 
