@@ -77,23 +77,23 @@
     </div>
   </div>
 
-  <div class="card">
-    <h2 style="margin-top:0">Acceso por plan</h2>
-    <div class="small">Estas funciones se deben bloquear o mostrar según el plan activo. El Free tiene máximo 5 posiciones, Pro máximo 15, Premium ilimitado.</div>
-    <div class="row" style="margin-top:12px">
-      <div class="card"><b>Cartera</b><div class="small">Free hasta 5 posiciones, Pro hasta 15, Premium ilimitado</div></div>
-      <div class="card"><b>Alertas</b><div class="small">Disponible en Free/Pro/Premium</div></div>
-      <div class="card"><b>Dividendos</b><div class="small">Disponible en Free/Pro/Premium</div></div>
-      <div class="card"><b>Transacciones</b><div class="small">Disponible en Free/Pro/Premium</div></div>
-      <div class="card"><b>Renta</b><div class="small">Solo Premium</div></div>
-      <div class="card"><b>Soporte</b><div class="small">Solo Premium</div></div>
-    </div>
-  </div>
+ // <div class="card">
+ //   <h2 style="margin-top:0">Acceso por plan</h2>
+ //   <div class="small">Estas funciones se deben bloquear o mostrar según el plan activo. El Free tiene máximo 5 posiciones, Pro máximo 15, Premium ilimitado.</div>
+ //   <div class="row" style="margin-top:12px">
+ //     <div class="card"><b>Cartera</b><div class="small">Free hasta 5 posiciones, Pro hasta 15, Premium ilimitado</div></div>
+ //     <div class="card"><b>Alertas</b><div class="small">Disponible en Free/Pro/Premium</div></div>
+ //     <div class="card"><b>Dividendos</b><div class="small">Disponible en Free/Pro/Premium</div></div>
+ //     <div class="card"><b>Transacciones</b><div class="small">Disponible en Free/Pro/Premium</div></div>
+ //     <div class="card"><b>Renta</b><div class="small">Solo Premium</div></div>
+ //     <div class="card"><b>Soporte</b><div class="small">Solo Premium</div></div>
+ //   </div>
+ // </div>
 
-  <div class="card">
-    <h2 style="margin-top:0">Stripe</h2>
-    <div class="small">Este archivo ya deja preparada la lógica visual. Solo falta conectar los price_id reales de Stripe en la función buy().</div>
-  </div>
+//  <div class="card">
+//    <h2 style="margin-top:0">Stripe</h2>
+//    <div class="small">Este archivo ya deja preparada la lógica visual. Solo falta conectar los price_id reales de Stripe en la función buy().</div>
+//  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -102,10 +102,10 @@ const SUPABASE_URL='https://qoezxfuxzrtzexzzplfz.supabase.co';
 const SUPABASE_ANON_KEY='sbpublishablee99iPLwtmEpykURcsz63XgcEvzX5yR';
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const PRICES = {
-  pro_month: 'PRICE_ID_PRO_MONTH',
-  pro_year: 'PRICE_ID_PRO_YEAR',
-  premium_month: 'PRICE_ID_PREMIUM_MONTH',
-  premium_year: 'PRICE_ID_PREMIUM_YEAR'
+  pro_month: 'prod_UsTvWkzcOdQfmW',
+  pro_year: 'prod_UsTvGfomMazeDe',
+  premium_month: 'prod_UsTwOZp0nGVcIv',
+  premium_year: 'prod_UsTxNSNGBM2ZbX'
 };
 let user = null;
 let profile = { plan:'free', trial_start:null, trial_end:null, status:'free', max_positions: 5 };
@@ -124,9 +124,9 @@ function refreshUI(){
     const left = trialDaysLeft();
     setStatus(left>0 ? `Acceso gratuito limitado. Te quedan ${left} día(s). Máximo 5 posiciones.` : 'Tu prueba gratuita terminó. Suscríbete para seguir usando la app.');
   } else if(plan==='pro') {
-    setStatus('Plan Pro activo: acceso a todo menos Renta.');
+    setStatus('Plan Pro activo: acceso a todo, Máximo 15 posiciones.');
   } else if(plan==='premium') {
-    setStatus('Plan Premium activo: todo incluido + soporte.');
+    setStatus('Plan Premium activo: todo incluido.');
   } else {
     setStatus('Acceso gratuito limitado durante 7 días.');
   }
