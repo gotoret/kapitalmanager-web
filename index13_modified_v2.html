@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Kapital Manager v0.93</title>
+<style>
+  :root{--b:#2563eb;--g:#059669;--r:#dc2626;--s:#64748b;--bg:#f8fafc}
+  *{box-sizing:border-box} body{font-family:Segoe UI,Arial,sans-serif;background:var(--bg);margin:0;color:#0f172a}
+  .wrap{max-width:980px;margin:0 auto;padding:18px} .card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin-bottom:14px}
+  .row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px} .row2{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+  .btn{background:var(--b);color:#fff;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer} .btn-gray{background:#64748b}.btn-green{background:var(--g)}
+  .btn:disabled{opacity:.55;cursor:not-allowed} .tag{display:inline-block;background:#e0f2fe;color:#075985;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;margin-left:6px}
+  .tag-ok{background:#dcfce7;color:#166534} .tag-warn{background:#fef3c7;color:#92400e} .tag-free{background:#ede9fe;color:#6d28d9}
+  .small{font-size:12px;color:var(--s)} .hr{height:1px;background:#e2e8f0;margin:12px 0}
+  input,select{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:14px}
+  .plans{display:grid;grid-template-columns:repeat(3,1fr);gap:12px} .plan{border:1px solid #e2e8f0;border-radius:14px;padding:14px} .plan h3{margin:0 0 6px 0}
+  .price{font-size:28px;font-weight:800;color:#111827} .muted{color:#64748b;font-size:13px} ul{margin:10px 0 0 18px}
+  .banner{background:#eff6ff;border:1px solid #bfdbfe;padding:12px 14px;border-radius:12px;margin-bottom:14px}
+  .hidden{display:none}
+  .center{text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="banner">
+    <b>Kapital Manager</b> <span id="planBadge" class="tag tag-free">Free</span>
+    <div id="statusText" class="small" style="margin-top:6px">Acceso gratuito limitado durante 7 días.</div>
+  </div>
+
+  <div class="card" id="authCard">
+    <h2 style="margin-top:0">Acceso</h2>
+    <div class="row2">
+      <div><label>Correo</label><input id="email" type="email" placeholder="tu@email.com"></div>
+      <div><label>Contraseña</label><input id="pass" type="password" placeholder="mínimo 6 caracteres"></div>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn" onclick="register()">Crear cuenta</button>
+      <button class="btn-gray btn" onclick="login()">Iniciar sesión</button>
+      <button class="btn-green btn" onclick="logout()">Salir</button>
+    </div>
+    <div class="small" style="margin-top:8px">Primero prueba gratis 7 días; después se bloquean las funciones premium hasta pagar.</div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Planes</h2>
+    <div class="plans">
+      <div class="plan">
+        <h3>Free 7 días</h3>
+        <div class="price">0€</div>
+        <div class="muted">Limitado y temporal</div>
+        <ul>
+          <li>Cartera hasta 5 posiciones</li><li>Alertas</li><li>Dividendos</li><li>Transacciones</li>
+        </ul>
+        <p class="small">Acceso completo a estas funciones durante 1 semana.</p>
+      </div>
+      <div class="plan">
+        <h3>Pro</h3>
+        <div class="price">6€/mes</div>
+        <div class="muted">o 60€/año (pago único)</div>
+        <ul>
+          <li>Todas las funciones</li><li>Hasta 15 acciones en cartera</li>
+        </ul>
+        <button class="btn" style="margin-top:12px;width:100%" onclick="buy('pro_month')">Suscribirme</button>
+        <button class="btn-gray btn" style="margin-top:8px;width:100%" onclick="buy('pro_year')">Pagar anual</button>
+      </div>
+      <div class="plan">
+        <h3>Premium</h3>
+        <div class="price">15€/mes</div>
+        <div class="muted">o 150€/año, sin límite de cartera</div>
+        <ul>
+          <li>Todas las funciones</li><li>Sin límite de acciones en cartera</li>
+        </ul>
+        <button class="btn-green btn" style="margin-top:12px;width:100%" onclick="buy('premium_month')">Suscribirme</button>
+        <button class="btn-gray btn" style="margin-top:8px;width:100%" onclick="buy('premium_year')">Pagar anual</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Acceso por plan</h2>
+    <div class="small">Estas funciones se deben bloquear o mostrar según el plan activo. El Free tiene máximo 5 posiciones, Pro máximo 15, Premium ilimitado.</div>
+    <div class="row" style="margin-top:12px">
+      <div class="card"><b>Cartera</b><div class="small">Free hasta 5 posiciones, Pro hasta 15, Premium ilimitado</div></div>
+      <div class="card"><b>Alertas</b><div class="small">Disponible en Free/Pro/Premium</div></div>
+      <div class="card"><b>Dividendos</b><div class="small">Disponible en Free/Pro/Premium</div></div>
+      <div class="card"><b>Transacciones</b><div class="small">Disponible en Free/Pro/Premium</div></div>
+      <div class="card"><b>Renta</b><div class="small">Solo Premium</div></div>
+      <div class="card"><b>Soporte</b><div class="small">Solo Premium</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Stripe</h2>
+    <div class="small">Este archivo ya deja preparada la lógica visual. Solo falta conectar los price_id reales de Stripe en la función buy().</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL='https://qoezxfuxzrtzexzzplfz.supabase.co';
+const SUPABASE_ANON_KEY='sbpublishablee99iPLwtmEpykURcsz63XgcEvzX5yR';
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const PRICES = {
+  pro_month: 'PRICE_ID_PRO_MONTH',
+  pro_year: 'PRICE_ID_PRO_YEAR',
+  premium_month: 'PRICE_ID_PREMIUM_MONTH',
+  premium_year: 'PRICE_ID_PREMIUM_YEAR'
+};
+let user = null;
+let profile = { plan:'free', trial_start:null, trial_end:null, status:'free', max_positions: 5 };
+
+function setBadge(plan){
+  const b=document.getElementById('planBadge');
+  const map={free:['Free','tag-free'],trial:['Trial','tag-warn'],pro:['Pro','tag-ok'],premium:['Premium','tag-ok']};
+  const [t,c]=map[plan]||map.free; b.className='tag '+c; b.textContent=t;
+}
+function setStatus(txt){ document.getElementById('statusText').textContent = txt; }
+function trialDaysLeft(){ if(!profile.trial_end) return 0; const d=(new Date(profile.trial_end)-Date.now())/86400000; return Math.max(0, Math.ceil(d)); }
+function refreshUI(){
+  const plan = profile.plan || 'free';
+  setBadge(plan==='free' && profile.trial_end ? 'trial' : plan);
+  if(plan==='free' && profile.trial_end){
+    const left = trialDaysLeft();
+    setStatus(left>0 ? `Acceso gratuito limitado. Te quedan ${left} día(s). Máximo 5 posiciones.` : 'Tu prueba gratuita terminó. Suscríbete para seguir usando la app.');
+  } else if(plan==='pro') {
+    setStatus('Plan Pro activo: acceso a todo menos Renta.');
+  } else if(plan==='premium') {
+    setStatus('Plan Premium activo: todo incluido + soporte.');
+  } else {
+    setStatus('Acceso gratuito limitado durante 7 días.');
+  }
+}
+async function loadProfile(){
+  if(!user) return;
+  const { data } = await supabaseClient.from('profiles').select('*').eq('id', user.id).maybeSingle();
+  if(data){ profile = { ...profile, ...data }; }
+  else {
+    const now = new Date();
+    const end = new Date(now.getTime()+7*86400000).toISOString();
+    profile = { plan:'free', status:'trial', trial_start: now.toISOString(), trial_end:end, max_positions: 5 };
+    await supabaseClient.from('profiles').upsert({ id:user.id, email:user.email, ...profile, max_positions: 5 });
+  }
+  refreshUI();
+}
+async function register(){
+  const email = document.getElementById('email').value.trim().toLowerCase();
+  const password = document.getElementById('pass').value;
+  if(!email || !password) return alert('Introduce correo y contraseña');
+  const { error } = await supabaseClient.auth.signUp({ email, password });
+  if(error) return alert(error.message);
+  alert('Cuenta creada. Si hace falta, confirma tu email.');
+}
+async function login(){
+  const email = document.getElementById('email').value.trim().toLowerCase();
+  const password = document.getElementById('pass').value;
+  const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+  if(error) return alert(error.message);
+  user = data.user;
+  await loadProfile();
+}
+async function logout(){ await supabaseClient.auth.signOut(); user=null; profile={ plan:'free', trial_start:null, trial_end:null, status:'free' }; refreshUI(); }
+async function buy(planKey){
+  if(!user) return alert('Inicia sesión primero');
+  const priceId = PRICES[planKey];
+  if(String(priceId).includes('PRICE_ID_')) return alert('Pon primero los price_id reales de Stripe');
+  const res = await fetch('/.netlify/functions/create-checkout', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ priceId, userId:user.id, email:user.email, success_url:window.location.origin+'/?paid=1', cancel_url:window.location.origin+'/?canceled=1' })
+  });
+  const data = await res.json();
+  if(data.url) location.href = data.url; else alert(data.error || 'No se pudo crear el checkout');
+}
+supabaseClient.auth.getUser().then(async ({data})=>{ if(data?.user){ user=data.user; await loadProfile(); } refreshUI(); });
+</script>
+</body>
+</html>
