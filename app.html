@@ -269,13 +269,37 @@ async function loadMe() {
 state.planMaxPositions = 5;
 async function checkPlanAccess() {
   if (!state.authUserId) return false;
-  const { data } = await supabaseClient.from('profiles').select('*').eq('id', state.authUserId).maybeSingle();
-  if (!data) { location.href = 'index.html'; return false; }
-  const plan = data.plan || 'free';
-  const trialActive = plan === 'free' && data.trial_end && new Date(data.trial_end) > new Date();
+  const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', state.authUserId).maybeSingle();
+
+  if (error) {
+    // No ocultamos el error: si ves esto en consola, es un problema de permisos (RLS) en Supabase
+    console.error('checkPlanAccess: error leyendo profiles →', error.message, error);
+    alert('No se pudo comprobar tu plan (' + error.message + '). Revisa la consola y los permisos (RLS) de la tabla "profiles" en Supabase.');
+    return false; // NO redirigimos: así puedes ver el error en vez de entrar en un bucle
+  }
+
+  let row = data;
+  if (!row) {
+    // Primer acceso desde app.html sin haber pasado por index.html: creamos el perfil con trial de 7 días
+    const now = new Date();
+    const trial_end = new Date(now.getTime() + 7*86400000).toISOString();
+    const newProfile = { id: state.authUserId, email: state.authUser, plan:'free', status:'trial', trial_start: now.toISOString(), trial_end, max_positions: 5 };
+    const { error: upErr } = await supabaseClient.from('profiles').upsert(newProfile);
+    if (upErr) {
+      console.error('checkPlanAccess: error creando profile →', upErr.message, upErr);
+      alert('No se pudo crear tu perfil (' + upErr.message + '). Revisa los permisos (RLS) de la tabla "profiles" en Supabase.');
+      return false;
+    }
+    row = newProfile;
+  }
+
+  const plan = row.plan || 'free';
+  const trialActive = plan === 'free' && row.trial_end && new Date(row.trial_end) > new Date();
   if (plan === 'premium') { state.planMaxPositions = Infinity; return true; }
   if (plan === 'pro') { state.planMaxPositions = 15; return true; }
   if (trialActive) { state.planMaxPositions = 5; return true; }
+
+  // Plan free sin trial activo: sin acceso, volvemos a la página de planes
   location.href = 'index.html';
   return false;
 }
