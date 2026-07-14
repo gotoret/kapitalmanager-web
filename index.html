@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Kapital Manager v0.94</title>
+<title>Kapital Manager v1</title>
 <style>
   :root{--b:#2563eb;--g:#059669;--r:#dc2626;--s:#64748b;--bg:#f8fafc}
   *{box-sizing:border-box} body{font-family:Segoe UI,Arial,sans-serif;background:var(--bg);margin:0;color:#0f172a}
@@ -84,7 +84,20 @@ function trialDaysLeft(){ if(!profile.trial_end) return 0; const d=(new Date(pro
 function refreshUI(){ const plan = profile.plan || 'free'; setBadge(plan==='free' && profile.trial_end ? 'trial' : plan); if(plan==='free' && profile.trial_end){ const left = trialDaysLeft(); setStatus(left>0 ? `Acceso gratuito limitado. Te quedan ${left} día(s). Máximo 5 posiciones.` : 'Tu prueba gratuita terminó. Suscríbete para seguir usando la app.'); } else if(plan==='pro') { setStatus('Plan Pro activo: acceso a todo, Máximo 15 posiciones.'); } else if(plan==='premium') { setStatus('Plan Premium activo: todo incluido.'); } else { setStatus('Acceso gratuito limitado durante 7 días.'); } }
 async function loadProfile(){ if(!user) return; const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', user.id).maybeSingle(); if(error) { alert(error.message); return; } if(data){ profile = { ...profile, ...data }; } else { const now = new Date(); const end = new Date(now.getTime()+7*86400000).toISOString(); profile = { plan:'free', status:'trial', trial_start: now.toISOString(), trial_end:end, max_positions: 5 }; const { error: upsertError } = await supabaseClient.from('profiles').upsert({ id:user.id, email:user.email, ...profile, max_positions: 5 }); if(upsertError) alert(upsertError.message); } refreshUI(); }
 async function register(){ const email = document.getElementById('email').value.trim().toLowerCase(); const password = document.getElementById('pass').value; if(!email || !password) return alert('Introduce correo y contraseña'); const { error } = await supabaseClient.auth.signUp({ email, password }); if(error) return alert(error.message); alert('Cuenta creada. Si hace falta, confirma tu email.'); }
-async function login(){ try { const email = document.getElementById('email').value.trim().toLowerCase(); const password = document.getElementById('pass').value; if(!email || !password) return alert('Introduce correo y contraseña'); const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password }); if(error) return alert(error.message); user = data.user; await loadProfile(); } catch (e) { alert(e.message || 'Error desconocido'); } }
+async function login(){
+  const email = document.getElementById('email').value.trim().toLowerCase();
+  const password = document.getElementById('pass').value;
+  try {
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if(error) { console.error('login: error de Supabase →', error); return alert('Error al iniciar sesión: ' + error.message); }
+    user = data.user;
+    await loadProfile();
+    if (hasAccess()) location.href = 'app.html';
+  } catch (e) {
+    console.error('login: excepción no controlada →', e);
+    alert('Fallo de conexión al iniciar sesión: ' + (e?.message || e));
+  }
+}
 async function logout(){ await supabaseClient.auth.signOut(); user=null; profile={ plan:'free', trial_start:null, trial_end:null, status:'free', max_positions: 5 }; refreshUI(); }
 async function buy(planKey){ if(!user) return alert('Inicia sesión primero'); const priceId = PRICES[planKey]; if(String(priceId).includes('PRICE_ID_')) return alert('Pon primero los price_id reales de Stripe'); const res = await fetch('https://qoezxfuxzrtzexzzplfz.supabase.co/functions/v1/create-checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ priceId, userId: user.id, email: user.email, successUrl: window.location.origin + '?paid=1', cancelUrl: window.location.origin + '?canceled=1' }) }); const data = await res.json(); if(data.url) location.href = data.url; else alert(data.error || 'No se pudo crear el checkout'); }
 supabaseClient.auth.getUser().then(async ({data})=>{ if(data?.user){ user=data.user; await loadProfile(); } refreshUI(); });
