@@ -203,55 +203,66 @@ async function doRegister() {
     return;
   }
 
-  try {
-    const { data, error } = await supabaseClient.auth.signUp({ email, password });
+  const { data, error } = await supabaseClient.auth.signUp({ email, password });
 
-    if (error) {
-      console.error('doRegister: error de Supabase →', error);
-      alert('Error al crear la cuenta: ' + error.message);
-      return;
-    }
-
-    if (data.session) {
-      // Confirmación de email desactivada en Supabase: entra directamente
-      state.authUser = data.user?.email || null;
-      state.authUserId = data.user?.id || null;
-      updateLoginStatus();
-    } else {
-      alert('Cuenta creada. Revisa tu correo electrónico para confirmar la cuenta y luego inicia sesión.');
-    }
-  } catch (e) {
-    console.error('doRegister: excepción no controlada →', e);
-    alert('Fallo de conexión al crear la cuenta: ' + (e?.message || e));
-  }
-}
-
-async function doLogin() {
-  const email = document.getElementById('login-user')?.value.trim().toLowerCase();
-  const password = document.getElementById('login-pass')?.value;
-
-  if (!email || !password) {
-    alert('Introduce email y contraseña');
+  if (error) {
+    alert(error.message);
     return;
   }
 
-  try {
-    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-
-    if (error) {
-      console.error('doLogin: error de Supabase →', error);
-      alert('Error al iniciar sesión: ' + error.message);
-      return;
-    }
-
+  if (data.session) {
+    // Confirmación de email desactivada en Supabase: entra directamente
     state.authUser = data.user?.email || null;
     state.authUserId = data.user?.id || null;
     updateLoginStatus();
-  } catch (e) {
-    console.error('doLogin: excepción no controlada →', e);
-    alert('Fallo de conexión al iniciar sesión: ' + (e?.message || e));
+  } else {
+    alert('Cuenta creada. Revisa tu correo electrónico para confirmar la cuenta y luego inicia sesión.');
   }
 }
+
+// CORRECCIÓN 1: Verificar la URL de Supabase
+// Asegúrate de que esta URL sea correcta
+const SUPABASE_URL = 'https://qoezxfuxzrtzexzzplfz.supabase.co';
+
+// CORRECCIÓN 2: Función login mejorada
+async function login() {
+    try {
+        const email = document.getElementById('email').value.trim().toLowerCase();
+        const password = document.getElementById('pass').value;
+        
+        if (!email || !password) {
+            alert('Introduce correo y contraseña');
+            return;
+        }
+        
+        console.log('Intentando login con:', email); // Debug
+        
+        const { data, error } = await supabaseClient.auth.signInWithPassword({ 
+            email, 
+            password 
+        });
+        
+        if (error) {
+            console.error('Error de login:', error);
+            alert(error.message || 'Error al iniciar sesión');
+            return;
+        }
+        
+        if (data?.user) {
+            user = data.user;
+            console.log('Usuario logueado:', user.email);
+            await loadProfile();
+            alert('¡Sesión iniciada correctamente!');
+            refreshUI();
+        } else {
+            alert('No se pudo obtener el usuario');
+        }
+        
+    } catch (e) {
+        console.error('Excepción en login:', e);
+        alert(e.message || 'Error desconocido');
+    }
+}p
 
 async function doLogout() {
   await supabaseClient.auth.signOut();
@@ -278,6 +289,7 @@ async function loadMe() {
 // ─────────────────────────────────────────────
 // CONTROL DE ACCESO POR PLAN (comparte tabla "profiles" con la página de pago)
 // ─────────────────────────────────────────────
+state.planMaxPositions = 5;
 async function checkPlanAccess() {
   if (!state.authUserId) return false;
   const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', state.authUserId).maybeSingle();
@@ -5539,10 +5551,7 @@ function updateLoginStatus() {
   if (state.authUser) {
     loginOverlay.style.display = "none";
     if (emailLabel) emailLabel.textContent = state.authUser;
-    startAppIfNeeded().catch(e => {
-      console.error('startAppIfNeeded: excepción no controlada →', e);
-      alert('Error al cargar la aplicación: ' + (e?.message || e));
-    });
+    startAppIfNeeded();
   } else {
     loginOverlay.style.display = "flex";
     document.getElementById("disclaimer-overlay").style.display = "none";
