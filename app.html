@@ -45,15 +45,16 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 .metric-card{background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:10px 14px;min-width:0;}
 .metric-label{color:#64748b;font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;}
 .metric-value{font-size:18px;font-weight:700;line-height:1.2;}
-#app{display:flex;flex-direction:column;height:100vh;overflow:hidden;}
-#header{background:#fff;border-bottom:1px solid #e2e8f0;padding:10px 16px;flex-shrink:0;}
+#app{display:flex;flex-direction:column;height:100vh;overflow:hidden;background:#e2e8f0;}
+#header{background:#fff;border-bottom:1px solid #e2e8f0;padding:10px 16px;flex-shrink:0;width:100%;max-width:1400px;margin:0 auto;box-sizing:border-box;}
 #header-top{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;}
 #metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;}
-#tabs-bar{display:flex;background:#fff;border-bottom:1px solid #e2e8f0;overflow-x:auto;flex-shrink:0;}
+#tabs-bar{display:flex;background:#fff;border-bottom:1px solid #e2e8f0;overflow-x:auto;flex-shrink:0;width:100%;max-width:1400px;margin:0 auto;box-sizing:border-box;}
 .tab-btn{padding:10px 16px;background:none;border:none;border-bottom:2px solid transparent;color:#64748b;white-space:nowrap;font-weight:400;}
 .tab-btn.active{color:#2563eb;border-bottom-color:#2563eb;font-weight:700;}
 .tab-btn:hover{color:#2563eb;}
-#content{flex:1;overflow:auto;}
+#content{flex:1;overflow:auto;background:#fff;width:100%;max-width:1400px;margin:0 auto;box-sizing:border-box;}
+#div-ticker-wrap{width:100%;max-width:1400px;margin:0 auto;box-sizing:border-box;}
 #alert-banner{margin-top:8px;background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:6px 12px;font-size:12px;color:#b45309;font-weight:600;display:none;}
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid #e2e8f0;background:#f8fafc;align-items:center;}
 .progress-bar-wrap{background:#e2e8f0;border-radius:18px;height:36px;position:relative;overflow:hidden;}
@@ -129,7 +130,8 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 <div id="app">
   <div id="header">
     <div id="header-top">
-      <img src="logo.png" alt="Kapital Manager" style="height:30px;display:block"/>
+      <img src="logo.png" alt="Kapital Manager" style="height:30px;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block'"/>
+      <span style="display:none;background:#1d4ed8;color:#fff;font-weight:800;font-size:13px;padding:5px 9px;border-radius:6px;letter-spacing:0.5px">KM</span>
       <span style="font-size:11px;color:#94a3b8">v0.92</span>
       <span id="price-mode-tag" class="price-tag price-sim">⚡ Precios simulados</span>
       <div style="flex:1"></div>
@@ -149,7 +151,10 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 
 <div id="login-overlay" class="overlay" style="z-index:2100">
   <div class="modal" style="width:380px">
-    <div style="text-align:center;margin-bottom:6px"><img src="logo.png" alt="Kapital Manager" style="height:48px"/></div>
+    <div style="text-align:center;margin-bottom:6px">
+      <img src="logo.png" alt="Kapital Manager" style="height:48px" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex'"/>
+      <span style="display:none;align-items:center;justify-content:center;width:48px;height:48px;background:#1d4ed8;color:#fff;font-weight:800;font-size:16px;border-radius:10px;letter-spacing:0.5px">KM</span>
+    </div>
     <h2 style="text-align:center;color:#1d4ed8;font-size:16px;font-weight:700;margin-bottom:18px">Kapital Manager</h2>
     <div class="field">
       <label>Correo electrónico</label>
