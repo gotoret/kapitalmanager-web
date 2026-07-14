@@ -203,20 +203,26 @@ async function doRegister() {
     return;
   }
 
-  const { data, error } = await supabaseClient.auth.signUp({ email, password });
+  try {
+    const { data, error } = await supabaseClient.auth.signUp({ email, password });
 
-  if (error) {
-    alert(error.message);
-    return;
-  }
+    if (error) {
+      console.error('doRegister: error de Supabase →', error);
+      alert('Error al crear la cuenta: ' + error.message);
+      return;
+    }
 
-  if (data.session) {
-    // Confirmación de email desactivada en Supabase: entra directamente
-    state.authUser = data.user?.email || null;
-    state.authUserId = data.user?.id || null;
-    updateLoginStatus();
-  } else {
-    alert('Cuenta creada. Revisa tu correo electrónico para confirmar la cuenta y luego inicia sesión.');
+    if (data.session) {
+      // Confirmación de email desactivada en Supabase: entra directamente
+      state.authUser = data.user?.email || null;
+      state.authUserId = data.user?.id || null;
+      updateLoginStatus();
+    } else {
+      alert('Cuenta creada. Revisa tu correo electrónico para confirmar la cuenta y luego inicia sesión.');
+    }
+  } catch (e) {
+    console.error('doRegister: excepción no controlada →', e);
+    alert('Fallo de conexión al crear la cuenta: ' + (e?.message || e));
   }
 }
 
@@ -229,16 +235,22 @@ async function doLogin() {
     return;
   }
 
-  const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+  try {
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
 
-  if (error) {
-    alert(error.message);
-    return;
+    if (error) {
+      console.error('doLogin: error de Supabase →', error);
+      alert('Error al iniciar sesión: ' + error.message);
+      return;
+    }
+
+    state.authUser = data.user?.email || null;
+    state.authUserId = data.user?.id || null;
+    updateLoginStatus();
+  } catch (e) {
+    console.error('doLogin: excepción no controlada →', e);
+    alert('Fallo de conexión al iniciar sesión: ' + (e?.message || e));
   }
-
-  state.authUser = data.user?.email || null;
-  state.authUserId = data.user?.id || null;
-  updateLoginStatus();
 }
 
 async function doLogout() {
@@ -266,7 +278,6 @@ async function loadMe() {
 // ─────────────────────────────────────────────
 // CONTROL DE ACCESO POR PLAN (comparte tabla "profiles" con la página de pago)
 // ─────────────────────────────────────────────
-state.planMaxPositions = 5;
 async function checkPlanAccess() {
   if (!state.authUserId) return false;
   const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', state.authUserId).maybeSingle();
@@ -5528,7 +5539,10 @@ function updateLoginStatus() {
   if (state.authUser) {
     loginOverlay.style.display = "none";
     if (emailLabel) emailLabel.textContent = state.authUser;
-    startAppIfNeeded();
+    startAppIfNeeded().catch(e => {
+      console.error('startAppIfNeeded: excepción no controlada →', e);
+      alert('Error al cargar la aplicación: ' + (e?.message || e));
+    });
   } else {
     loginOverlay.style.display = "flex";
     document.getElementById("disclaimer-overlay").style.display = "none";
