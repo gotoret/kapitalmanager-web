@@ -185,8 +185,9 @@ supabaseClient.auth.getUser().then(async ({data})=>{
   if(data?.user){
     user=data.user;
     await loadProfile();
-    // Si ya venía con sesión activa y acceso, le llevamos directo a la app
-    if (hasAccess()) { location.href = 'app.html'; return; }
+    // No redirigimos automáticamente: si el usuario ha entrado aquí a propósito
+    // (p.ej. desde el botón "Mi plan" de la app), le dejamos ver esta página
+    // y decidir si quiere volver a la app o cambiar de plan.
   }
   refreshUI();
 });
