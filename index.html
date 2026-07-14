@@ -174,12 +174,20 @@ async function buy(planKey){
   if(!user) return alert('Inicia sesión primero');
   const priceId = PRICES[planKey];
   if(String(priceId).includes('PRICE_ID_')) return alert('Pon primero los price_id reales de Stripe');
-  const res = await fetch('/.netlify/functions/create-checkout', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ priceId, userId:user.id, email:user.email, success_url:window.location.origin+'/?paid=1', cancel_url:window.location.origin+'/?canceled=1' })
-  });
-  const data = await res.json();
-  if(data.url) location.href = data.url; else alert(data.error || 'No se pudo crear el checkout');
+  try {
+    const { data, error } = await supabaseClient.functions.invoke('create-checkout', {
+      body: { priceId, userId:user.id, email:user.email, success_url:window.location.origin+window.location.pathname.replace('index.html','')+'app.html?paid=1', cancel_url:window.location.href }
+    });
+    if (error) {
+      console.error('buy: error de la función create-checkout →', error);
+      alert('No se pudo crear el pago: ' + error.message);
+      return;
+    }
+    if (data?.url) location.href = data.url; else alert(data?.error || 'No se pudo crear el checkout');
+  } catch (e) {
+    console.error('buy: excepción no controlada →', e);
+    alert('No se pudo conectar con el sistema de pago: ' + (e?.message || e));
+  }
 }
 supabaseClient.auth.getUser().then(async ({data})=>{
   if(data?.user){
