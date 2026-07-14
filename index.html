@@ -3,19 +3,21 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Kapital Manager v1</title>
+<title>Kapital Manager — Acceso</title>
 <style>
   :root{--b:#2563eb;--g:#059669;--r:#dc2626;--s:#64748b;--bg:#f8fafc}
   *{box-sizing:border-box} body{font-family:Segoe UI,Arial,sans-serif;background:var(--bg);margin:0;color:#0f172a}
   .wrap{max-width:980px;margin:0 auto;padding:18px} .card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin-bottom:14px}
-  .row2{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+  .row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px} .row2{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
   .btn{background:var(--b);color:#fff;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer} .btn-gray{background:#64748b}.btn-green{background:var(--g)}
   .btn:disabled{opacity:.55;cursor:not-allowed} .tag{display:inline-block;background:#e0f2fe;color:#075985;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;margin-left:6px}
   .tag-ok{background:#dcfce7;color:#166534} .tag-warn{background:#fef3c7;color:#92400e} .tag-free{background:#ede9fe;color:#6d28d9}
-  .small{font-size:12px;color:var(--s)} input{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:14px}
+  .small{font-size:12px;color:var(--s)} .hr{height:1px;background:#e2e8f0;margin:12px 0}
+  input,select{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:14px}
   .plans{display:grid;grid-template-columns:repeat(3,1fr);gap:12px} .plan{border:1px solid #e2e8f0;border-radius:14px;padding:14px} .plan h3{margin:0 0 6px 0}
   .price{font-size:28px;font-weight:800;color:#111827} .muted{color:#64748b;font-size:13px} ul{margin:10px 0 0 18px}
   .banner{background:#eff6ff;border:1px solid #bfdbfe;padding:12px 14px;border-radius:12px;margin-bottom:14px}
+  .hidden{display:none}
   .center{text-align:center}
 </style>
 </head>
@@ -40,6 +42,12 @@
     <div class="small" style="margin-top:8px">Primero prueba gratis 7 días; después se bloquean las funciones premium hasta pagar.</div>
   </div>
 
+  <div class="card" id="enterAppCard" style="display:none">
+    <h2 style="margin-top:0">✅ Acceso activo</h2>
+    <div class="small" style="margin-bottom:12px">Tu cuenta tiene acceso a Kapital Manager.</div>
+    <button class="btn btn-green" style="width:100%;padding:12px" onclick="location.href='app.html'">Entrar a la aplicación →</button>
+  </div>
+
   <div class="card">
     <h2 style="margin-top:0">Planes</h2>
     <div class="plans">
@@ -47,14 +55,18 @@
         <h3>Free 7 días</h3>
         <div class="price">0€</div>
         <div class="muted">Limitado y temporal</div>
-        <ul><li>Cartera hasta 5 posiciones</li><li>Alertas</li><li>Dividendos</li><li>Transacciones</li></ul>
+        <ul>
+          <li>Cartera hasta 5 posiciones</li><li>Alertas</li><li>Dividendos</li><li>Transacciones</li>
+        </ul>
         <p class="small">Acceso completo a estas funciones durante 1 semana.</p>
       </div>
       <div class="plan">
         <h3>Pro</h3>
         <div class="price">6€/mes</div>
         <div class="muted">o 60€/año (pago único)</div>
-        <ul><li>Todas las funciones</li><li>Hasta 15 acciones en cartera</li></ul>
+        <ul>
+          <li>Todas las funciones</li><li>Hasta 15 acciones en cartera</li>
+        </ul>
         <button class="btn" style="margin-top:12px;width:100%" onclick="buy('pro_month')">Suscribirme</button>
         <button class="btn-gray btn" style="margin-top:8px;width:100%" onclick="buy('pro_year')">Pagar anual</button>
       </div>
@@ -62,7 +74,9 @@
         <h3>Premium</h3>
         <div class="price">15€/mes</div>
         <div class="muted">o 150€/año, sin límite de cartera</div>
-        <ul><li>Todas las funciones</li><li>Sin límite de acciones en cartera</li></ul>
+        <ul>
+          <li>Todas las funciones</li><li>Sin límite de acciones en cartera</li>
+        </ul>
         <button class="btn-green btn" style="margin-top:12px;width:100%" onclick="buy('premium_month')">Suscribirme</button>
         <button class="btn-gray btn" style="margin-top:8px;width:100%" onclick="buy('premium_year')">Pagar anual</button>
       </div>
@@ -75,15 +89,77 @@
 const SUPABASE_URL='https://qoezxfuxzrtzexzzplfz.supabase.co';
 const SUPABASE_ANON_KEY='sb_publishable_e99iPLwtmEpykURcsz63Xg_cEvzX5yR';
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const PRICES = { pro_month:'prod_UsTvWkzcOdQfmW', pro_year:'prod_UsTvGfomMazeDe', premium_month:'prod_UsTwOZp0nGVcIv', premium_year:'prod_UsTxNSNGBM2ZbX' };
+const PRICES = {
+  pro_month: 'prod_UsTvWkzcOdQfmW',
+  pro_year: 'prod_UsTvGfomMazeDe',
+  premium_month: 'prod_UsTwOZp0nGVcIv',
+  premium_year: 'prod_UsTxNSNGBM2ZbX'
+};
 let user = null;
 let profile = { plan:'free', trial_start:null, trial_end:null, status:'free', max_positions: 5 };
-function setBadge(plan){ const b=document.getElementById('planBadge'); const map={free:['Free','tag-free'],trial:['Trial','tag-warn'],pro:['Pro','tag-ok'],premium:['Premium','tag-ok']}; const [t,c]=map[plan]||map.free; b.className='tag '+c; b.textContent=t; }
+
+function setBadge(plan){
+  const b=document.getElementById('planBadge');
+  const map={free:['Free','tag-free'],trial:['Trial','tag-warn'],pro:['Pro','tag-ok'],premium:['Premium','tag-ok']};
+  const [t,c]=map[plan]||map.free; b.className='tag '+c; b.textContent=t;
+}
 function setStatus(txt){ document.getElementById('statusText').textContent = txt; }
 function trialDaysLeft(){ if(!profile.trial_end) return 0; const d=(new Date(profile.trial_end)-Date.now())/86400000; return Math.max(0, Math.ceil(d)); }
-function refreshUI(){ const plan = profile.plan || 'free'; setBadge(plan==='free' && profile.trial_end ? 'trial' : plan); if(plan==='free' && profile.trial_end){ const left = trialDaysLeft(); setStatus(left>0 ? `Acceso gratuito limitado. Te quedan ${left} día(s). Máximo 5 posiciones.` : 'Tu prueba gratuita terminó. Suscríbete para seguir usando la app.'); } else if(plan==='pro') { setStatus('Plan Pro activo: acceso a todo, Máximo 15 posiciones.'); } else if(plan==='premium') { setStatus('Plan Premium activo: todo incluido.'); } else { setStatus('Acceso gratuito limitado durante 7 días.'); } }
-async function loadProfile(){ if(!user) return; const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', user.id).maybeSingle(); if(error) { alert(error.message); return; } if(data){ profile = { ...profile, ...data }; } else { const now = new Date(); const end = new Date(now.getTime()+7*86400000).toISOString(); profile = { plan:'free', status:'trial', trial_start: now.toISOString(), trial_end:end, max_positions: 5 }; const { error: upsertError } = await supabaseClient.from('profiles').upsert({ id:user.id, email:user.email, ...profile, max_positions: 5 }); if(upsertError) alert(upsertError.message); } refreshUI(); }
-async function register(){ const email = document.getElementById('email').value.trim().toLowerCase(); const password = document.getElementById('pass').value; if(!email || !password) return alert('Introduce correo y contraseña'); const { error } = await supabaseClient.auth.signUp({ email, password }); if(error) return alert(error.message); alert('Cuenta creada. Si hace falta, confirma tu email.'); }
+
+function hasAccess(){
+  const plan = profile.plan || 'free';
+  if(plan==='pro' || plan==='premium') return true;
+  if(plan==='free' && profile.trial_end && trialDaysLeft()>0) return true;
+  return false;
+}
+
+function refreshUI(){
+  const plan = profile.plan || 'free';
+  setBadge(plan==='free' && profile.trial_end ? 'trial' : plan);
+  if(plan==='free' && profile.trial_end){
+    const left = trialDaysLeft();
+    setStatus(left>0 ? `Acceso gratuito limitado. Te quedan ${left} día(s). Máximo 5 posiciones.` : 'Tu prueba gratuita terminó. Suscríbete para seguir usando la app.');
+  } else if(plan==='pro') {
+    setStatus('Plan Pro activo: acceso a todo, Máximo 15 posiciones.');
+  } else if(plan==='premium') {
+    setStatus('Plan Premium activo: todo incluido.');
+  } else {
+    setStatus('Acceso gratuito limitado durante 7 días.');
+  }
+
+  // Si el usuario tiene acceso activo, mostramos el acceso directo a la app
+  // (no redirigimos automáticamente para que pueda seguir viendo/gestionando planes si quiere)
+  const enterCard = document.getElementById('enterAppCard');
+  const authCard = document.getElementById('authCard');
+  if (user && hasAccess()) {
+    enterCard.style.display = 'block';
+    authCard.style.display = 'none';
+  } else {
+    enterCard.style.display = 'none';
+    authCard.style.display = 'block';
+  }
+}
+
+async function loadProfile(){
+  if(!user) return;
+  const { data } = await supabaseClient.from('profiles').select('*').eq('id', user.id).maybeSingle();
+  if(data){ profile = { ...profile, ...data }; }
+  else {
+    const now = new Date();
+    const end = new Date(now.getTime()+7*86400000).toISOString();
+    profile = { plan:'free', status:'trial', trial_start: now.toISOString(), trial_end:end, max_positions: 5 };
+    await supabaseClient.from('profiles').upsert({ id:user.id, email:user.email, ...profile, max_positions: 5 });
+  }
+  refreshUI();
+}
+async function register(){
+  const email = document.getElementById('email').value.trim().toLowerCase();
+  const password = document.getElementById('pass').value;
+  if(!email || !password) return alert('Introduce correo y contraseña');
+  const { error } = await supabaseClient.auth.signUp({ email, password });
+  if(error) return alert(error.message);
+  alert('Cuenta creada. Si hace falta, confirma tu email.');
+}
 async function login(){
   const email = document.getElementById('email').value.trim().toLowerCase();
   const password = document.getElementById('pass').value;
@@ -98,9 +174,36 @@ async function login(){
     alert('Fallo de conexión al iniciar sesión: ' + (e?.message || e));
   }
 }
-async function logout(){ await supabaseClient.auth.signOut(); user=null; profile={ plan:'free', trial_start:null, trial_end:null, status:'free', max_positions: 5 }; refreshUI(); }
-async function buy(planKey){ if(!user) return alert('Inicia sesión primero'); const priceId = PRICES[planKey]; if(String(priceId).includes('PRICE_ID_')) return alert('Pon primero los price_id reales de Stripe'); const res = await fetch('https://qoezxfuxzrtzexzzplfz.supabase.co/functions/v1/create-checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ priceId, userId: user.id, email: user.email, successUrl: window.location.origin + '?paid=1', cancelUrl: window.location.origin + '?canceled=1' }) }); const data = await res.json(); if(data.url) location.href = data.url; else alert(data.error || 'No se pudo crear el checkout'); }
-supabaseClient.auth.getUser().then(async ({data})=>{ if(data?.user){ user=data.user; await loadProfile(); } refreshUI(); });
+async function logout(){ await supabaseClient.auth.signOut(); user=null; profile={ plan:'free', trial_start:null, trial_end:null, status:'free' }; refreshUI(); }
+async function buy(planKey){
+  if(!user) return alert('Inicia sesión primero');
+  const priceId = PRICES[planKey];
+  if(String(priceId).includes('PRICE_ID_')) return alert('Pon primero los price_id reales de Stripe');
+  try {
+    const { data, error } = await supabaseClient.functions.invoke('create-checkout', {
+      body: { priceId, userId:user.id, email:user.email, success_url:window.location.origin+window.location.pathname.replace('index.html','')+'app.html?paid=1', cancel_url:window.location.href }
+    });
+    if (error) {
+      console.error('buy: error de la función create-checkout →', error);
+      alert('No se pudo crear el pago: ' + error.message);
+      return;
+    }
+    if (data?.url) location.href = data.url; else alert(data?.error || 'No se pudo crear el checkout');
+  } catch (e) {
+    console.error('buy: excepción no controlada →', e);
+    alert('No se pudo conectar con el sistema de pago: ' + (e?.message || e));
+  }
+}
+supabaseClient.auth.getUser().then(async ({data})=>{
+  if(data?.user){
+    user=data.user;
+    await loadProfile();
+    // No redirigimos automáticamente: si el usuario ha entrado aquí a propósito
+    // (p.ej. desde el botón "Mi plan" de la app), le dejamos ver esta página
+    // y decidir si quiere volver a la app o cambiar de plan.
+  }
+  refreshUI();
+});
 </script>
 </body>
 </html>
