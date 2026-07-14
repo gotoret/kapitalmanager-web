@@ -180,5 +180,13 @@ async function buy(planKey){
 }
 supabaseClient.auth.getUser().then(async ({data})=>{ if(data?.user){ user=data.user; await loadProfile(); } refreshUI(); });
 </script>
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm'
+
+const SUPABASE_URL = 'https://qoezxfuxzrtzexzzplfz.supabase.co'
+const SUPABASE_ANON_KEY = 'sb_publishable_e99iPLwtmEpykURcsz63Xg_cEvzX5yR'
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+</script>
 </body>
 </html>
