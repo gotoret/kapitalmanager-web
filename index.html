@@ -181,12 +181,32 @@ async function loadProfile(){
   }
   refreshUI();
 }
+// ── Traducción de mensajes de error habituales de Supabase (llegan siempre en inglés) ──
+function translateAuthError(msg){
+  const m = String(msg || '');
+  const map = [
+    [/password should be at least (\d+) characters/i, (a) => `La contraseña debe tener al menos ${a[1]} caracteres`],
+    [/invalid login credentials/i, 'Correo o contraseña incorrectos'],
+    [/user already registered/i, 'Ya existe una cuenta con ese correo'],
+    [/email not confirmed/i, 'Debes confirmar tu correo electrónico antes de iniciar sesión'],
+    [/invalid email/i, 'El correo electrónico no es válido'],
+    [/network error|failed to fetch/i, 'Error de conexión. Comprueba tu internet e inténtalo de nuevo'],
+    [/rate limit/i, 'Demasiados intentos. Espera un momento y vuelve a intentarlo'],
+  ];
+  for (const [re, replacement] of map) {
+    const match = m.match(re);
+    if (match) return typeof replacement === 'function' ? replacement(match) : replacement;
+  }
+  return m; // si no reconocemos el mensaje, mostramos el original tal cual
+}
+
 async function register(){
   const email = document.getElementById('email').value.trim().toLowerCase();
   const password = document.getElementById('pass').value;
   if(!email || !password) return alert('Introduce correo y contraseña');
+  if(password.length < 6) return alert('La contraseña debe tener al menos 6 caracteres');
   const { error } = await supabaseClient.auth.signUp({ email, password });
-  if(error) return alert(error.message);
+  if(error) return alert(translateAuthError(error.message));
   alert('Cuenta creada. Si hace falta, confirma tu email.');
 }
 async function login(){
@@ -194,7 +214,7 @@ async function login(){
   const password = document.getElementById('pass').value;
   try {
     const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-    if(error) { console.error('login: error de Supabase →', error); return alert('Error al iniciar sesión: ' + error.message); }
+    if(error) { console.error('login: error de Supabase →', error); return alert('Error al iniciar sesión: ' + translateAuthError(error.message)); }
     user = data.user;
     await loadProfile();
     if (hasAccess()) location.href = 'app.html';
