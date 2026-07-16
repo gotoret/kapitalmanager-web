@@ -1264,6 +1264,32 @@ function exportCarteraExcel() {
 // Intenta pedir las cotizaciones a nuestra propia Edge Function de Supabase (rápida y fiable,
 // sin depender de proxies gratuitos de terceros). Si no está desplegada o falla, devuelve null
 // y la app recurre automáticamente al método antiguo (corsproxy/allorigins).
+// Alternativa a Yahoo: Financial Modeling Prep, solo si el usuario tiene configurada su clave
+// (la misma que usa para los datos fundamentales en Valoración/Radar). Petición única para toda la cartera.
+async function fetchQuotesFMP(tickers) {
+  if (!state.fmpKey) return null;
+  try {
+    const symbols = tickers.map(t => encodeURIComponent(t)).join(',');
+    const res = await fetch(`https://financialmodelingprep.com/api/v3/quote/${symbols}?apikey=${state.fmpKey}`, {signal: AbortSignal.timeout(8000)});
+    if (!res.ok) return null;
+    const arr = await res.json();
+    if (!Array.isArray(arr) || !arr.length) return null;
+    const map = {};
+    arr.forEach(r => {
+      if (r?.price == null || !r?.symbol) return;
+      if (r.changesPercentage != null) state.priceChangeCache[r.symbol] = +Number(r.changesPercentage).toFixed(2);
+      // NOTA: a diferencia de Yahoo, no tenemos confirmado si FMP devuelve los tickers .L
+      // (Londres) en libras o en peniques. Si ves un precio ~100x distinto para un valor
+      // londinense tras cambiar de fuente, avisa y lo ajustamos.
+      map[r.symbol] = r.price;
+    });
+    return Object.keys(map).length ? map : null;
+  } catch (e) {
+    console.error('fetchQuotesFMP: fallo →', e);
+    return null;
+  }
+}
+
 async function fetchQuotesEdgeFunction(tickers) {
   try {
     const { data, error } = await supabaseClient.functions.invoke('quotes', {
@@ -1405,7 +1431,10 @@ async function refreshPrices() {
   // 1) Intento más rápido y fiable: nuestra propia Edge Function (sin proxies de terceros)
   let batch = await fetchQuotesEdgeFunction(tickers);
 
-  // 2) Si la Edge Function no está disponible, probamos el proxy público en una sola petición
+  // 2) Si Yahoo la bloquea, probamos Financial Modeling Prep (si el usuario tiene clave configurada)
+  if (!batch) batch = await fetchQuotesFMP(tickers);
+
+  // 3) Último recurso: el proxy público en una sola petición
   if (!batch) batch = await fetchBatchQuotes(tickers);
 
   tickers.forEach(t => {
