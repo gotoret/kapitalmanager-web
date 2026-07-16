@@ -428,12 +428,6 @@ const PROXIES = [
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
 ];
-// Devuelve la lista de proxies rotada, para no golpear siempre el mismo proxy primero
-// cuando se lanzan muchas peticiones en paralelo (evita saturar corsproxy.io de golpe).
-function rotateProxies(proxies, offset) {
-  const n = proxies.length;
-  return proxies.map((_, i) => proxies[(i + offset) % n]);
-}
 
 const SEARCH_PROXIES = [
   q => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
@@ -1267,6 +1261,43 @@ function exportCarteraExcel() {
 // ─────────────────────────────────────────────
 // YAHOO FINANCE — precios reales
 // ─────────────────────────────────────────────
+const BATCH_QUOTE_PROXIES = [
+  s => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
+  s => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
+  s => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
+  s => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
+];
+
+// Pide TODOS los tickers en una sola petición (mucho más rápido que uno a uno).
+// Devuelve un mapa {ticker: precio} con los que consiguió; los que falten se piden luego uno a uno como respaldo.
+async function fetchBatchQuotes(tickers) {
+  if (!tickers.length) return {};
+  const symbols = tickers.map(t => encodeURIComponent(t)).join(',');
+  for (const proxyFn of BATCH_QUOTE_PROXIES) {
+    try {
+      const url = proxyFn(symbols);
+      const res = await fetch(url, {signal: AbortSignal.timeout(8000)});
+      if (!res.ok) continue;
+      const data = await res.json();
+      const results = data?.quoteResponse?.result;
+      if (!Array.isArray(results) || !results.length) continue;
+      const map = {};
+      results.forEach(r => {
+        let price = r?.regularMarketPrice;
+        if (price == null) return;
+        const prevClose = r?.regularMarketPreviousClose;
+        if (prevClose && prevClose > 0) {
+          state.priceChangeCache[r.symbol] = +(((price - prevClose) / prevClose) * 100).toFixed(2);
+        }
+        if (String(r.symbol).toUpperCase().endsWith(".L")) price = +(price / 100).toFixed(4);
+        map[r.symbol] = price;
+      });
+      if (Object.keys(map).length) return map;
+    } catch(e) { /* probar el siguiente proxy */ }
+  }
+  return {};
+}
+
 async function fetchWithProxy(proxies, ticker) {
   for (const proxyFn of proxies) {
     try {
@@ -1351,37 +1382,32 @@ async function refreshPrices() {
 
   let liveCount = 0;
   const tickers = state.positions.map(p=>p.ticker);
-  const uniqueTickers = [...new Set(tickers)];
 
-  // Pedimos los precios en lotes paralelos (en vez de uno a uno) para ir mucho más
-  // rápido, rotando el orden de proxies en cada lote para no saturar siempre el mismo.
-  const BATCH_SIZE = 6;
-  const priceResults = {};
-  for (let i = 0; i < uniqueTickers.length; i += BATCH_SIZE) {
-    const batch = uniqueTickers.slice(i, i + BATCH_SIZE);
-    const settled = await Promise.allSettled(
-      batch.map((t, j) => fetchWithProxy(rotateProxies(PROXIES, (i + j) % PROXIES.length), t))
-    );
-    batch.forEach((t, j) => {
-      const r = settled[j];
-      priceResults[t] = (r.status === "fulfilled") ? r.value : null;
-    });
-    if (i + BATCH_SIZE < uniqueTickers.length) await sleep(200); // pequeña pausa entre lotes
-  }
+  // 1) Intento rápido: todos los tickers en una sola petición
+  const batch = await fetchBatchQuotes(tickers);
+  tickers.forEach(t => {
+    if (batch[t] != null) { state.priceCache[t] = batch[t]; liveCount++; }
+  });
 
-  uniqueTickers.forEach(ticker => {
-    const price = priceResults[ticker];
-    if (price) {
-      state.priceCache[ticker] = price;
-      liveCount++;
-    } else {
-      // Precio simulado como fallback
-      if (!state.priceCache[ticker]) {
+  // 2) Respaldo: los que no llegaron en el batch, en paralelo por lotes pequeños
+  //    (en vez de uno a uno en serie, para no esperar innecesariamente)
+  const missing = tickers.filter(t => batch[t] == null);
+  const CONCURRENCY = 5;
+  for (let i = 0; i < missing.length; i += CONCURRENCY) {
+    const chunk = missing.slice(i, i + CONCURRENCY);
+    await Promise.all(chunk.map(async (ticker) => {
+      const price = await fetchWithProxy(PROXIES, ticker);
+      if (price) {
+        state.priceCache[ticker] = price;
+        liveCount++;
+      } else if (!state.priceCache[ticker]) {
+        // Precio simulado como último recurso
         const pos = state.positions.find(p=>p.ticker===ticker);
         state.priceCache[ticker] = +(pos.avg_cost*(1+(Math.random()-0.45)*0.06)).toFixed(4);
       }
-    }
-  });
+    }));
+    if (i + CONCURRENCY < missing.length) await sleep(150); // pequeña pausa entre lotes, no entre cada ticker
+  }
 
   state.livePrices = liveCount > 0;
   state.lastUpdate = new Date();
