@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <link rel="icon" type="image/x-icon" href="favicon.ico"/>
-<title>Kapital Manager v0.93</title>
+<title>Kapital Manager v0.92</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:'Segoe UI',Arial,sans-serif;background:#f8fafc;min-height:100vh;font-size:13px;}
@@ -132,11 +132,12 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
     <div id="header-top">
       <img src="logo.png" alt="Kapital Manager" style="height:30px;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block'"/>
       <span style="display:none;background:#1d4ed8;color:#fff;font-weight:800;font-size:13px;padding:5px 9px;border-radius:6px;letter-spacing:0.5px">KM</span>
-      <span style="font-size:11px;color:#94a3b8">v0.93</span>
+      <span style="font-size:11px;color:#94a3b8">v0.92</span>
       <span id="price-mode-tag" class="price-tag price-sim">⏳ Cargando precios...</span>
       <div style="flex:1"></div>
       <span id="last-update-label" style="font-size:11px;color:#94a3b8">Sin actualizar | Próx: 60s</span>
       <button class="btn" style="padding:5px 12px;font-size:12px" onclick="refreshPrices()">↻ Actualizar</button>
+      <button class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="openPriceSourcesModal()" title="Configurar fuentes de precios">⚙️</button>
       <span id="user-email-label" style="font-size:11px;color:#475569;font-weight:600;margin-left:6px"></span>
       <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="location.href='index.html'">📦 Mi plan</button>
       <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="doLogout()">🚪 Salir</button>
@@ -497,6 +498,13 @@ let state = {
   authUserId: null,
   _appStarted: false,
   fmpKey: ls.get("km_fmp_key", ""),   // API key de Financial Modeling Prep (gratuita)
+  finnhubKey: ls.get("km_finnhub_key", ""),
+  twelveDataKey: ls.get("km_twelvedata_key", ""),
+  alphaVantageKey: ls.get("km_alphavantage_key", ""),
+  marketstackKey: ls.get("km_marketstack_key", ""),
+  fcsapiKey: ls.get("km_fcsapi_key", ""),
+  finazonKey: ls.get("km_finazon_key", ""),
+  profitcomKey: ls.get("km_profitcom_key", ""),
   importPreview: [],
   importMap: null,
   importHeaders: [],
@@ -1290,6 +1298,172 @@ async function fetchQuotesFMP(tickers) {
   }
 }
 
+// Twelve Data: acepta varios símbolos separados por coma en una sola petición.
+async function fetchQuotesTwelveData(tickers) {
+  if (!state.twelveDataKey) return null;
+  try {
+    const symbols = tickers.map(t => encodeURIComponent(t)).join(',');
+    const res = await fetch(`https://api.twelvedata.com/quote?symbol=${symbols}&apikey=${state.twelveDataKey}`, {signal: AbortSignal.timeout(8000)});
+    if (!res.ok) return null;
+    const data = await res.json();
+    // Con 1 símbolo Twelve Data devuelve un objeto; con varios, un objeto {SYMBOL: {...}, ...}
+    const entries = data?.symbol ? [[data.symbol, data]] : Object.entries(data || {});
+    const map = {};
+    entries.forEach(([sym, r]) => {
+      const price = parseFloat(r?.close);
+      if (isNaN(price)) return;
+      if (r?.percent_change != null) state.priceChangeCache[sym] = +Number(r.percent_change).toFixed(2);
+      map[sym] = price;
+    });
+    return Object.keys(map).length ? map : null;
+  } catch (e) {
+    console.error('fetchQuotesTwelveData: fallo →', e);
+    return null;
+  }
+}
+
+// FCS API: stock/latest acepta varios símbolos separados por coma.
+async function fetchQuotesFCS(tickers) {
+  if (!state.fcsapiKey) return null;
+  try {
+    const symbols = tickers.map(t => encodeURIComponent(t)).join(',');
+    const res = await fetch(`https://api-v4.fcsapi.com/stock/latest?symbol=${symbols}&access_key=${state.fcsapiKey}`, {signal: AbortSignal.timeout(8000)});
+    if (!res.ok) return null;
+    const data = await res.json();
+    const arr = data?.response;
+    if (!Array.isArray(arr) || !arr.length) return null;
+    const map = {};
+    arr.forEach(r => {
+      const price = parseFloat(r?.c ?? r?.close ?? r?.price);
+      const sym = r?.s || r?.symbol;
+      if (isNaN(price) || !sym) return;
+      if (r?.cp != null) state.priceChangeCache[sym] = +Number(r.cp).toFixed(2);
+      map[sym] = price;
+    });
+    return Object.keys(map).length ? map : null;
+  } catch (e) {
+    console.error('fetchQuotesFCS: fallo →', e);
+    return null;
+  }
+}
+
+// Finnhub: el plan gratuito NO admite varios símbolos por petición, así que se piden en
+// paralelo (varias peticiones a la vez, no una tras otra) respetando su límite de 60/min.
+async function fetchQuotesFinnhub(tickers) {
+  if (!state.finnhubKey) return null;
+  const map = {};
+  const CONCURRENCY = 8;
+  for (let i = 0; i < tickers.length; i += CONCURRENCY) {
+    const chunk = tickers.slice(i, i + CONCURRENCY);
+    await Promise.all(chunk.map(async (ticker) => {
+      try {
+        const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${state.finnhubKey}`, {signal: AbortSignal.timeout(6000)});
+        if (!res.ok) return;
+        const r = await res.json();
+        if (r?.c != null && r.c !== 0) {
+          map[ticker] = r.c;
+          if (r.dp != null) state.priceChangeCache[ticker] = +Number(r.dp).toFixed(2);
+        }
+      } catch (e) { /* se ignora este ticker, seguimos con el resto */ }
+    }));
+  }
+  return Object.keys(map).length ? map : null;
+}
+
+// Marketstack: plan gratuito muy limitado (100 peticiones/MES, y solo datos de cierre,
+// no en vivo) — se deja como recurso casi final, útil solo si ya se agotaron las demás.
+async function fetchQuotesMarketstack(tickers) {
+  if (!state.marketstackKey) return null;
+  try {
+    const symbols = tickers.map(t => encodeURIComponent(t)).join(',');
+    const res = await fetch(`https://api.marketstack.com/v1/eod/latest?access_key=${state.marketstackKey}&symbols=${symbols}`, {signal: AbortSignal.timeout(8000)});
+    if (!res.ok) return null;
+    const data = await res.json();
+    const arr = data?.data;
+    if (!Array.isArray(arr) || !arr.length) return null;
+    const map = {};
+    arr.forEach(r => {
+      if (r?.close == null || !r?.symbol) return;
+      map[r.symbol] = r.close;
+    });
+    return Object.keys(map).length ? map : null;
+  } catch (e) {
+    console.error('fetchQuotesMarketstack: fallo →', e);
+    return null;
+  }
+}
+
+// Alpha Vantage: plan gratuito MUY limitado (25 peticiones/día, 1 símbolo por petición).
+// Se deja como último recurso, y solo para unos pocos tickers que sigan sin precio,
+// para no agotar la cuota diaria de golpe.
+async function fetchQuotesAlphaVantage(tickers) {
+  if (!state.alphaVantageKey) return null;
+  const map = {};
+  const limited = tickers.slice(0, 5); // como mucho 5 tickers, para cuidar la cuota diaria
+  for (const ticker of limited) {
+    try {
+      const res = await fetch(`https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(ticker)}&apikey=${state.alphaVantageKey}`, {signal: AbortSignal.timeout(6000)});
+      if (!res.ok) continue;
+      const data = await res.json();
+      const price = parseFloat(data?.["Global Quote"]?.["05. price"]);
+      if (!isNaN(price)) {
+        map[ticker] = price;
+        const chg = parseFloat(data?.["Global Quote"]?.["10. change percent"]);
+        if (!isNaN(chg)) state.priceChangeCache[ticker] = +chg.toFixed(2);
+      }
+    } catch (e) { /* se ignora este ticker */ }
+  }
+  return Object.keys(map).length ? map : null;
+}
+
+// Finazon: formato best-effort según su documentación pública de "last quote" en tiempo real.
+// AVISO: no se ha podido verificar contra una clave real — si falla, simplemente se salta
+// al siguiente proveedor sin bloquear nada, pero si tienes cuenta y no funciona, dínoslo.
+async function fetchQuotesFinazon(tickers) {
+  if (!state.finazonKey) return null;
+  const map = {};
+  const CONCURRENCY = 8;
+  for (let i = 0; i < tickers.length; i += CONCURRENCY) {
+    const chunk = tickers.slice(i, i + CONCURRENCY);
+    await Promise.all(chunk.map(async (ticker) => {
+      try {
+        const res = await fetch(`https://api.finazon.io/latest/finazon/us_stocks_essential/last_quote?ticker=${encodeURIComponent(ticker)}`, {
+          headers: { Authorization: `apikey ${state.finazonKey}` },
+          signal: AbortSignal.timeout(6000),
+        });
+        if (!res.ok) return;
+        const r = await res.json();
+        if (r?.price != null) map[ticker] = r.price;
+      } catch (e) { /* se ignora este ticker */ }
+    }));
+  }
+  return Object.keys(map).length ? map : null;
+}
+
+// Profit.com Data API: formato best-effort. Igual que Finazon, sin verificar contra clave real.
+async function fetchQuotesProfitCom(tickers) {
+  if (!state.profitcomKey) return null;
+  try {
+    const symbols = tickers.map(t => encodeURIComponent(t)).join(',');
+    const res = await fetch(`https://api.profit.com/data-api/market-data/quote/${symbols}?token=${state.profitcomKey}`, {signal: AbortSignal.timeout(8000)});
+    if (!res.ok) return null;
+    const data = await res.json();
+    const arr = Array.isArray(data) ? data : (data?.data || []);
+    if (!Array.isArray(arr) || !arr.length) return null;
+    const map = {};
+    arr.forEach(r => {
+      const price = r?.last ?? r?.price ?? r?.close;
+      const sym = r?.ticker ?? r?.symbol;
+      if (price == null || !sym) return;
+      map[sym] = price;
+    });
+    return Object.keys(map).length ? map : null;
+  } catch (e) {
+    console.error('fetchQuotesProfitCom: fallo →', e);
+    return null;
+  }
+}
+
 async function fetchQuotesEdgeFunction(tickers) {
   try {
     const { data, error } = await supabaseClient.functions.invoke('quotes', {
@@ -1421,42 +1595,101 @@ async function fetchFXRates() {
   state.fxCache["EUR"] = 1.0;
 }
 
+function openPriceSourcesModal() {
+  const fields = [
+    {key:'fmpKey', ls:'km_fmp_key', label:'Financial Modeling Prep', url:'financialmodelingprep.com/developer'},
+    {key:'twelveDataKey', ls:'km_twelvedata_key', label:'Twelve Data', url:'twelvedata.com'},
+    {key:'fcsapiKey', ls:'km_fcsapi_key', label:'FCS API', url:'fcsapi.com'},
+    {key:'finnhubKey', ls:'km_finnhub_key', label:'Finnhub', url:'finnhub.io'},
+    {key:'marketstackKey', ls:'km_marketstack_key', label:'Marketstack', url:'marketstack.com'},
+    {key:'alphaVantageKey', ls:'km_alphavantage_key', label:'Alpha Vantage', url:'alphavantage.co'},
+    {key:'finazonKey', ls:'km_finazon_key', label:'Finazon', url:'finazon.io'},
+    {key:'profitcomKey', ls:'km_profitcom_key', label:'Profit.com Data API', url:'profit.com'},
+  ];
+  openModal(`
+    <h3>⚙️ Fuentes de precios</h3>
+    <div class="small" style="margin-bottom:12px;color:#64748b">
+      Al actualizar, se prueban en orden hasta conseguir el precio de cada acción. Yahoo Finance (directo y vía proxy) se usa siempre sin necesitar clave; las demás son opcionales — deja en blanco la que no tengas, se saltará sola.
+    </div>
+    ${fields.map(f => `
+      <div class="field">
+        <label>${f.label} <a href="https://${f.url}" target="_blank" style="font-size:11px;color:#2563eb">(conseguir clave gratis)</a></label>
+        <input id="m-src-${f.key}" class="inp" placeholder="Pega aquí tu API key (opcional)" value="${esc(state[f.key]||'')}">
+      </div>`).join('')}
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
+      <button class="btn" onclick="savePriceSourcesModal()">💾 Guardar</button>
+    </div>`);
+}
+
+function savePriceSourcesModal() {
+  const fields = [
+    ['fmpKey','km_fmp_key'], ['twelveDataKey','km_twelvedata_key'], ['fcsapiKey','km_fcsapi_key'],
+    ['finnhubKey','km_finnhub_key'], ['marketstackKey','km_marketstack_key'],
+    ['alphaVantageKey','km_alphavantage_key'], ['finazonKey','km_finazon_key'], ['profitcomKey','km_profitcom_key'],
+  ];
+  fields.forEach(([key, lsKey]) => {
+    const val = (document.getElementById(`m-src-${key}`)?.value || '').trim();
+    state[key] = val;
+    ls.set(lsKey, val);
+  });
+  closeModal();
+  alert('Fuentes de precios guardadas. Pulsa "Actualizar" para probarlas.');
+}
+
 async function refreshPrices() {
   // Primero tipos de cambio
   await fetchFXRates();
 
   let liveCount = 0;
   const tickers = state.positions.map(p=>p.ticker);
+  let remaining = tickers.slice();
 
-  // 1) Intento más rápido y fiable: nuestra propia Edge Function (sin proxies de terceros)
-  let batch = await fetchQuotesEdgeFunction(tickers);
+  // Cadena de proveedores: se prueban en este orden, y cada uno solo se pregunta por los
+  // tickers que los anteriores no consiguieron. En cuanto no quede ningún ticker pendiente,
+  // se para (no se llama a los proveedores siguientes sin necesidad). Cada proveedor tiene
+  // su propio límite de tiempo, así que esto nunca se queda colgado esperando indefinidamente.
+  const PROVIDER_CHAIN = [
+    fetchQuotesEdgeFunction,   // Yahoo vía nuestra Edge Function (rápido, sin proxy)
+    fetchQuotesFMP,            // Financial Modeling Prep
+    fetchQuotesTwelveData,     // Twelve Data
+    fetchQuotesFCS,            // FCS API
+    fetchQuotesFinnhub,        // Finnhub (1 peticion/ticker, en paralelo)
+    fetchBatchQuotes,          // Yahoo vía proxy público (corsproxy/allorigins)
+    fetchQuotesMarketstack,    // Marketstack (muy limitado, EOD)
+    fetchQuotesAlphaVantage,   // Alpha Vantage (muy limitado, últimos 5 tickers)
+    fetchQuotesFinazon,        // Finazon (best-effort)
+    fetchQuotesProfitCom,      // Profit.com Data API (best-effort)
+  ];
 
-  // 2) Si Yahoo la bloquea, probamos Financial Modeling Prep (si el usuario tiene clave configurada)
-  if (!batch) batch = await fetchQuotesFMP(tickers);
+  for (const provider of PROVIDER_CHAIN) {
+    if (!remaining.length) break;
+    let result = null;
+    try { result = await provider(remaining); } catch (e) { result = null; }
+    if (result) {
+      remaining.forEach(t => {
+        if (result[t] != null) { state.priceCache[t] = result[t]; liveCount++; }
+      });
+      remaining = remaining.filter(t => result[t] == null);
+    }
+  }
 
-  // 3) Último recurso: el proxy público en una sola petición
-  if (!batch) batch = await fetchBatchQuotes(tickers);
-
-  tickers.forEach(t => {
-    if (batch[t] != null) { state.priceCache[t] = batch[t]; liveCount++; }
-  });
-
-  // 3) Último respaldo: los tickers que sigan sin precio, en paralelo por lotes pequeños
-  const missing = tickers.filter(t => batch[t] == null);
+  // Último respaldo: los tickers que sigan sin precio de NINGÚN proveedor, uno a uno vía
+  // proxy (mismo método de siempre), en paralelo por lotes pequeños en vez de en serie.
   const CONCURRENCY = 5;
-  for (let i = 0; i < missing.length; i += CONCURRENCY) {
-    const chunk = missing.slice(i, i + CONCURRENCY);
+  for (let i = 0; i < remaining.length; i += CONCURRENCY) {
+    const chunk = remaining.slice(i, i + CONCURRENCY);
     await Promise.all(chunk.map(async (ticker) => {
       const price = await fetchWithProxy(PROXIES, ticker);
       if (price) {
         state.priceCache[ticker] = price;
         liveCount++;
       }
-      // Si no se consigue precio, NO inventamos uno: se deja el último precio real conocido
-      // en caché (si lo hay) y se marca como desactualizado más abajo. Nunca mostramos un
-      // precio simulado/aleatorio, para no dar una cifra falsa sobre el valor de la cartera.
+      // Si no se consigue precio de NINGUNA fuente, NO inventamos uno: se deja el último
+      // precio real conocido en caché (si lo hay), marcado como desactualizado más abajo.
+      // Nunca mostramos un precio simulado/aleatorio.
     }));
-    if (i + CONCURRENCY < missing.length) await sleep(150); // pequeña pausa entre lotes, no entre cada ticker
+    if (i + CONCURRENCY < remaining.length) await sleep(150);
   }
 
   state.livePrices = liveCount > 0;
