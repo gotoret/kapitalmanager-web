@@ -133,7 +133,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
       <img src="logo.png" alt="Kapital Manager" style="height:30px;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block'"/>
       <span style="display:none;background:#1d4ed8;color:#fff;font-weight:800;font-size:13px;padding:5px 9px;border-radius:6px;letter-spacing:0.5px">KM</span>
       <span style="font-size:11px;color:#94a3b8">v0.92</span>
-      <span id="price-mode-tag" class="price-tag price-sim">⚡ Precios simulados</span>
+      <span id="price-mode-tag" class="price-tag price-sim">⏳ Cargando precios...</span>
       <div style="flex:1"></div>
       <span id="last-update-label" style="font-size:11px;color:#94a3b8">Sin actualizar | Próx: 60s</span>
       <button class="btn" style="padding:5px 12px;font-size:12px" onclick="refreshPrices()">↻ Actualizar</button>
@@ -1261,6 +1261,25 @@ function exportCarteraExcel() {
 // ─────────────────────────────────────────────
 // YAHOO FINANCE — precios reales
 // ─────────────────────────────────────────────
+// Intenta pedir las cotizaciones a nuestra propia Edge Function de Supabase (rápida y fiable,
+// sin depender de proxies gratuitos de terceros). Si no está desplegada o falla, devuelve null
+// y la app recurre automáticamente al método antiguo (corsproxy/allorigins).
+async function fetchQuotesEdgeFunction(tickers) {
+  try {
+    const { data, error } = await supabaseClient.functions.invoke('quotes', {
+      body: { tickers }
+    });
+    if (error || !data?.prices) return null;
+    if (data.changes) {
+      Object.entries(data.changes).forEach(([t, chg]) => { state.priceChangeCache[t] = chg; });
+    }
+    return data.prices;
+  } catch (e) {
+    console.error('fetchQuotesEdgeFunction: fallo, se usará el método de respaldo →', e);
+    return null;
+  }
+}
+
 const BATCH_QUOTE_PROXIES = [
   s => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
   s => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
@@ -1383,14 +1402,17 @@ async function refreshPrices() {
   let liveCount = 0;
   const tickers = state.positions.map(p=>p.ticker);
 
-  // 1) Intento rápido: todos los tickers en una sola petición
-  const batch = await fetchBatchQuotes(tickers);
+  // 1) Intento más rápido y fiable: nuestra propia Edge Function (sin proxies de terceros)
+  let batch = await fetchQuotesEdgeFunction(tickers);
+
+  // 2) Si la Edge Function no está disponible, probamos el proxy público en una sola petición
+  if (!batch) batch = await fetchBatchQuotes(tickers);
+
   tickers.forEach(t => {
     if (batch[t] != null) { state.priceCache[t] = batch[t]; liveCount++; }
   });
 
-  // 2) Respaldo: los que no llegaron en el batch, en paralelo por lotes pequeños
-  //    (en vez de uno a uno en serie, para no esperar innecesariamente)
+  // 3) Último respaldo: los tickers que sigan sin precio, en paralelo por lotes pequeños
   const missing = tickers.filter(t => batch[t] == null);
   const CONCURRENCY = 5;
   for (let i = 0; i < missing.length; i += CONCURRENCY) {
@@ -1400,16 +1422,16 @@ async function refreshPrices() {
       if (price) {
         state.priceCache[ticker] = price;
         liveCount++;
-      } else if (!state.priceCache[ticker]) {
-        // Precio simulado como último recurso
-        const pos = state.positions.find(p=>p.ticker===ticker);
-        state.priceCache[ticker] = +(pos.avg_cost*(1+(Math.random()-0.45)*0.06)).toFixed(4);
       }
+      // Si no se consigue precio, NO inventamos uno: se deja el último precio real conocido
+      // en caché (si lo hay) y se marca como desactualizado más abajo. Nunca mostramos un
+      // precio simulado/aleatorio, para no dar una cifra falsa sobre el valor de la cartera.
     }));
     if (i + CONCURRENCY < missing.length) await sleep(150); // pequeña pausa entre lotes, no entre cada ticker
   }
 
   state.livePrices = liveCount > 0;
+  state.pricesStale = liveCount < tickers.length; // hay algún precio que no se pudo actualizar ahora
   state.lastUpdate = new Date();
   state.countdown = 60;
 
@@ -1418,10 +1440,12 @@ async function refreshPrices() {
   if (tag) {
     if (state.livePrices) {
       tag.className = "price-tag price-live";
-      tag.textContent = `✅ ${liveCount}/${tickers.length} precios en tiempo real`;
+      tag.textContent = state.pricesStale
+        ? `✅ ${liveCount}/${tickers.length} precios en tiempo real (el resto: último precio conocido)`
+        : `✅ ${liveCount}/${tickers.length} precios en tiempo real`;
     } else {
       tag.className = "price-tag price-sim";
-      tag.textContent = "⚡ Precios simulados (sin conexión)";
+      tag.textContent = "⚠️ Sin conexión: mostrando últimos precios conocidos";
     }
   }
 
