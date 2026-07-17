@@ -490,10 +490,10 @@ let state = {
   alerts: ls.get("km_alerts", []),
   dividends: ls.get("km_dividends", []),
   transactions: ls.get("km_transactions", []),
-  priceCache: {},
-  priceChangeCache: {},
-  fxCache: {},
-  yieldCache: {},
+  priceCache: ls.get("km_priceCache", {}),
+  priceChangeCache: ls.get("km_priceChangeCache", {}),
+  fxCache: ls.get("km_fxCache", {}),
+  yieldCache: ls.get("km_yieldCache", {}),
   divInfo: [],
   activeTab: 0,
   sortCol: null,
@@ -530,6 +530,16 @@ const save = () => {
   ls.set("km_dividends", state.dividends);
   ls.set("km_transactions", state.transactions);
   if (state.authUserId) saveCloud();
+};
+
+// Guarda solo las cachés (precios/yield), sin tocar la nube ni disparar saveCloud.
+// Se llama tras cada actualización de precios/dividendos para que lo ya conseguido
+// no se pierda si se recarga la página o falla el resto del ciclo.
+const saveCaches = () => {
+  ls.set("km_priceCache", state.priceCache);
+  ls.set("km_priceChangeCache", state.priceChangeCache);
+  ls.set("km_fxCache", state.fxCache);
+  ls.set("km_yieldCache", state.yieldCache);
 };
 
 // ─────────────────────────────────────────────
@@ -892,18 +902,34 @@ async function fetchDividendData(ticker) {
   return null;
 }
 
+let autoRetryYieldTimer = null;
+let autoRetryYieldAttempts = 0;
 async function refreshDividendYields() {
   const tickers = [...new Set(state.positions.map(p=>p.ticker))];
   // Limpiar caché de .L que pudieran tener el rate en peniques (bug anterior)
   tickers.filter(t => String(t).toUpperCase().endsWith(".L")).forEach(t => { delete state.yieldCache[t]; });
   const pending = tickers.filter(t => !state.yieldCache[t]);
-  if (!pending.length) return;
+  if (autoRetryYieldTimer) { clearTimeout(autoRetryYieldTimer); autoRetryYieldTimer = null; }
+  if (!pending.length) { autoRetryYieldAttempts = 0; return; }
   await Promise.all(pending.map(async t => {
     const d = await fetchDividendData(t);
     if (d) state.yieldCache[t] = d;
   }));
   buildDivInfo();
+  saveCaches(); // no perder lo conseguido en esta pasada aunque falten tickers
   if (state.activeTab === 2) renderActiveTab();
+
+  // Si aún quedan tickers sin datos reales, reintentar en segundo plano hasta
+  // completarlos, en vez de dejarlos en el valor de relleno indefinidamente.
+  const stillPending = tickers.filter(t => !state.yieldCache[t]);
+  if (stillPending.length) {
+    autoRetryYieldAttempts = (autoRetryYieldAttempts||0) + 1;
+    if (autoRetryYieldAttempts <= 6) {
+      autoRetryYieldTimer = setTimeout(refreshDividendYields, 10000);
+    }
+  } else {
+    autoRetryYieldAttempts = 0;
+  }
 }
 
 function openSnapshotCartera(btnEl) {
@@ -1602,9 +1628,9 @@ function savePriceSourcesModal() {
   alert('Fuentes de precios guardadas. Pulsa "Actualizar" para probarlas.');
 }
 
-async function refreshPrices() {
+async function refreshPrices(isAutoRetry) {
   const btn = document.getElementById("refresh-btn");
-  if (btn) { btn.disabled = true; btn.textContent = "⏳ Actualizando..."; }
+  if (btn && !isAutoRetry) { btn.disabled = true; btn.textContent = "⏳ Actualizando..."; }
   try {
 
   // Primero tipos de cambio
@@ -1612,7 +1638,12 @@ async function refreshPrices() {
 
   let liveCount = 0;
   const tickers = state.positions.map(p=>p.ticker);
-  let remaining = tickers.slice();
+  // Priorizar los tickers que todavía no tienen NINGÚN precio en caché: así, si algún
+  // proveedor tiene límite de tickers (ej. Alpha Vantage), se gasta primero en rellenar
+  // huecos en vez de repetir los que ya tenemos.
+  const missing = tickers.filter(t => state.priceCache[t] == null);
+  const already = tickers.filter(t => state.priceCache[t] != null);
+  let remaining = [...missing, ...already];
 
   // Cadena de proveedores: se prueban en este orden, y cada uno solo se pregunta por los
   // tickers que los anteriores no consiguieron. En cuanto no quede ningún ticker pendiente,
@@ -1663,6 +1694,21 @@ async function refreshPrices() {
   state.pricesStale = liveCount < tickers.length; // hay algún precio que no se pudo actualizar ahora
   state.lastUpdate = new Date();
   state.countdown = 60;
+  saveCaches(); // guarda lo conseguido en esta pasada, aunque falten tickers
+
+  // Aún faltan tickers SIN NINGÚN precio (ni siquiera uno viejo en caché): reintentar
+  // pronto en segundo plano, solo con esos, hasta completarlos. No espera al ciclo
+  // normal de 60s ni bloquea el botón, y no reinicia lo que ya se consiguió.
+  const stillMissing = tickers.filter(t => state.priceCache[t] == null);
+  if (autoRetryTimer) { clearTimeout(autoRetryTimer); autoRetryTimer = null; }
+  if (stillMissing.length) {
+    autoRetryPriceAttempts = (autoRetryPriceAttempts||0) + 1;
+    if (autoRetryPriceAttempts <= 6) {
+      autoRetryTimer = setTimeout(() => refreshPrices(true), 8000);
+    }
+  } else {
+    autoRetryPriceAttempts = 0;
+  }
 
   // Actualizar badge
   const tag = document.getElementById("price-mode-tag");
@@ -1687,6 +1733,8 @@ async function refreshPrices() {
     if (btnEnd) { btnEnd.disabled = false; btnEnd.textContent = "↻ Actualizar"; }
   }
 }
+let autoRetryTimer = null;
+let autoRetryPriceAttempts = 0;
 
 // ─────────────────────────────────────────────
 // COUNTDOWN
@@ -2408,7 +2456,9 @@ function renderPortfolio() {
     const pct=pnl!==null&&inv?pnl/inv*100:null;
     const pc=pnl!==null?pnlColor(pnl):"#94a3b8";
     const di=state.divInfo.find(d=>d.ticker===pos.ticker);
-    const yld=di?(di.div_yield||0)*100:null;
+    // Si aún no hay datos reales de dividendo para este ticker (_estimated), no mostramos
+    // el valor de relleno como si fuera real: se ve "…" hasta que llegue el dato real.
+    const yld=(di && !di._estimated)?(di.div_yield||0)*100:null;
     const yc=yld?(yld>=4?"#16a34a":yld>=2?"#b45309":"#dc2626"):"#94a3b8";
     const sel=state.selectedTicker===pos.ticker;
     // Obtener cambio diario (simulado si no hay precio real)
