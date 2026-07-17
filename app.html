@@ -136,7 +136,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
       <span id="price-mode-tag" class="price-tag price-sim">⏳ Cargando precios...</span>
       <div style="flex:1"></div>
       <span id="last-update-label" style="font-size:11px;color:#94a3b8">Sin actualizar | Próx: 60s</span>
-      <button class="btn" style="padding:5px 12px;font-size:12px" onclick="refreshPrices()">↻ Actualizar</button>
+      <button id="refresh-btn" class="btn" style="padding:5px 12px;font-size:12px" onclick="refreshPrices()">↻ Actualizar</button>
       <button class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="openPriceSourcesModal()" title="Configurar fuentes de precios">⚙️</button>
       <span id="user-email-label" style="font-size:11px;color:#475569;font-weight:600;margin-left:6px"></span>
       <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="location.href='index.html'">📦 Mi plan</button>
@@ -374,23 +374,31 @@ async function loadCloudData() {
       .eq('user_id', state.authUserId)
       .maybeSingle();
 
-    if (error) { console.error('Error cargando cartera:', error); return; }
+    if (error) {
+      console.error('Error cargando cartera desde la nube:', error);
+      // IMPORTANTE: no tocamos state.positions aquí. Ya viene inicializado con la
+      // caché local (ls.get) desde el arranque de la app, así que ante un fallo de
+      // lectura simplemente seguimos con esos datos en vez de arriesgarnos a perderlos.
+      return;
+    }
 
     if (data) {
       state.positions = data.positions || [];
       state.alerts = data.alerts || [];
       state.dividends = data.dividends || [];
       state.transactions = data.transactions || [];
+      save(); // refresca la caché local con lo que viene de la nube
     } else {
-      // Primera vez que este usuario entra: cartera vacía
-      state.positions = [];
-      state.alerts = [];
-      state.dividends = [];
-      state.transactions = [];
+      // No existe todavía una fila en la nube para este usuario. En vez de asumir que
+      // es un usuario nuevo y sobrescribir con una cartera vacía (lo que borraría datos
+      // reales si esto pasara por un fallo puntual de lectura), subimos lo que YA hubiera
+      // en la caché local del dispositivo — que es vacío solo si de verdad es la primera vez.
       await saveCloud();
     }
-    save(); // refresca la caché local con lo que viene de la nube
-  } catch(e) { console.error('Error cargando cartera:', e); }
+  } catch(e) {
+    console.error('Error cargando cartera:', e);
+    // Igual que arriba: ante una excepción, no tocamos state.positions.
+  }
 }
 
 async function saveCloud() {
@@ -503,8 +511,6 @@ let state = {
   alphaVantageKey: ls.get("km_alphavantage_key", ""),
   marketstackKey: ls.get("km_marketstack_key", ""),
   fcsapiKey: ls.get("km_fcsapi_key", ""),
-  finazonKey: ls.get("km_finazon_key", ""),
-  profitcomKey: ls.get("km_profitcom_key", ""),
   importPreview: [],
   importMap: null,
   importHeaders: [],
@@ -1299,10 +1305,15 @@ async function fetchQuotesFMP(tickers) {
 }
 
 // Twelve Data: acepta varios símbolos separados por coma en una sola petición.
+// Twelve Data: acepta varios símbolos separados por coma en una sola petición, pero el plan
+// gratuito solo da 8 créditos/minuto (1 símbolo = 1 crédito). Pedir más de 8 de golpe hace
+// que rechace la petición entera, así que limitamos a 8 y dejamos que el resto pase al
+// siguiente proveedor de inmediato (en vez de esperar a que se regeneren los créditos).
 async function fetchQuotesTwelveData(tickers) {
   if (!state.twelveDataKey) return null;
+  const capped = tickers.slice(0, 8);
   try {
-    const symbols = tickers.map(t => encodeURIComponent(t)).join(',');
+    const symbols = capped.map(t => encodeURIComponent(t)).join(',');
     const res = await fetch(`https://api.twelvedata.com/quote?symbol=${symbols}&apikey=${state.twelveDataKey}`, {signal: AbortSignal.timeout(8000)});
     if (!res.ok) return null;
     const data = await res.json();
@@ -1414,54 +1425,6 @@ async function fetchQuotesAlphaVantage(tickers) {
     } catch (e) { /* se ignora este ticker */ }
   }
   return Object.keys(map).length ? map : null;
-}
-
-// Finazon: formato best-effort según su documentación pública de "last quote" en tiempo real.
-// AVISO: no se ha podido verificar contra una clave real — si falla, simplemente se salta
-// al siguiente proveedor sin bloquear nada, pero si tienes cuenta y no funciona, dínoslo.
-async function fetchQuotesFinazon(tickers) {
-  if (!state.finazonKey) return null;
-  const map = {};
-  const CONCURRENCY = 8;
-  for (let i = 0; i < tickers.length; i += CONCURRENCY) {
-    const chunk = tickers.slice(i, i + CONCURRENCY);
-    await Promise.all(chunk.map(async (ticker) => {
-      try {
-        const res = await fetch(`https://api.finazon.io/latest/finazon/us_stocks_essential/last_quote?ticker=${encodeURIComponent(ticker)}`, {
-          headers: { Authorization: `apikey ${state.finazonKey}` },
-          signal: AbortSignal.timeout(6000),
-        });
-        if (!res.ok) return;
-        const r = await res.json();
-        if (r?.price != null) map[ticker] = r.price;
-      } catch (e) { /* se ignora este ticker */ }
-    }));
-  }
-  return Object.keys(map).length ? map : null;
-}
-
-// Profit.com Data API: formato best-effort. Igual que Finazon, sin verificar contra clave real.
-async function fetchQuotesProfitCom(tickers) {
-  if (!state.profitcomKey) return null;
-  try {
-    const symbols = tickers.map(t => encodeURIComponent(t)).join(',');
-    const res = await fetch(`https://api.profit.com/data-api/market-data/quote/${symbols}?token=${state.profitcomKey}`, {signal: AbortSignal.timeout(8000)});
-    if (!res.ok) return null;
-    const data = await res.json();
-    const arr = Array.isArray(data) ? data : (data?.data || []);
-    if (!Array.isArray(arr) || !arr.length) return null;
-    const map = {};
-    arr.forEach(r => {
-      const price = r?.last ?? r?.price ?? r?.close;
-      const sym = r?.ticker ?? r?.symbol;
-      if (price == null || !sym) return;
-      map[sym] = price;
-    });
-    return Object.keys(map).length ? map : null;
-  } catch (e) {
-    console.error('fetchQuotesProfitCom: fallo →', e);
-    return null;
-  }
 }
 
 async function fetchQuotesEdgeFunction(tickers) {
@@ -1603,13 +1566,15 @@ function openPriceSourcesModal() {
     {key:'finnhubKey', ls:'km_finnhub_key', label:'Finnhub', url:'finnhub.io'},
     {key:'marketstackKey', ls:'km_marketstack_key', label:'Marketstack', url:'marketstack.com'},
     {key:'alphaVantageKey', ls:'km_alphavantage_key', label:'Alpha Vantage', url:'alphavantage.co'},
-    {key:'finazonKey', ls:'km_finazon_key', label:'Finazon', url:'finazon.io'},
-    {key:'profitcomKey', ls:'km_profitcom_key', label:'Profit.com Data API', url:'profit.com'},
   ];
   openModal(`
     <h3>⚙️ Fuentes de precios</h3>
     <div class="small" style="margin-bottom:12px;color:#64748b">
-      Al actualizar, se prueban en orden hasta conseguir el precio de cada acción. Yahoo Finance (directo y vía proxy) se usa siempre sin necesitar clave; las demás son opcionales — deja en blanco la que no tengas, se saltará sola.
+      Al actualizar, se prueban en orden hasta conseguir el precio de cada acción. Las que dejes en blanco se saltan solas.
+    </div>
+    <div class="field" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 12px;margin-bottom:12px">
+      <label style="color:#166534">✅ Yahoo Finance — activo siempre, no necesita clave</label>
+      <div class="small" style="color:#166534">Es la primera fuente que se prueba (directo y luego por proxy si falla). No hace falta que hagas nada aquí.</div>
     </div>
     ${fields.map(f => `
       <div class="field">
@@ -1626,7 +1591,7 @@ function savePriceSourcesModal() {
   const fields = [
     ['fmpKey','km_fmp_key'], ['twelveDataKey','km_twelvedata_key'], ['fcsapiKey','km_fcsapi_key'],
     ['finnhubKey','km_finnhub_key'], ['marketstackKey','km_marketstack_key'],
-    ['alphaVantageKey','km_alphavantage_key'], ['finazonKey','km_finazon_key'], ['profitcomKey','km_profitcom_key'],
+    ['alphaVantageKey','km_alphavantage_key'],
   ];
   fields.forEach(([key, lsKey]) => {
     const val = (document.getElementById(`m-src-${key}`)?.value || '').trim();
@@ -1638,6 +1603,10 @@ function savePriceSourcesModal() {
 }
 
 async function refreshPrices() {
+  const btn = document.getElementById("refresh-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "⏳ Actualizando..."; }
+  try {
+
   // Primero tipos de cambio
   await fetchFXRates();
 
@@ -1658,8 +1627,6 @@ async function refreshPrices() {
     fetchBatchQuotes,          // Yahoo vía proxy público (corsproxy/allorigins)
     fetchQuotesMarketstack,    // Marketstack (muy limitado, EOD)
     fetchQuotesAlphaVantage,   // Alpha Vantage (muy limitado, últimos 5 tickers)
-    fetchQuotesFinazon,        // Finazon (best-effort)
-    fetchQuotesProfitCom,      // Profit.com Data API (best-effort)
   ];
 
   for (const provider of PROVIDER_CHAIN) {
@@ -1714,6 +1681,11 @@ async function refreshPrices() {
   checkAlerts();
   renderHeader();
   renderActiveTab();
+
+  } finally {
+    const btnEnd = document.getElementById("refresh-btn");
+    if (btnEnd) { btnEnd.disabled = false; btnEnd.textContent = "↻ Actualizar"; }
+  }
 }
 
 // ─────────────────────────────────────────────
