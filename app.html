@@ -860,8 +860,11 @@ function updateDivTicker() {
   wrap.style.display = "block";
 }
 
-async function fetchDividendData(ticker) {
-  for (const proxyFn of YIELD_PROXIES) {
+async function fetchDividendData(ticker, proxyStartIdx) {
+  const n = YIELD_PROXIES.length;
+  const start = proxyStartIdx || 0;
+  for (let i = 0; i < n; i++) {
+    const proxyFn = YIELD_PROXIES[(start + i) % n];
     try {
       const url = proxyFn(ticker);
       const res = await fetch(url, {signal: AbortSignal.timeout(6000)});
@@ -911,21 +914,31 @@ async function refreshDividendYields() {
   const pending = tickers.filter(t => !state.yieldCache[t]);
   if (autoRetryYieldTimer) { clearTimeout(autoRetryYieldTimer); autoRetryYieldTimer = null; }
   if (!pending.length) { autoRetryYieldAttempts = 0; return; }
-  await Promise.all(pending.map(async t => {
-    const d = await fetchDividendData(t);
-    if (d) state.yieldCache[t] = d;
-  }));
-  buildDivInfo();
-  saveCaches(); // no perder lo conseguido en esta pasada aunque falten tickers
-  if (state.activeTab === 2) renderActiveTab();
+
+  // Los proxies CORS gratuitos (corsproxy.io / allorigins.win) se saturan o bloquean
+  // si se les lanzan muchas peticiones a la vez. Por eso vamos por lotes pequeños,
+  // rotando qué proxy se prueba primero en cada ticker, y guardando/pintando lo
+  // conseguido tras cada lote (así aunque el resto falle, lo bueno ya se ve y queda guardado).
+  const CONCURRENCY = 3;
+  for (let i = 0; i < pending.length; i += CONCURRENCY) {
+    const chunk = pending.slice(i, i + CONCURRENCY);
+    await Promise.all(chunk.map(async (t, j) => {
+      const d = await fetchDividendData(t, (i + j) % YIELD_PROXIES.length);
+      if (d) state.yieldCache[t] = d;
+    }));
+    buildDivInfo();
+    saveCaches(); // no perder lo conseguido en este lote aunque el resto falle
+    if (state.activeTab === 2) renderActiveTab();
+    if (i + CONCURRENCY < pending.length) await sleep(400);
+  }
 
   // Si aún quedan tickers sin datos reales, reintentar en segundo plano hasta
   // completarlos, en vez de dejarlos en el valor de relleno indefinidamente.
   const stillPending = tickers.filter(t => !state.yieldCache[t]);
   if (stillPending.length) {
     autoRetryYieldAttempts = (autoRetryYieldAttempts||0) + 1;
-    if (autoRetryYieldAttempts <= 6) {
-      autoRetryYieldTimer = setTimeout(refreshDividendYields, 10000);
+    if (autoRetryYieldAttempts <= 8) {
+      autoRetryYieldTimer = setTimeout(refreshDividendYields, 12000);
     }
   } else {
     autoRetryYieldAttempts = 0;
