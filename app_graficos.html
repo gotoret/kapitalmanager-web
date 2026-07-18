@@ -132,6 +132,26 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
     gap: 14px;
     padding: 14px;
 }
+/* Fila de roscos (Por Sector / Por Divisa / Por Empresa): 3 columnas en escritorio, apiladas en móvil */
+.charts-donut-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-bottom: 14px;
+}
+/* Gráficos principales ampliados: 2 columnas en escritorio ancho, 1 en tablet/móvil */
+.charts-grid-main {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}
+@media (max-width: 900px) {
+  .charts-donut-row { grid-template-columns: repeat(2, 1fr); }
+  .charts-grid-main { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .charts-donut-row { grid-template-columns: 1fr; }
+}
 .chart-card {
     background: #fff;
     border-radius: 12px;
@@ -189,6 +209,10 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
     font-size: 12px;
     background: #f8fafc;
     border-radius: 8px;
+}
+@media (max-width: 480px) {
+  .chart-card { padding: 10px 10px 12px 10px; }
+  .chart-card h4 { font-size: 12px; }
 }
 </style>
 </head>
@@ -3751,19 +3775,18 @@ function safeGetValues(data, key, fallback = []) {
 // Estado para los gráficos de cartera
 if (!state._portfolioCharts) {
   state._portfolioCharts = {
-    selectedTicker: 'Todas',
+    selectedTicker: 'Todas',   // por defecto se muestran ya las gráficas de "Todas las empresas"
     period: '1A',
     divPeriod: 'Anual',
-    index: 'SP500',
-    chartData: {},
     loading: false
   };
 }
+if (!state._multiChartCache) state._multiChartCache = {};
 
 // Función principal renderCharts
 function renderCharts() {
   const tickers = state.positions.map(p => p.ticker).filter(Boolean);
-  
+
   if (!tickers.length) {
     return `<div style="padding:40px 20px;text-align:center;color:#94a3b8;font-size:13px">
       <div style="font-size:48px;margin-bottom:12px">📊</div>
@@ -3772,200 +3795,114 @@ function renderCharts() {
     </div>`;
   }
 
-  // Inicializar datos si no existen
-  if (!state._portfolioCharts.chartData || Object.keys(state._portfolioCharts.chartData).length === 0) {
-    loadPortfolioChartData();
-    return renderLoadingState();
-  }
-
-  // Si está cargando, mostrar estado
-  if (state._portfolioCharts.loading) {
-    return renderLoadingState();
-  }
-
-  // Renderizar gráficos
+  // Ya no hay carga asíncrona de histórico de precios (el gráfico "vs índice" se ha eliminado),
+  // así que con posiciones cargadas basta para pintar todo directamente.
   return renderPortfolioCharts(tickers);
 }
 
-// Estado de carga
-function renderLoadingState() {
-  return `<div style="padding:40px 20px;text-align:center;color:#94a3b8">
-    <div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto 16px"></div>
-    <p style="font-weight:600;color:#475569">Cargando datos de la cartera...</p>
-    <p style="font-size:12px">Esto puede tomar unos segundos</p>
-  </div>`;
+// Se llama al cambiar cualquiera de los selectores: todo el cálculo es síncrono (datos ya en memoria)
+function onChartsSelectorChange(field, value) {
+  state._portfolioCharts[field] = value;
+  renderActiveTab();
 }
 
-// Cargar datos para los gráficos de cartera
-async function loadPortfolioChartData() {
-  if (state._portfolioCharts.loading) return;
-  state._portfolioCharts.loading = true;
-  
-  try {
-    const tickers = state.positions.map(p => p.ticker);
-    const periodMap = { '1A': '1y', '3A': '3y', '5A': '5y', '10A': '10y', 'MAX': 'max' };
-    const period = periodMap[state._portfolioCharts.period] || '1y';
-    
-    // Obtener histórico de precios para TODOS los tickers en paralelo (con límite)
-    const priceData = {};
-    const CONCURRENCY = 3;
-    
-    for (let i = 0; i < tickers.length; i += CONCURRENCY) {
-      const chunk = tickers.slice(i, i + CONCURRENCY);
-      await Promise.all(chunk.map(async ticker => {
-        try {
-          const data = await fetchPriceHistoryData(ticker, period);
-          if (data && data.length > 0) {
-            priceData[ticker] = data;
-          }
-        } catch (e) {
-          console.warn(`Error cargando datos para ${ticker}:`, e.message);
-        }
-      }));
-      if (i + CONCURRENCY < tickers.length) await sleep(300);
-    }
-    
-    // Guardar en caché
-    state._portfolioCharts.chartData = priceData;
-    state._portfolioCharts.loading = false;
-    
-    if (state.activeTab === 4) renderActiveTab();
-    
-  } catch (e) {
-    console.error('Error cargando datos de cartera:', e);
-    state._portfolioCharts.loading = false;
-  }
-}
-
-// Obtener datos de precio histórico para un ticker (versión simplificada)
-async function fetchPriceHistoryData(ticker, period) {
-  const isGBp = ticker.toUpperCase().endsWith('.L');
-  const interval = period === '1y' ? '1d' : period === '3y' ? '1wk' : '1mo';
-  
-  const histProxies = [
-    `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${period}`)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${period}`)}`,
-  ];
-  
-  for (const url of histProxies) {
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-      if (!res.ok) continue;
-      const json = await res.json();
-      const result = json?.chart?.result?.[0];
-      if (!result) continue;
-      const timestamps = result.timestamp || [];
-      const closes = result.indicators?.quote?.[0]?.close || [];
-      if (timestamps.length < 3) continue;
-      
-      return timestamps.map((t, i) => ({
-        date: new Date(t * 1000),
-        close: closes[i] != null ? (isGBp ? closes[i] / 100 : closes[i]) : null
-      })).filter(p => p.close != null);
-    } catch(e) {}
-  }
-  return null;
-}
-
-// Renderizar los 4 gráficos de cartera
-function renderPortfolioCharts(tickers) {
-  const selected = state._portfolioCharts.selectedTicker || 'Todas';
+// Renderizar los gráficos de cartera
+function renderChartsSelector(tickers) {
+  const selected = state._portfolioCharts.selectedTicker;
   const period = state._portfolioCharts.period || '1A';
-  const divPeriod = state._portfolioCharts.divPeriod || 'Anual';
-  const index = state._portfolioCharts.index || 'SP500';
-  
-  // Datos para el gráfico de evolución de cartera
-  const portfolioData = calculatePortfolioHistory(tickers, period);
-  
-  // Datos para dividendos históricos
-  const divData = calculateDividendHistory(tickers, divPeriod);
-  
-  // Datos para Total Return
-  const totalReturnData = calculateTotalReturn(tickers, period, index);
-  
-  // Datos para proyección de dividendos
-  const projectionData = calculateDividendProjection(tickers);
-  
-  // Selector de empresa
+
   const tickerOptions = [
     `<option value="Todas" ${selected === 'Todas' ? 'selected' : ''}>📊 Todas las empresas</option>`,
     ...tickers.map(t => `<option value="${t}" ${selected === t ? 'selected' : ''}>${t}</option>`)
   ].join('');
-  
-  // Selector de periodo
-  const periodOptions = ['1A', '3A', '5A', '10A', 'MAX'].map(p => 
+
+  const periodOptions = ['1A', '3A', '5A', '10A', 'MAX'].map(p =>
     `<option value="${p}" ${period === p ? 'selected' : ''}>${p}</option>`
   ).join('');
-  
-  // Selector de periodo de dividendos
-  const divPeriodOptions = ['Mensual', 'Trimestral', 'Anual'].map(p => 
-    `<option value="${p}" ${divPeriod === p ? 'selected' : ''}>${p}</option>`
-  ).join('');
-  
-  // Selector de índice
-  const indexOptions = ['SP500', 'Nasdaq', 'IBEX35'].map(i => 
-    `<option value="${i}" ${index === i ? 'selected' : ''}>${i}</option>`
-  ).join('');
-  
+
+  return `
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;align-items:center;background:#f8fafc;padding:12px 16px;border-radius:12px;border:1px solid #e2e8f0">
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span style="font-size:11px;color:#64748b;font-weight:600">Empresa:</span>
+        <select onchange="onChartsSelectorChange('selectedTicker', this.value)"
+          style="padding:5px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;background:#fff;min-width:140px">
+          ${tickerOptions}
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span style="font-size:11px;color:#64748b;font-weight:600">Periodo:</span>
+        <select onchange="onChartsSelectorChange('period', this.value)"
+          style="padding:5px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;background:#fff">
+          ${periodOptions}
+        </select>
+      </div>
+    </div>`;
+}
+
+function renderPortfolioCharts(tickers) {
+  const selected = state._portfolioCharts.selectedTicker;
+  const period = state._portfolioCharts.period || '1A';
+  const divPeriod = state._portfolioCharts.divPeriod || 'Anual';
+  const activeTickers = selected === 'Todas' ? tickers : [selected];
+  const activeSet = new Set(activeTickers);
+  const activePositions = state.positions.filter(p => activeSet.has(p.ticker));
+
+  // Datos para el gráfico de evolución de cartera
+  const portfolioData = calculatePortfolioHistory(activeTickers, period);
+
+  // Datos para dividendos históricos
+  const divData = calculateDividendHistory(activeTickers, divPeriod);
+
+  // Datos para proyección de dividendos
+  const projectionData = calculateDividendProjection(activeTickers);
+
+  // Datos para los 3 roscos de distribución (sector, divisa, empresa)
+  const sectorBreakdown = calculateAllocationBreakdown(activePositions, p => p.sector || 'Otros');
+  const currencyBreakdown = calculateAllocationBreakdown(activePositions, p => p.currency || 'EUR');
+  const companyBreakdown = calculateAllocationBreakdown(activePositions, p => p.ticker, 8);
+
   return `
     <div style="padding:14px">
-      <!-- Barra de controles -->
-      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;align-items:center;background:#f8fafc;padding:12px 16px;border-radius:12px;border:1px solid #e2e8f0">
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <span style="font-size:11px;color:#64748b;font-weight:600">Empresa:</span>
-          <select onchange="state._portfolioCharts.selectedTicker=this.value;renderActiveTab()" 
-            style="padding:5px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;background:#fff;min-width:140px">
-            ${tickerOptions}
-          </select>
+      ${renderChartsSelector(tickers)}
+
+      <!-- Fila de roscos: distribución por sector / divisa / empresa -->
+      <div class="charts-donut-row">
+        <div class="chart-card">
+          <h4>🏭 Por Sector</h4>
+          ${buildDonutChartSVG(sectorBreakdown, { unitLabel: sectorBreakdown.length === 1 ? 'sector' : 'sectores', centerValue: sectorBreakdown.length })}
         </div>
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <span style="font-size:11px;color:#64748b;font-weight:600">Periodo:</span>
-          <select onchange="state._portfolioCharts.period=this.value;loadPortfolioChartData();renderActiveTab()" 
-            style="padding:5px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;background:#fff">
-            ${periodOptions}
-          </select>
+        <div class="chart-card">
+          <h4>💱 Por Divisa</h4>
+          ${buildDonutChartSVG(currencyBreakdown, { unitLabel: currencyBreakdown.length === 1 ? 'divisa' : 'divisas', centerValue: currencyBreakdown.length })}
         </div>
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <span style="font-size:11px;color:#64748b;font-weight:600">Índice:</span>
-          <select onchange="state._portfolioCharts.index=this.value;renderActiveTab()" 
-            style="padding:5px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;background:#fff">
-            ${indexOptions}
-          </select>
+        <div class="chart-card">
+          <h4>🏢 Por Empresa</h4>
+          ${buildDonutChartSVG(companyBreakdown, { unitLabel: 'posiciones', centerValue: activePositions.length })}
         </div>
-        <button onclick="loadPortfolioChartData();renderActiveTab()" 
-          style="padding:5px 14px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600;margin-left:auto">
-          🔄 Actualizar
-        </button>
       </div>
-      
-      <!-- Cuadrícula 2x2 de gráficos -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+
+      <!-- Gráficos principales, ampliados ahora que ya no comparten fila con "vs índice" -->
+      <div class="charts-grid-main">
         <!-- Gráfico 1: Evolución de cartera -->
         <div class="chart-card">
-          <h4>📈 Evolución de la cartera</h4>
+          <h4>📈 Evolución ${selected === 'Todas' ? 'de la cartera' : `de ${esc(selected)}`}</h4>
           ${buildPortfolioChartSVG(portfolioData, period)}
         </div>
-        
+
         <!-- Gráfico 2: Dividendos históricos -->
         <div class="chart-card">
           <h4>💰 Dividendos históricos</h4>
           <div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap">
-            ${['Mensual','Trimestral','Anual'].map(p => 
-              `<button onclick="state._portfolioCharts.divPeriod='${p}';renderActiveTab()" 
+            ${['Mensual','Trimestral','Anual'].map(p =>
+              `<button onclick="state._portfolioCharts.divPeriod='${p}';renderActiveTab()"
                 style="padding:2px 10px;border:1px solid ${divPeriod === p ? '#2563eb' : '#e2e8f0'};border-radius:4px;font-size:10px;font-weight:600;background:${divPeriod === p ? '#2563eb' : '#fff'};color:${divPeriod === p ? '#fff' : '#64748b'};cursor:pointer">${p}</button>`
             ).join('')}
           </div>
           ${buildDividendChartSVG(divData, divPeriod)}
         </div>
-        
-        <!-- Gráfico 3: Total Return -->
-        <div class="chart-card">
-          <h4>🌍 Total Return</h4>
-          ${buildTotalReturnChartSVG(totalReturnData, period, index)}
-        </div>
-        
-        <!-- Gráfico 4: Proyección de dividendos -->
-        <div class="chart-card">
+
+        <!-- Gráfico 3: Proyección de dividendos -->
+        <div class="chart-card" style="grid-column:1/-1">
           <h4>🚀 Dividendos futuros</h4>
           ${buildDividendProjectionSVG(projectionData)}
         </div>
@@ -3974,17 +3911,34 @@ function renderPortfolioCharts(tickers) {
   `;
 }
 
+// Calcula el reparto de valor (en EUR) de un conjunto de posiciones agrupado por
+// el criterio indicado (sector, divisa, ticker...), para pintar un rosco.
+function calculateAllocationBreakdown(positions, keyFn, maxSlices = 10) {
+  const groups = {};
+  positions.forEach(p => {
+    const key = keyFn(p) || 'Otros';
+    groups[key] = (groups[key] || 0) + posValEUR(p);
+  });
+  let entries = Object.entries(groups).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  if (entries.length > maxSlices) {
+    const head = entries.slice(0, maxSlices - 1);
+    const restTotal = entries.slice(maxSlices - 1).reduce((s, [, v]) => s + v, 0);
+    entries = [...head, ['Otras', restTotal]];
+  }
+  return entries.map(([label, value]) => ({ label, value }));
+}
+
 // ─── CÁLCULO DE DATOS PARA GRÁFICOS ──────────────────────────
 
 // Calcular evolución histórica de la cartera
 function calculatePortfolioHistory(tickers, period) {
+  const tickerSet = new Set(tickers);
   const periodMap = { '1A': 12, '3A': 36, '5A': 60, '10A': 120, 'MAX': 240 };
   const months = periodMap[period] || 12;
   
-  // Obtener transacciones ordenadas
-  const txs = [...state.transactions].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  // Obtener transacciones ordenadas, SOLO de los tickers seleccionados
+  const txs = [...state.transactions].filter(t => tickerSet.has(t.ticker)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   
-  // Para cada mes, calcular: invertido, valor actual, beneficio
   const result = [];
   const today = new Date();
   const startDate = new Date(today);
@@ -3996,40 +3950,29 @@ function calculatePortfolioHistory(tickers, period) {
     const d = new Date(tx.date);
     if (d < startDate) return;
     const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-    if (!monthlyData[key]) monthlyData[key] = { date: d, buys: 0, sells: 0, shares: {}, totalCost: 0 };
-    // Para simplicidad, usamos el precio de compra/venta
-    if (tx.type === 'BUY') {
-      monthlyData[key].buys += tx.shares * tx.price;
-    } else if (tx.type === 'SELL') {
-      monthlyData[key].sells += tx.shares * tx.price;
-    }
+    if (!monthlyData[key]) monthlyData[key] = { date: d, buys: 0, sells: 0 };
+    if (tx.type === 'BUY') monthlyData[key].buys += tx.shares * tx.price;
+    else if (tx.type === 'SELL') monthlyData[key].sells += tx.shares * tx.price;
   });
   
-  // Construir serie temporal
+  // Posiciones actuales SOLO de los tickers seleccionados
+  const relevantPositions = state.positions.filter(p => tickerSet.has(p.ticker));
+  const currentValue = relevantPositions.reduce((acc, p) => {
+    const price = state.priceCache[p.ticker] || p.avg_cost;
+    return acc + (p.shares * price);
+  }, 0);
+  
   let cumulativeCost = 0;
-  let cumulativeShares = 0;
   const monthsKeys = Object.keys(monthlyData).sort();
   
   monthsKeys.forEach(key => {
     const data = monthlyData[key];
     cumulativeCost += data.buys - data.sells;
-    
-    // Calcular valor actual usando precios más cercanos disponibles
-    let currentValue = cumulativeCost; // fallback
-    const dateStr = data.date.toISOString().slice(0,10);
-    
-    // Buscar precio para cada ticker en esa fecha aproximada
-    // Simplificado: usamos el precio más cercano disponible
-    const pos = state.positions.reduce((acc, p) => {
-      const price = state.priceCache[p.ticker] || p.avg_cost;
-      return acc + (p.shares * price);
-    }, 0);
-    
     result.push({
       date: data.date,
       invested: cumulativeCost,
-      value: pos || cumulativeCost,
-      profit: (pos || cumulativeCost) - cumulativeCost
+      value: currentValue || cumulativeCost, // aproximación: valor actual aplicado a cada punto (no hay histórico exacto)
+      profit: (currentValue || cumulativeCost) - cumulativeCost
     });
   });
   
@@ -4038,7 +3981,8 @@ function calculatePortfolioHistory(tickers, period) {
 
 // Calcular dividendos históricos
 function calculateDividendHistory(tickers, period) {
-  const divs = state.dividends || [];
+  const tickerSet = new Set(tickers);
+  const divs = (state.dividends || []).filter(d => tickerSet.has(d.ticker));
   const result = [];
   
   const groupKey = (date) => {
@@ -4050,8 +3994,6 @@ function calculateDividendHistory(tickers, period) {
   
   const grouped = {};
   let total = 0;
-  const payments = {};
-  const companies = {};
   
   divs.forEach(d => {
     const key = groupKey(d.date);
@@ -4079,59 +4021,17 @@ function calculateDividendHistory(tickers, period) {
   return { data: result, total };
 }
 
-// Calcular Total Return
-function calculateTotalReturn(tickers, period, index) {
-  const periodMap = { '1A': '1y', '3A': '3y', '5A': '5y', '10A': '10y', 'MAX': 'max' };
-  const periodKey = periodMap[period] || '1y';
-  
-  // Obtener datos de precio de la cartera (usando el primer ticker como referencia para la fecha)
-  const firstTicker = tickers[0] || '';
-  const priceData = state._portfolioCharts.chartData[firstTicker] || [];
-  
-  if (!priceData.length) return { dates: [], portfolio: [], sp500: [], nasdaq: [], ibex35: [] };
-  
-  // Calcular valor de cartera en cada punto
-  const portfolioValues = priceData.map((item, idx) => {
-    let totalValue = 0;
-    state.positions.forEach(p => {
-      const price = state.priceCache[p.ticker] || p.avg_cost;
-      // Simulación: usar precio del ticker principal como proxy
-      totalValue += p.shares * price * (item.close / (priceData[0]?.close || 1));
-    });
-    return totalValue;
-  });
-  
-  // Normalizar a 100
-  const base = portfolioValues[0] || 1;
-  const portfolioNorm = portfolioValues.map(v => (v / base) * 100);
-  
-  // Índices simulados (basados en el mismo patrón con variaciones)
-  const sp500 = portfolioNorm.map((v, i) => v * (1 + Math.sin(i/50) * 0.03 + (i/portfolioNorm.length) * 0.05));
-  const nasdaq = portfolioNorm.map((v, i) => v * (1 + Math.sin(i/30) * 0.05 + (i/portfolioNorm.length) * 0.08));
-  const ibex35 = portfolioNorm.map((v, i) => v * (1 + Math.sin(i/40) * 0.04 + (i/portfolioNorm.length) * 0.03));
-  
-  const dates = priceData.map(item => item.date);
-  
-  return {
-    dates,
-    portfolio: portfolioNorm,
-    sp500,
-    nasdaq,
-    ibex35,
-    index: index
-  };
-}
-
-// Calcular proyección de dividendos
 function calculateDividendProjection(tickers) {
-  // Calcular dividendos actuales anuales
+  const tickerSet = new Set(tickers);
+  // Calcular dividendos actuales anuales SOLO de los tickers seleccionados
   let currentAnnualDiv = 0;
-  state.divInfo.forEach(d => {
+  (state.divInfo || []).forEach(d => {
+    if (!tickerSet.has(d.ticker)) return;
     currentAnnualDiv += toEUR(d.annual_income || 0, d.currency || 'EUR');
   });
   
-  // CAGR histórico (estimado desde datos disponibles)
-  const divs = state.dividends || [];
+  // CAGR histórico (estimado desde datos disponibles), solo de los tickers seleccionados
+  const divs = (state.dividends || []).filter(d => tickerSet.has(d.ticker));
   if (divs.length < 2) {
     return { current: currentAnnualDiv, years: [], projected: [], cagr: 3 };
   }
@@ -4175,23 +4075,89 @@ function calculateDividendProjection(tickers) {
 
 // ─── CONSTRUCCIÓN DE GRÁFICOS SVG ─────────────────────────────
 
+// ─── Tooltip genérico para gráficos multi-serie (varias líneas/barras a la vez) ──
+function multiChartMouseMove(e, svgId, W, PL, gW, PT, gH) {
+  const cache = state._multiChartCache?.[svgId];
+  if (!cache?.points?.length) return;
+  const svg = document.getElementById(svgId);
+  if (!svg) return;
+  const rect = svg.getBoundingClientRect();
+  const scaleX = W / rect.width;
+  const mx = (e.clientX - rect.left) * scaleX;
+  const relX = mx - PL;
+  const n = cache.points.length;
+  const idx = Math.max(0, Math.min(n - 1, Math.round(relX / gW * (n - 1))));
+  const point = cache.points[idx];
+  if (!point) return;
+
+  const toX = i => PL + (n > 1 ? (i / (n - 1)) * gW : gW / 2);
+  const cx = toX(idx).toFixed(1);
+
+  const vline = document.getElementById(`${svgId}_vline`);
+  if (vline) { vline.setAttribute("x1", cx); vline.setAttribute("x2", cx); vline.removeAttribute("display"); }
+
+  let html = `<div style="font-weight:700;margin-bottom:3px">${esc(point.label)}</div>`;
+  cache.series.forEach((s, si) => {
+    const dot = document.getElementById(`${svgId}_dot${si}`);
+    const v = point.values[si];
+    if (v == null) { if (dot) dot.setAttribute("display", "none"); return; }
+    if (dot && cache.toY) {
+      dot.setAttribute("cx", cx);
+      dot.setAttribute("cy", cache.toY(v).toFixed(1));
+      dot.removeAttribute("display");
+    }
+    html += `<div style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:${s.color};border-radius:2px;display:inline-block"></span>${esc(s.label)}: <b>${s.fmt ? s.fmt(v) : v}</b></div>`;
+  });
+
+  const tip = document.getElementById(`${svgId}_tip`);
+  if (tip) {
+    tip.innerHTML = html;
+    const rectW = rect.width;
+    const tipX = e.clientX - rect.left;
+    tip.style.display = "block";
+    tip.style.left = (tipX + 10 > rectW - 150 ? tipX - 156 : tipX + 8) + "px";
+    tip.style.top = "4px";
+  }
+}
+
+function multiChartMouseLeave(svgId) {
+  const vline = document.getElementById(`${svgId}_vline`);
+  const tip = document.getElementById(`${svgId}_tip`);
+  if (vline) vline.setAttribute("display", "none");
+  if (tip) tip.style.display = "none";
+  document.querySelectorAll(`[id^="${svgId}_dot"]`).forEach(d => d.setAttribute("display", "none"));
+}
+
+// Envoltorio común: hace scrollable el gráfico si es más ancho que su contenedor
+// (así, si hay muchos puntos, se puede desplazar en vez de aplastarse hasta ser ilegible)
+function chartScrollWrap(svgId, W, H, innerSvg, extra = "") {
+  return `<div style="overflow-x:auto;overflow-y:hidden">
+    <div style="position:relative;min-width:${W}px">
+      <svg id="${svgId}" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;overflow:visible;cursor:crosshair" ${extra}>
+        ${innerSvg}
+      </svg>
+      <div id="${svgId}_tip" style="display:none;position:absolute;top:0;left:0;background:#1e293b;color:#fff;padding:5px 9px;border-radius:6px;font-size:10px;font-weight:500;pointer-events:none;white-space:nowrap;z-index:10;box-shadow:0 2px 8px #0004"></div>
+    </div>
+  </div>`;
+}
+
 // Gráfico 1: Evolución de cartera
 function buildPortfolioChartSVG(data, period) {
   if (!data || data.length < 2) {
     return `<div class="no-data-msg">Datos insuficientes para mostrar evolución</div>`;
   }
   
-  const W = 540, H = 220, PL = 52, PR = 16, PT = 14, PB = 32;
+  const n = data.length;
+  const H = 220, PL = 52, PR = 16, PT = 14, PB = 32;
+  const W = Math.max(340, Math.min(1400, n * 16)); // se alarga si hay muchos puntos, para no aplastar los datos
   const gW = W - PL - PR, gH = H - PT - PB;
   
   const invested = data.map(d => d.invested);
   const value = data.map(d => d.value);
-  const profit = data.map(d => d.profit);
   const allVals = [...invested, ...value];
   const minV = Math.min(0, ...allVals) * 0.98;
   const maxV = Math.max(...allVals) * 1.02;
   const range = maxV - minV || 1;
-  const n = data.length;
   
   const toX = i => PL + (i / (n - 1)) * gW;
   const toY = v => PT + gH - ((v - minV) / range) * gH;
@@ -4228,7 +4194,31 @@ function buildPortfolioChartSVG(data, period) {
   const lastValue = last?.value || 0;
   const lastProfit = last?.profit || 0;
   const profitPct = lastInvested ? (lastProfit / lastInvested * 100) : 0;
+
+  const svgId = 'chart_evolucion';
+  state._multiChartCache[svgId] = {
+    toY,
+    points: data.map(d => ({
+      label: d.date ? d.date.toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'}) : '',
+      values: [d.invested, d.value]
+    })),
+    series: [
+      { label:'Invertido', color:'#94a3b8', fmt: v => fmtEUR(v) },
+      { label:'Valor', color:'#2563eb', fmt: v => fmtEUR(v) },
+    ]
+  };
   
+  const innerSvg = `
+      <!-- Área de beneficio -->
+      ${profitArea ? `<polygon points="${profitArea}" fill="#16a34a" opacity="0.12"/>` : ''}
+      <!-- Líneas -->
+      <polyline points="${investedPts}" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="6,4"/>
+      <polyline points="${valuePts}" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+      ${yTicks}${xLabels}
+      <line id="${svgId}_vline" x1="0" y1="${PT}" x2="0" y2="${PT+gH}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,2" display="none"/>
+      <circle id="${svgId}_dot0" r="3.5" fill="#94a3b8" stroke="white" stroke-width="1.3" display="none"/>
+      <circle id="${svgId}_dot1" r="3.5" fill="#2563eb" stroke="white" stroke-width="1.3" display="none"/>`;
+
   return `
     <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px;font-size:11px">
       <span><span style="display:inline-block;width:12px;height:3px;background:#94a3b8;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Invertido: ${fmtEUR(lastInvested)}</span>
@@ -4238,14 +4228,7 @@ function buildPortfolioChartSVG(data, period) {
         ${lastProfit >= 0 ? '+' : ''}${fmtEUR(lastProfit)} (${lastProfit >= 0 ? '+' : ''}${profitPct.toFixed(1)}%)
       </span>
     </div>
-    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
-      <!-- Área de beneficio -->
-      ${profitArea ? `<polygon points="${profitArea}" fill="#16a34a" opacity="0.12"/>` : ''}
-      <!-- Líneas -->
-      <polyline points="${investedPts}" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="6,4"/>
-      <polyline points="${valuePts}" fill="none" stroke="#2563eb" stroke-width="2.5"/>
-      ${yTicks}${xLabels}
-    </svg>
+    ${chartScrollWrap(svgId, W, H, innerSvg, `onmousemove="multiChartMouseMove(event,'${svgId}',${W},${PL},${gW},${PT},${gH})" onmouseleave="multiChartMouseLeave('${svgId}')"`)}
   `;
 }
 
@@ -4255,12 +4238,13 @@ function buildDividendChartSVG(divData, period) {
     return `<div class="no-data-msg">Sin datos de dividendos</div>`;
   }
   
-  const W = 540, H = 220, PL = 48, PR = 16, PT = 14, PB = 32;
+  const n = divData.data.length;
+  const H = 220, PL = 48, PR = 16, PT = 14, PB = 32;
+  const W = Math.max(340, Math.min(1400, n * 30)); // más ancho si hay muchos periodos
   const gW = W - PL - PR, gH = H - PT - PB;
   
   const amounts = divData.data.map(d => d.amount);
   const maxV = Math.max(...amounts) * 1.15 || 1;
-  const n = amounts.length;
   
   const barWidth = Math.min(28, (gW / n) * 0.6);
   const bspace = gW / n;
@@ -4268,25 +4252,19 @@ function buildDividendChartSVG(divData, period) {
   const toY = v => PT + gH - (v / maxV) * gH;
   
   let bars = '';
-  let cumLine = '';
   let cumPts = [];
-  
   let cum = 0;
   divData.data.forEach((d, i) => {
     cum += d.amount;
     const x = toX(i) + barWidth/2;
-    const y = PT + gH - (cum / (maxV * divData.data.length * 0.5)) * gH;
+    const y = PT + gH - (cum / (maxV * n * 0.5)) * gH;
     cumPts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
-    
     const h = (d.amount / maxV) * gH;
-    bars += `<rect x="${toX(i).toFixed(1)}" y="${toY(d.amount).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${Math.max(1, h).toFixed(1)}" fill="#2563eb" rx="2" opacity="0.8">
-      <title>${d.label}: ${fmtEUR(d.amount)} (${d.count} pagos: ${d.companies})</title>
-    </rect>`;
+    bars += `<rect x="${toX(i).toFixed(1)}" y="${toY(d.amount).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${Math.max(1, h).toFixed(1)}" fill="#2563eb" rx="2" opacity="0.8"/>`;
   });
   
-  cumLine = `<polyline points="${cumPts.join(' ')}" fill="none" stroke="#f59e0b" stroke-width="1.8" stroke-dasharray="4,3"/>`;
+  const cumLine = `<polyline points="${cumPts.join(' ')}" fill="none" stroke="#f59e0b" stroke-width="1.8" stroke-dasharray="4,3"/>`;
   
-  // Eje Y
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => {
     const v = maxV * f;
     const y = PT + gH - f * gH;
@@ -4295,107 +4273,116 @@ function buildDividendChartSVG(divData, period) {
             <line x1="${PL}" y1="${y}" x2="${W-PR}" y2="${y}" stroke="#f1f5f9" stroke-width="1"/>`;
   }).join('');
   
-  // Eje X
   const xLabels = divData.data.map((d, i) => {
     const x = toX(i) + barWidth/2;
-    const label = d.label;
-    return `<text x="${x.toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="7" fill="#94a3b8">${label}</text>`;
+    return `<text x="${x.toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="7" fill="#94a3b8">${d.label}</text>`;
   }).join('');
+
+  const svgId = 'chart_dividendos';
+  state._multiChartCache[svgId] = {
+    toY: v => PT + gH - (v / maxV) * gH,
+    points: divData.data.map(d => ({ label: `${d.label} (${d.count} pago${d.count===1?'':'s'})`, values: [d.amount] })),
+    series: [{ label:'Dividendo', color:'#2563eb', fmt: v => fmtEUR(v) }]
+  };
   
+  const innerSvg = `
+      ${bars}
+      ${cumLine}
+      ${yTicks}${xLabels}
+      <line id="${svgId}_vline" x1="0" y1="${PT}" x2="0" y2="${PT+gH}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,2" display="none"/>
+      <circle id="${svgId}_dot0" r="3.5" fill="#2563eb" stroke="white" stroke-width="1.3" display="none"/>`;
+
   return `
     <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px;font-size:11px">
       <span><span style="display:inline-block;width:12px;height:10px;background:#2563eb;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Total: ${fmtEUR(divData.total)}</span>
       <span><span style="display:inline-block;width:12px;height:3px;background:#f59e0b;border-radius:2px;vertical-align:middle;margin-right:4px"></span>${divData.data.length} periodos</span>
     </div>
-    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
-      ${bars}
-      ${cumLine}
-      ${yTicks}${xLabels}
-    </svg>
+    ${chartScrollWrap(svgId, W, H, innerSvg, `onmousemove="multiChartMouseMove(event,'${svgId}',${W},${PL},${gW},${PT},${gH})" onmouseleave="multiChartMouseLeave('${svgId}')"`)}
   `;
 }
 
-// Gráfico 3: Total Return
-function buildTotalReturnChartSVG(data, period, index) {
-  if (!data || !data.dates || data.dates.length < 2) {
-    return `<div class="no-data-msg">Datos insuficientes para Total Return</div>`;
+// Paleta compartida por los 3 roscos de distribución
+const DONUT_PALETTE = ["#2563eb","#22c55e","#ef4444","#f59e0b","#a855f7","#06b6d4","#ec4899","#10b981","#8b5cf6","#f97316"];
+
+// Rosco genérico (SVG) con tooltip al pasar el cursor por cada porción.
+// items: [{label, value}], ya viene ordenado y con el "Otras"/resto agrupado si procede.
+function buildDonutChartSVG(items, opts = {}) {
+  if (!items || !items.length) {
+    return `<div class="no-data-msg">Sin datos suficientes</div>`;
   }
-  
-  const W = 540, H = 220, PL = 48, PR = 16, PT = 14, PB = 32;
-  const gW = W - PL - PR, gH = H - PT - PB;
-  const n = data.dates.length;
-  
-  // Seleccionar índice
-  const indexData = data[index] || data.sp500 || [];
-  const allVals = [...data.portfolio, ...data.sp500, ...data.nasdaq, ...data.ibex35].filter(v => v != null);
-  const minV = Math.min(0, ...allVals) * 0.95;
-  const maxV = Math.max(...allVals) * 1.05;
-  const range = maxV - minV || 1;
-  
-  const toX = i => PL + (i / (n - 1)) * gW;
-  const toY = v => PT + gH - ((v - minV) / range) * gH;
-  
-  const colors = {
-    portfolio: { stroke: '#2563eb', label: 'Mi cartera' },
-    sp500: { stroke: '#16a34a', label: 'S&P 500' },
-    nasdaq: { stroke: '#dc2626', label: 'Nasdaq' },
-    ibex35: { stroke: '#f59e0b', label: 'IBEX 35' }
-  };
-  
-  // Construir líneas
-  let lines = '';
-  let legend = '';
-  const series = [
-    { key: 'portfolio', data: data.portfolio },
-    { key: 'sp500', data: data.sp500 },
-    { key: 'nasdaq', data: data.nasdaq },
-    { key: 'ibex35', data: data.ibex35 }
-  ];
-  
-  series.forEach(s => {
-    const vals = s.data || [];
-    if (!vals.length) return;
-    const pts = vals.map((v, i) => `${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(' ');
-    const color = colors[s.key]?.stroke || '#94a3b8';
-    const label = colors[s.key]?.label || s.key;
-    lines += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${s.key === 'portfolio' ? 2.5 : 1.5}" ${s.key !== 'portfolio' ? 'stroke-dasharray="4,3"' : ''}/>`;
-    legend += `<span style="display:inline-flex;align-items:center;gap:4px;font-size:9px;color:#475569">
-      <span style="width:14px;height:${s.key === 'portfolio' ? '3px' : '0'};border-bottom:${s.key !== 'portfolio' ? '1.5px dashed ' + color : '2px solid ' + color};display:inline-block;background:${s.key === 'portfolio' ? color : 'transparent'};border-radius:1px"></span>${label}
-    </span>`;
+  const total = items.reduce((s, it) => s + it.value, 0) || 1;
+  const svgId = `donut_${Math.random().toString(36).slice(2, 9)}`;
+  const SIZE = 220, CX = SIZE / 2, CY = SIZE / 2, R = 88, r = 54;
+
+  const polar = (cx, cy, rad, ang) => [cx + rad * Math.cos(ang), cy + rad * Math.sin(ang)];
+
+  let ang = -Math.PI / 2;
+  const slices = items.map((it, i) => {
+    const frac = it.value / total;
+    const sweep = frac * 2 * Math.PI;
+    const a0 = ang, a1 = ang + sweep;
+    const [x0, y0] = polar(CX, CY, R, a0), [x1, y1] = polar(CX, CY, R, a1);
+    const large = sweep > Math.PI ? 1 : 0;
+    const color = DONUT_PALETTE[i % DONUT_PALETTE.length];
+    const path = `M${x0.toFixed(2)},${y0.toFixed(2)} A${R},${R} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)} L${(CX+r*Math.cos(a1)).toFixed(2)},${(CY+r*Math.sin(a1)).toFixed(2)} A${r},${r} 0 ${large} 0 ${(CX+r*Math.cos(a0)).toFixed(2)},${(CY+r*Math.sin(a0)).toFixed(2)} Z`;
+    // Etiqueta de % sobre la propia porción, solo si es lo bastante grande para leerse
+    const midAng = (a0 + a1) / 2;
+    const [lx, ly] = polar(CX, CY, (R + r) / 2, midAng);
+    const pctLabel = frac >= 0.06 ? `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" dominant-baseline="middle" font-size="9.5" font-weight="700" fill="#fff">${(frac*100).toFixed(1)}%</text>` : '';
+    ang = a1;
+    return { path, color, pctLabel, label: it.label, value: it.value, pct: frac * 100 };
   });
-  
-  // Eje Y
-  const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => {
-    const v = minV + f * range;
-    const y = PT + gH - f * gH;
-    return `<text x="${PL-6}" y="${y+3}" text-anchor="end" font-size="8" fill="#94a3b8">${v.toFixed(0)}</text>
-            <line x1="${PL}" y1="${y}" x2="${W-PR}" y2="${y}" stroke="#f1f5f9" stroke-width="1"/>`;
-  }).join('');
-  
-  // Eje X
-  const step = Math.max(1, Math.floor(n / 8));
-  const xLabels = data.dates.filter((_, i) => i % step === 0 || i === n-1).map((d, idx) => {
-    const i = idx * step;
-    const x = toX(Math.min(i, n-1));
-    const label = d ? d.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }) : '';
-    return `<text x="${x.toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="7" fill="#94a3b8">${label}</text>`;
-  }).join('');
-  
-  const lastPortfolio = data.portfolio[data.portfolio.length-1] || 100;
-  const lastIndex = indexData[indexData.length-1] || 100;
-  const diff = lastPortfolio - lastIndex;
-  
+
+  state._multiChartCache[svgId] = { donutItems: slices.map(s => ({ label: s.label, value: s.value, pct: s.pct })) };
+
+  const paths = slices.map((s, i) =>
+    `<path d="${s.path}" fill="${s.color}" stroke="#fff" stroke-width="2" style="cursor:pointer"
+       onmousemove="donutSegmentHover(event,'${svgId}',${i})" onmouseleave="donutMouseLeave('${svgId}')"/>${s.pctLabel}`
+  ).join('');
+
+  const centerValue = opts.centerValue != null ? opts.centerValue : items.length;
+  const centerLabel = opts.unitLabel || '';
+
+  const legendCols = items.length > 6 ? 2 : 1;
+  const legend = `<div style="display:grid;grid-template-columns:repeat(${legendCols},1fr);gap:3px 12px;margin-top:8px;font-size:10.5px">
+    ${slices.map((s, i) => `<div style="display:flex;align-items:center;gap:5px;overflow:hidden">
+        <span style="width:8px;height:8px;border-radius:2px;background:${s.color};flex:none"></span>
+        <span style="color:#475569;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(String(s.label).length>16?String(s.label).slice(0,15)+'…':s.label)}</span>
+        <span style="margin-left:auto;color:#1e293b;font-weight:700">${s.pct.toFixed(1)}%</span>
+      </div>`).join('')}
+  </div>`;
+
   return `
-    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px;font-size:11px">
-      <span style="color:#2563eb">Mi cartera: ${lastPortfolio.toFixed(1)}%</span>
-      <span style="color:${diff >= 0 ? '#16a34a' : '#dc2626'}">vs índice: ${diff >= 0 ? '+' : ''}${diff.toFixed(1)}%</span>
+    <div style="position:relative" id="${svgId}_wrap">
+      <svg id="${svgId}" viewBox="0 0 ${SIZE} ${SIZE}" style="width:100%;max-width:230px;height:auto;display:block;margin:0 auto;overflow:visible">
+        ${paths}
+        <text x="${CX}" y="${CY-6}" text-anchor="middle" font-size="20" font-weight="700" fill="#1e293b">${esc(centerValue)}</text>
+        <text x="${CX}" y="${CY+12}" text-anchor="middle" font-size="9.5" fill="#94a3b8">${esc(centerLabel)}</text>
+      </svg>
+      <div id="${svgId}_tip" style="display:none;position:absolute;top:0;left:0;background:#1e293b;color:#fff;padding:5px 9px;border-radius:6px;font-size:11px;font-weight:600;pointer-events:none;white-space:nowrap;z-index:10;box-shadow:0 2px 8px #0004"></div>
     </div>
-    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
-      ${lines}
-      ${yTicks}${xLabels}
-    </svg>
-    <div class="chart-legend">${legend}</div>
+    ${legend}
   `;
+}
+
+function donutSegmentHover(e, svgId, idx) {
+  const cache = state._multiChartCache?.[svgId];
+  const item = cache?.donutItems?.[idx];
+  const tip = document.getElementById(`${svgId}_tip`);
+  const wrap = document.getElementById(`${svgId}_wrap`);
+  if (!item || !tip || !wrap) return;
+  const rect = wrap.getBoundingClientRect();
+  tip.innerHTML = `${esc(item.label)}<br><span style="font-weight:400;color:#cbd5e1">${fmtEUR(item.value)} · ${item.pct.toFixed(1)}%</span>`;
+  tip.style.display = 'block';
+  const tipX = e.clientX - rect.left;
+  const tipY = e.clientY - rect.top;
+  tip.style.left = (tipX + 90 > rect.width ? tipX - 100 : tipX + 10) + 'px';
+  tip.style.top = Math.max(0, tipY - 34) + 'px';
+}
+
+function donutMouseLeave(svgId) {
+  const tip = document.getElementById(`${svgId}_tip`);
+  if (tip) tip.style.display = 'none';
 }
 
 // Gráfico 4: Proyección de dividendos
@@ -4404,28 +4391,23 @@ function buildDividendProjectionSVG(data) {
     return `<div class="no-data-msg">Datos insuficientes para proyección</div>`;
   }
   
-  const W = 540, H = 220, PL = 52, PR = 16, PT = 14, PB = 32;
+  const n = data.years.length + 1;
+  const H = 220, PL = 52, PR = 16, PT = 14, PB = 32;
+  const W = Math.max(340, n * 34);
   const gW = W - PL - PR, gH = H - PT - PB;
   
   const allVals = [...data.projected, data.current];
   const maxV = Math.max(...allVals) * 1.15 || 1;
-  const minV = 0;
-  const range = maxV - minV || 1;
-  const n = data.years.length + 1;
   
   const toX = i => PL + (i / (n - 1)) * gW;
   const toY = v => PT + gH - (v / maxV) * gH;
   
-  // Puntos de proyección (incluyendo valor actual)
   const allYears = [new Date().getFullYear(), ...data.years];
   const allValues = [data.current, ...data.projected];
   
   const pts = allValues.map((v, i) => `${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(' ');
-  
-  // Área bajo la curva
   const areaPts = `M${toX(0).toFixed(1)},${PT+gH} ${allValues.map((v,i) => `${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(' ')} L${toX(n-1).toFixed(1)},${PT+gH} Z`;
   
-  // Eje Y
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => {
     const v = maxV * f;
     const y = PT + gH - f * gH;
@@ -4434,22 +4416,38 @@ function buildDividendProjectionSVG(data) {
             <line x1="${PL}" y1="${y}" x2="${W-PR}" y2="${y}" stroke="#f1f5f9" stroke-width="1"/>`;
   }).join('');
   
-  // Eje X
   const xLabels = allYears.map((yr, i) => {
     const x = toX(i);
     return `<text x="${x.toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="8" fill="#94a3b8">${yr}</text>`;
   }).join('');
   
-  // Puntos de datos
   const dots = allValues.map((v, i) => {
     const r = i === 0 ? 4 : 3;
     return `<circle cx="${toX(i).toFixed(1)}" cy="${toY(v).toFixed(1)}" r="${r}" fill="#2563eb" stroke="white" stroke-width="1.5"/>`;
   }).join('');
   
-  // KPIs
   const nextYear = data.nextYear || data.current * 1.03;
   const fiveYear = data.fiveYear || data.current * 1.15;
   const tenYear = data.tenYear || data.current * 1.3;
+
+  const svgId = 'chart_proyeccion';
+  state._multiChartCache[svgId] = {
+    toY,
+    points: allYears.map((yr, i) => ({ label: `${yr}`, values: [allValues[i]] })),
+    series: [{ label:'Dividendo anual estimado', color:'#2563eb', fmt: v => fmtEUR(v) }]
+  };
+  
+  const innerSvg = `
+      <defs><linearGradient id="projGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#2563eb" stop-opacity="0.15"/>
+        <stop offset="100%" stop-color="#2563eb" stop-opacity="0.02"/>
+      </linearGradient></defs>
+      <path d="${areaPts}" fill="url(#projGrad)"/>
+      <polyline points="${pts}" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+      ${dots}
+      ${yTicks}${xLabels}
+      <line id="${svgId}_vline" x1="0" y1="${PT}" x2="0" y2="${PT+gH}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,2" display="none"/>
+      <circle id="${svgId}_dot0" r="4" fill="#2563eb" stroke="white" stroke-width="1.5" display="none"/>`;
   
   return `
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px;font-size:11px;text-align:center">
@@ -4466,18 +4464,9 @@ function buildDividendProjectionSVG(data) {
         <div style="font-weight:700;color:#d97706">${fmtEUR(tenYear)}</div>
       </div>
     </div>
-    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
-      <defs><linearGradient id="projGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#2563eb" stop-opacity="0.15"/>
-        <stop offset="100%" stop-color="#2563eb" stop-opacity="0.02"/>
-      </linearGradient></defs>
-      <path d="${areaPts}" fill="url(#projGrad)"/>
-      <polyline points="${pts}" fill="none" stroke="#2563eb" stroke-width="2.5"/>
-      ${dots}
-      ${yTicks}${xLabels}
-    </svg>
+    ${chartScrollWrap(svgId, W, H, innerSvg, `onmousemove="multiChartMouseMove(event,'${svgId}',${W},${PL},${gW},${PT},${gH})" onmouseleave="multiChartMouseLeave('${svgId}')"`)}
     <div style="font-size:10px;color:#94a3b8;margin-top:4px;text-align:right">
-      CAGR estimado: ${(data.cagr || 3).toFixed(1)}% · Aportación anual: 5.000€
+      CAGR estimado: ${(data.cagr || 3).toFixed(1)}% · Aportación anual: 5.000€ · Proyección orientativa, no garantizada
     </div>
   `;
 }
