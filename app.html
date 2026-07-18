@@ -124,6 +124,72 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
     height: auto !important;
     max-height: 320px;
 }
+
+/* Estilos para gráficos de la pestaña "Gráficos" */
+.charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 14px;
+    padding: 14px;
+}
+.chart-card {
+    background: #fff;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    padding: 14px 16px 16px 16px;
+    transition: box-shadow 0.15s;
+}
+.chart-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.05);
+}
+.chart-card h4 {
+    font-size: 13px;
+    font-weight: 700;
+    color: #1d4ed8;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.chart-card .chart-sub {
+    font-size: 10px;
+    color: #94a3b8;
+    font-weight: 400;
+    margin-left: auto;
+}
+.chart-card svg {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 6px;
+}
+.chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 6px;
+    font-size: 10px;
+    color: #475569;
+}
+.chart-legend span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.chart-legend .dot {
+    width: 12px;
+    height: 3px;
+    border-radius: 2px;
+    display: inline-block;
+}
+.no-data-msg {
+    padding: 30px 10px;
+    text-align: center;
+    color: #94a3b8;
+    font-size: 12px;
+    background: #f8fafc;
+    border-radius: 8px;
+}
 </style>
 </head>
 <body>
@@ -850,8 +916,11 @@ function updateDivTicker() {
   wrap.style.display = "block";
 }
 
-async function fetchDividendData(ticker) {
-  for (const proxyFn of YIELD_PROXIES) {
+async function fetchDividendData(ticker, proxyStartIdx) {
+  const n = YIELD_PROXIES.length;
+  const start = proxyStartIdx || 0;
+  for (let i = 0; i < n; i++) {
+    const proxyFn = YIELD_PROXIES[(start + i) % n];
     try {
       const url = proxyFn(ticker);
       const res = await fetch(url, {signal: AbortSignal.timeout(6000)});
@@ -892,18 +961,54 @@ async function fetchDividendData(ticker) {
   return null;
 }
 
+let autoRetryYieldTimer = null;
+let autoRetryYieldAttempts = 0;
+let yieldsInFlight = false;
 async function refreshDividendYields() {
+  if (yieldsInFlight) {
+    if (autoRetryYieldTimer) clearTimeout(autoRetryYieldTimer);
+    autoRetryYieldTimer = setTimeout(refreshDividendYields, 6000);
+    return;
+  }
+  yieldsInFlight = true;
+  try {
   const tickers = [...new Set(state.positions.map(p=>p.ticker))];
   // Limpiar caché de .L que pudieran tener el rate en peniques (bug anterior)
   tickers.filter(t => String(t).toUpperCase().endsWith(".L")).forEach(t => { delete state.yieldCache[t]; });
   const pending = tickers.filter(t => !state.yieldCache[t]);
-  if (!pending.length) return;
-  await Promise.all(pending.map(async t => {
-    const d = await fetchDividendData(t);
-    if (d) state.yieldCache[t] = d;
-  }));
-  buildDivInfo();
-  if (state.activeTab === 2) renderActiveTab();
+  if (autoRetryYieldTimer) { clearTimeout(autoRetryYieldTimer); autoRetryYieldTimer = null; }
+  if (!pending.length) { autoRetryYieldAttempts = 0; return; }
+
+  // Los proxies CORS gratuitos (corsproxy.io / allorigins.win) se saturan o bloquean
+  // si se les lanzan muchas peticiones a la vez. Por eso vamos por lotes pequeños,
+  // rotando qué proxy se prueba primero en cada ticker, y guardando/pintando lo
+  // conseguido tras cada lote (así aunque el resto falle, lo bueno ya se ve y queda guardado).
+  const CONCURRENCY = 3;
+  for (let i = 0; i < pending.length; i += CONCURRENCY) {
+    const chunk = pending.slice(i, i + CONCURRENCY);
+    await Promise.all(chunk.map(async (t, j) => {
+      const d = await fetchDividendData(t, (i + j) % YIELD_PROXIES.length);
+      if (d) state.yieldCache[t] = d;
+    }));
+    buildDivInfo();
+    if (state.activeTab === 2) renderActiveTab();
+    if (i + CONCURRENCY < pending.length) await sleep(400);
+  }
+
+  // Si aún quedan tickers sin datos reales, reintentar en segundo plano hasta
+  // completarlos, en vez de dejarlos en el valor de relleno indefinidamente.
+  const stillPending = tickers.filter(t => !state.yieldCache[t]);
+  if (stillPending.length) {
+    autoRetryYieldAttempts = (autoRetryYieldAttempts||0) + 1;
+    if (autoRetryYieldAttempts <= 8) {
+      autoRetryYieldTimer = setTimeout(refreshDividendYields, 12000);
+    }
+  } else {
+    autoRetryYieldAttempts = 0;
+  }
+  } finally {
+    yieldsInFlight = false;
+  }
 }
 
 function openSnapshotCartera(btnEl) {
@@ -4306,8 +4411,7 @@ function buildTotalReturnChartSVG(data, period, index) {
     const isPortfolio = s.key === 'portfolio';
     lines += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${isPortfolio ? 2 : 1.2}" ${!isPortfolio ? 'stroke-dasharray="4,2"' : ''}/>`;
     legend += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:8px;color:#475569;cursor:pointer" onclick="toggleSeries(this)">
-      <span style="width:10px;height:${isPortfolio ? '2px' : '0'};border-bottom:${!isPortfolio ? '1px dashed ' + color : '2px solid ' + color};display:inline-block;background:${isPortfolio ? color : 'transparent'};border-radius:1px"></span>${label}
-    </span>`;
+      <span style="width:10px;height:${isPortfolio ? '2px' : '0'};border-bottom:${!isPortfolio ? '1px dashed ' + color : '2px solid ' + color};display:inline-block;background:${isPortfolio ? color : 'transparent'};border-radius:1px"></span>${label}</span>`;
   });
   
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => {
@@ -4905,7 +5009,9 @@ function toggleSeries(el) {
       el.style.opacity = '0.3';
     }
   }
-}─────────────────────────────────────────────
+}
+
+// ─────────────────────────────────────────────
 // TAB 5 — OBJETIVOS
 // ─────────────────────────────────────────────
 function renderGoals() {
