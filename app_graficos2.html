@@ -3778,9 +3778,11 @@ if (!state._portfolioCharts) {
     selectedTicker: 'Todas',   // por defecto se muestran ya las gráficas de "Todas las empresas"
     period: '1A',
     divPeriod: 'Anual',
+    companyData: {},   // caché por ticker: { loading, priceHistory, fundamentals }
     loading: false
   };
 }
+if (!state._portfolioCharts.companyData) state._portfolioCharts.companyData = {};
 if (!state._multiChartCache) state._multiChartCache = {};
 
 // Función principal renderCharts
@@ -3795,9 +3797,15 @@ function renderCharts() {
     </div>`;
   }
 
-  // Ya no hay carga asíncrona de histórico de precios (el gráfico "vs índice" se ha eliminado),
-  // así que con posiciones cargadas basta para pintar todo directamente.
-  return renderPortfolioCharts(tickers);
+  const selected = state._portfolioCharts.selectedTicker;
+
+  // Empresa individual seleccionada: solo cotización, dividendos, deuda, FCF y recompras de ESA empresa
+  if (selected && selected !== 'Todas') {
+    return `<div style="padding:14px">${renderChartsSelector(tickers)}${renderCompanyFundamentalCharts(selected)}</div>`;
+  }
+
+  // "Todas las empresas": vista de cartera completa (roscos + evolución + dividendos)
+  return `<div style="padding:14px">${renderChartsSelector(tickers)}${renderPortfolioChartsBody(tickers)}</div>`;
 }
 
 // Se llama al cambiar cualquiera de los selectores: todo el cálculo es síncrono (datos ya en memoria)
@@ -3829,23 +3837,21 @@ function renderChartsSelector(tickers) {
           ${tickerOptions}
         </select>
       </div>
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+      ${selected === 'Todas' ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         <span style="font-size:11px;color:#64748b;font-weight:600">Periodo:</span>
         <select onchange="onChartsSelectorChange('period', this.value)"
           style="padding:5px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;background:#fff">
           ${periodOptions}
         </select>
-      </div>
+      </div>` : ''}
     </div>`;
 }
 
-function renderPortfolioCharts(tickers) {
-  const selected = state._portfolioCharts.selectedTicker;
+function renderPortfolioChartsBody(tickers) {
   const period = state._portfolioCharts.period || '1A';
   const divPeriod = state._portfolioCharts.divPeriod || 'Anual';
-  const activeTickers = selected === 'Todas' ? tickers : [selected];
-  const activeSet = new Set(activeTickers);
-  const activePositions = state.positions.filter(p => activeSet.has(p.ticker));
+  const activeTickers = tickers;
+  const activePositions = state.positions.filter(p => activeTickers.includes(p.ticker));
 
   // Datos para el gráfico de evolución de cartera
   const portfolioData = calculatePortfolioHistory(activeTickers, period);
@@ -3853,7 +3859,8 @@ function renderPortfolioCharts(tickers) {
   // Datos para dividendos históricos
   const divData = calculateDividendHistory(activeTickers, divPeriod);
 
-  // Datos para proyección de dividendos
+  // Datos para proyección de dividendos (estimados según el crecimiento histórico de dividendos
+  // de las acciones que componen la cartera — CAGR real por posición, no una cifra inventada)
   const projectionData = calculateDividendProjection(activeTickers);
 
   // Datos para los 3 roscos de distribución (sector, divisa, empresa)
@@ -3862,9 +3869,6 @@ function renderPortfolioCharts(tickers) {
   const companyBreakdown = calculateAllocationBreakdown(activePositions, p => p.ticker, 8);
 
   return `
-    <div style="padding:14px">
-      ${renderChartsSelector(tickers)}
-
       <!-- Fila de roscos: distribución por sector / divisa / empresa -->
       <div class="charts-donut-row">
         <div class="chart-card">
@@ -3885,7 +3889,7 @@ function renderPortfolioCharts(tickers) {
       <div class="charts-grid-main">
         <!-- Gráfico 1: Evolución de cartera -->
         <div class="chart-card">
-          <h4>📈 Evolución ${selected === 'Todas' ? 'de la cartera' : `de ${esc(selected)}`}</h4>
+          <h4>📈 Evolución de la cartera</h4>
           ${buildPortfolioChartSVG(portfolioData, period)}
         </div>
 
@@ -3901,14 +3905,98 @@ function renderPortfolioCharts(tickers) {
           ${buildDividendChartSVG(divData, divPeriod)}
         </div>
 
-        <!-- Gráfico 3: Proyección de dividendos -->
+        <!-- Gráfico 3: Dividendos futuros (estimados según el histórico de subidas de dividendo de la cartera) -->
         <div class="chart-card" style="grid-column:1/-1">
-          <h4>🚀 Dividendos futuros</h4>
+          <h4>🚀 Dividendos futuros (estimación según histórico)</h4>
           ${buildDividendProjectionSVG(projectionData)}
         </div>
       </div>
-    </div>
   `;
+}
+
+// ─── Vista de gráficos para UNA empresa concreta (dropdown ≠ "Todas") ─────
+// Muestra: cotización histórica, dividendos repartidos, deuda histórica,
+// free cash flow histórico y recompras de acciones históricas.
+function renderCompanyFundamentalCharts(ticker) {
+  const cache = state._portfolioCharts.companyData[ticker];
+
+  if (!cache || cache.loading) {
+    loadCompanyChartsData(ticker); // no-op si ya está cargando (protegido dentro de la función)
+    return `<div style="padding:40px 20px;text-align:center;color:#94a3b8">
+      <div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto 16px"></div>
+      <p style="font-weight:600;color:#475569">Cargando datos de ${esc(ticker)}...</p>
+      <p style="font-size:12px">Cotización, dividendos, deuda, FCF y recompras históricas</p>
+    </div>`;
+  }
+
+  const ph = cache.priceHistory;
+  const fd = cache.fundamentals;
+  const years = fd?.years || [];
+  const hasFund = !!(fd && years.length);
+
+  const divAmounts = ph?.divYears?.length ? ph.divYears.map(yr => ph.divByYear[yr]) : [];
+
+  const fundamentalsFallback = `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">
+      ${!state.fmpKey ? 'Configura una API key de Financial Modeling Prep en la pestaña Valoración para ver estos datos' : 'Datos no disponibles para este ticker ahora mismo'}
+    </h4>${noDataMsg()}</div>`;
+
+  return `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        ${logoImg(ticker, ticker, 32)}
+        <h3 style="font-size:15px;font-weight:700;color:#1e293b;margin:0">${esc(ticker)}</h3>
+        <button onclick="state._portfolioCharts.companyData['${esc(ticker)}']=null;renderActiveTab()"
+          style="margin-left:auto;padding:4px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;background:#fff;color:#64748b;cursor:pointer">🔄 Actualizar</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px">
+        <!-- 1. Cotización histórica -->
+        ${ph?.priceItems?.length
+          ? priceLineChart(`📈 Cotización histórica de ${esc(ticker)}`, ph.priceItems)
+          : `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📈 Cotización histórica</h4>${noDataMsg()}</div>`}
+
+        <!-- 2. Dividendos históricos repartidos por la empresa -->
+        ${ph?.divYears?.length
+          ? divBarChart(`💰 Dividendos repartidos por ${esc(ticker)}`, ph.divYears, divAmounts)
+          : `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">💰 Dividendos históricos</h4>
+              <div style="padding:24px;text-align:center;color:#94a3b8;font-size:12px;background:#fafafa;border-radius:10px;border:1px solid #e2e8f0">
+                ${esc(ticker)} no ha repartido dividendos en los últimos 10 años, o no hay datos disponibles.
+              </div></div>`}
+
+        <!-- 3. Deuda neta histórica -->
+        ${hasFund
+          ? barLineChart(`🏦 Deuda neta histórica de ${esc(ticker)}`, years, [{ label: 'Deuda neta', values: fd.net_debt || [], color: '#dc2626' }], 'M€')
+          : fundamentalsFallback}
+
+        <!-- 4. Free Cash Flow histórico -->
+        ${hasFund
+          ? barLineChart(`💵 Free Cash Flow histórico de ${esc(ticker)}`, years, [{ label: 'FCF', values: fd.fcf || [], color: '#16a34a' }], 'M€')
+          : fundamentalsFallback}
+
+        <!-- 5. Recompras de acciones históricas -->
+        ${hasFund
+          ? barLineChart(`🔁 Recompras de acciones de ${esc(ticker)}`, years, [{ label: 'Recompras', values: fd.buybacks || [], color: '#7c3aed' }], 'M€')
+          : fundamentalsFallback}
+      </div>
+  `;
+}
+
+// Carga (una vez, con caché) los datos de precio/dividendos/fundamentales de UNA empresa
+async function loadCompanyChartsData(ticker) {
+  if (!state._portfolioCharts.companyData) state._portfolioCharts.companyData = {};
+  if (state._portfolioCharts.companyData[ticker]?.loading) return; // ya en curso
+  state._portfolioCharts.companyData[ticker] = { loading: true };
+
+  try {
+    const [priceHistory, fundamentals] = await Promise.all([
+      fetchPriceAndDividendHistory(ticker),
+      fetchFundamentals(ticker)
+    ]);
+    state._portfolioCharts.companyData[ticker] = { loading: false, priceHistory, fundamentals };
+  } catch (e) {
+    console.warn(`Error cargando datos de ${ticker}:`, e.message);
+    state._portfolioCharts.companyData[ticker] = { loading: false, priceHistory: null, fundamentals: null };
+  }
+
+  if (state.activeTab === 4) renderActiveTab();
 }
 
 // Calcula el reparto de valor (en EUR) de un conjunto de posiciones agrupado por
@@ -4039,8 +4127,16 @@ function calculateDividendProjection(tickers) {
   const sortedDivs = [...divs].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const firstYear = new Date(sortedDivs[0].date).getFullYear();
   const lastYear = new Date(sortedDivs[sortedDivs.length-1].date).getFullYear();
-  const firstAmount = sortedDivs.reduce((s, d) => s + (d.amount || 0) * (d.shares || 1), 0);
-  const lastAmount = sortedDivs.reduce((s, d) => s + (d.amount || 0) * (d.shares || 1), 0);
+
+  // Agrupar el importe total cobrado por año natural, para comparar el primer y el último
+  // año completo de forma correcta (antes se sumaba todo el histórico dos veces).
+  const byYear = {};
+  sortedDivs.forEach(d => {
+    const yr = new Date(d.date).getFullYear();
+    byYear[yr] = (byYear[yr] || 0) + (d.amount || 0) * (d.shares || 1);
+  });
+  const firstAmount = byYear[firstYear] || 0;
+  const lastAmount = byYear[lastYear] || 0;
   
   const yearsDiff = lastYear - firstYear || 1;
   const cagr = Math.pow(lastAmount / (firstAmount || 1), 1 / yearsDiff) - 1;
@@ -4918,6 +5014,7 @@ function _buildFundamentalsResult(years, inc, cf, bs, km, curPrice) {
     const fcf_per_share = cf.map((x,i) => x.freeCashFlow != null && inc[i]?.weightedAverageShsOut
       ? +(x.freeCashFlow / inc[i].weightedAverageShsOut).toFixed(2) : null);
     const net_debt    = bs.map(x => { const d=x.totalDebt??x.longTermDebt??0; const c=x.cashAndCashEquivalents??0; return +((d-c)/M).toFixed(0); });
+    const buybacks    = cf.map(x => x.commonStockRepurchased != null ? +(Math.abs(x.commonStockRepurchased) / M).toFixed(0) : null);
     const debt_ebitda = net_debt.map((nd, i) => ebitda_arr[i] ? +(nd / ebitda_arr[i]).toFixed(2) : null);
     const interest_coverage = km.map(x => x.interestCoverage != null ? +x.interestCoverage.toFixed(1) : null);
     const roe  = km.map(x => x.roe  != null ? +(x.roe  * 100).toFixed(1) : null);
@@ -4928,7 +5025,7 @@ function _buildFundamentalsResult(years, inc, cf, bs, km, curPrice) {
     const price_hist = years.map((_, i) => i === years.length - 1 ? curPrice : null);
     return { years, revenue, ebit, net_income, cfo, fcf, gross_margin, ebit_margin, net_margin,
              net_debt, debt_ebitda, interest_coverage, eps, fcf_per_share, price_hist,
-             pe_hist, pfcf_hist, ev_ebitda_hist, roe, roic };
+             pe_hist, pfcf_hist, ev_ebitda_hist, roe, roic, buybacks };
   }
   return null;
 }
@@ -5010,6 +5107,7 @@ function _parseQS(json, ticker) {
   const gm        =inc.map(x=>{const g=getV(x,"grossProfit"),rv=getV(x,"totalRevenue");return g&&rv?+((g/rv)*100).toFixed(1):null;});
   const ebitda_arr=inc.map((x,i)=>{const e=(ebit[i]||0)*M;const da=Math.abs(getV(x,"depreciationAndAmortization")||0);return e+da>0?+((e+da)/M).toFixed(0):null;});
   const nd        =bs.map(x=>{const d=getV(x,"longTermDebt","totalDebt")||0;const c=getV(x,"cash","cashAndCashEquivalents")||0;return +((d-c)/M).toFixed(0);});
+  const buybacks_r=cf.map(x=>{const v=getV(x,"repurchaseOfStock");return v!=null?+(Math.abs(v)/M).toFixed(0):null;});
   const eps       =inc.map(x=>{const v=getV(x,"basicEPS","dilutedEPS");return v!=null?+v.toFixed(2):null;});
   const shares    =getV(ks,"sharesOutstanding")||1;
   const fsh       =fcf.map(f=>f!=null?+((f*M)/shares).toFixed(2):null);
@@ -5024,7 +5122,7 @@ function _parseQS(json, ticker) {
     eps,fcf_per_share:fsh,price_hist:years.map((_,i)=>i===years.length-1?curP:null),
     pe_hist:eps.map(e=>e&&curP?+(curP/e).toFixed(1):null),
     pfcf_hist:fsh.map(f=>f&&f>0&&curP?+(curP/f).toFixed(1):null),
-    ev_ebitda_hist:years.map(()=>null),roe:roe_r,roic:roic_r};
+    ev_ebitda_hist:years.map(()=>null),roe:roe_r,roic:roic_r,buybacks:buybacks_r};
 }
 
 async function _fetchYahooQS(ticker) {
@@ -5097,6 +5195,8 @@ async function _fetchYahooTimeSeries(ticker) {
       const totalDebt   = Array.from({length:n},(_,i)=>getTS("annualTotalDebt",i));
       const cash        = Array.from({length:n},(_,i)=>getTS("annualCashAndCashEquivalents",i));
       const net_debt    = totalDebt.map((d,i)=>{ const c=cash[i]||0; return d!=null?+((d-c)/M).toFixed(0):null; });
+      const buybacks_raw = Array.from({length:n},(_,i)=>getTS("annualRepurchaseOfCapitalStock",i));
+      const buybacks    = buybacks_raw.map(v => v!=null ? +(Math.abs(v)/M).toFixed(0) : null);
       const debt_ebitda = net_debt.map((nd,i)=>ebitda_arr[i]&&ebitda_arr[i]>0?clamp(+(nd/ebitda_arr[i]).toFixed(2),-5,20):null);
       // ROE: Yahoo lo devuelve como ratio decimal (0.15 = 15%) — filtrar valores absurdos
       const roe         = Array.from({length:n},(_,i)=>{ const v=getTS("annualReturnOnEquity",i); return v!=null?clamp(+(v*100).toFixed(1),-60,100):null; });
@@ -5130,7 +5230,7 @@ async function _fetchYahooTimeSeries(ticker) {
       const result = { years, revenue, ebit, net_income, cfo, fcf, gross_margin, ebit_margin, net_margin,
         net_debt, debt_ebitda, interest_coverage, eps, fcf_per_share,
         price_hist: years.map((_,i)=>i===years.length-1?curP:null),
-        pe_hist, pfcf_hist, ev_ebitda_hist: years.map(()=>null), roe, roic };
+        pe_hist, pfcf_hist, ev_ebitda_hist: years.map(()=>null), roe, roic, buybacks };
 
       console.log(`fetchFundamentals [Yahoo TS] OK: ${ticker}`, years);
       return result;
