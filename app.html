@@ -326,6 +326,21 @@ function translateAuthError(msg){
   return m; // si no reconocemos el mensaje, mostramos el original tal cual
 }
 
+// Cuando el mensaje de Supabase no aporta nada útil (vacío, "{}", etc.) añadimos
+// el detalle técnico crudo (status/código/objeto) para poder diagnosticar sin consola.
+function formatSupabaseError(error) {
+  if (!error) return 'Error desconocido';
+  const translated = translateAuthError(error.message);
+  const extra = [];
+  if (error.status) extra.push(`HTTP ${error.status}`);
+  if (error.code) extra.push(`código: ${error.code}`);
+  let out = translated + (extra.length ? ` (${extra.join(', ')})` : '');
+  if (!translated || translated.trim().length < 3 || translated.trim() === '{}') {
+    try { out += '\n\nDetalle técnico: ' + JSON.stringify(error); } catch(e) { out += '\n\nDetalle técnico no disponible'; }
+  }
+  return out;
+}
+
 async function doRegister() {
   const email = document.getElementById('login-user')?.value.trim().toLowerCase();
   const password = document.getElementById('login-pass')?.value;
@@ -344,7 +359,7 @@ async function doRegister() {
 
     if (error) {
       console.error('doRegister: error de Supabase →', error);
-      alert('Error al crear la cuenta: ' + translateAuthError(error.message));
+      alert('Error al crear la cuenta: ' + formatSupabaseError(error));
       return;
     }
 
@@ -376,7 +391,7 @@ async function doLogin() {
 
     if (error) {
       console.error('doLogin: error de Supabase →', error);
-      alert('Error al iniciar sesión: ' + translateAuthError(error.message));
+      alert('Error al iniciar sesión: ' + formatSupabaseError(error));
       return;
     }
 
