@@ -252,6 +252,30 @@ function formatSupabaseError(error) {
   return out;
 }
 
+// Un 504/503/AuthRetryableFetchError normalmente es un fallo transitorio de la
+// puerta de enlace de Supabase (p.ej. la instancia "Nano" tardando en responder),
+// no un error de la app. Supabase marca estos como seguros para reintentar.
+function isRetryableAuthError(error) {
+  if (!error) return false;
+  if (error.name === 'AuthRetryableFetchError') return true;
+  if ([502, 503, 504].includes(error.status)) return true;
+  if (/timeout|gateway/i.test(error.message || '')) return true;
+  return false;
+}
+
+async function withAuthRetry(fn, { retries = 2, delayMs = 1500, onRetry } = {}) {
+  let result;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    result = await fn();
+    if (!result.error || !isRetryableAuthError(result.error)) return result;
+    if (attempt < retries) {
+      onRetry?.(attempt + 1, retries);
+      await new Promise(r => setTimeout(r, delayMs * (attempt + 1)));
+    }
+  }
+  return result;
+}
+
 async function register(){
   const email = document.getElementById('email').value.trim().toLowerCase();
   const password = document.getElementById('pass').value;
@@ -262,7 +286,10 @@ async function register(){
   if (btn) { btn.disabled = true; btn.textContent = 'Creando cuenta...'; }
 
   try {
-    const { data, error } = await supabaseClient.auth.signUp({ email, password });
+    const { data, error } = await withAuthRetry(
+      () => supabaseClient.auth.signUp({ email, password }),
+      { onRetry: (n, total) => { if (btn) btn.textContent = `Reintentando (${n}/${total})...`; } }
+    );
 
     if (error) {
       console.error('register: error de Supabase →', error);
@@ -298,8 +325,16 @@ async function register(){
 async function login(){
   const email = document.getElementById('email').value.trim().toLowerCase();
   const password = document.getElementById('pass').value;
+
+  const btn = document.querySelector('button[onclick="login()"]');
+  const btnLabel = btn?.textContent;
+  if (btn) btn.disabled = true;
+
   try {
-    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    const { data, error } = await withAuthRetry(
+      () => supabaseClient.auth.signInWithPassword({ email, password }),
+      { onRetry: (n, total) => { if (btn) btn.textContent = `Reintentando (${n}/${total})...`; } }
+    );
     if(error) { console.error('login: error de Supabase →', error); return alert('Error al iniciar sesión: ' + formatSupabaseError(error)); }
     user = data.user;
     await loadProfile();
@@ -307,6 +342,8 @@ async function login(){
   } catch (e) {
     console.error('login: excepción no controlada →', e);
     alert('Fallo de conexión al iniciar sesión: ' + (e?.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btnLabel; }
   }
 }
 async function logout(){ await supabaseClient.auth.signOut(); user=null; profile={ plan:'free', trial_start:null, trial_end:null, status:'free' }; refreshUI(); }
