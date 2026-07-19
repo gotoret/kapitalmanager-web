@@ -192,15 +192,29 @@ function refreshUI(){
 
 async function loadProfile(){
   if(!user) return;
-  const { data } = await supabaseClient.from('profiles').select('*').eq('id', user.id).maybeSingle();
-  if(data){ profile = { ...profile, ...data }; }
-  else {
-    // NUEVO USUARIO: Asignar plan BETA automáticamente
-    const now = new Date();
-    // Beta sin fecha de expiración (o una fecha muy lejana)
-    const betaEnd = new Date(now.getTime() + 365*86400000).toISOString();
-    profile = { plan:'beta', status:'active', trial_start: now.toISOString(), trial_end:betaEnd, max_positions: 9999 };
-    await supabaseClient.from('profiles').upsert({ id:user.id, email:user.email, ...profile, max_positions: 9999 });
+  try {
+    const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', user.id).maybeSingle();
+    if (error) {
+      console.error('loadProfile: error leyendo el perfil →', error);
+      alert('No se pudo cargar tu perfil: ' + error.message);
+      return;
+    }
+    if(data){ profile = { ...profile, ...data }; }
+    else {
+      // NUEVO USUARIO: Asignar plan BETA automáticamente
+      const now = new Date();
+      // Beta sin fecha de expiración (o una fecha muy lejana)
+      const betaEnd = new Date(now.getTime() + 365*86400000).toISOString();
+      profile = { plan:'beta', status:'active', trial_start: now.toISOString(), trial_end:betaEnd, max_positions: 9999 };
+      const { error: upErr } = await supabaseClient.from('profiles').upsert({ id:user.id, email:user.email, ...profile, max_positions: 9999 });
+      if (upErr) {
+        console.error('loadProfile: error creando el perfil →', upErr);
+        alert('Se creó tu cuenta pero no se pudo inicializar tu perfil: ' + upErr.message);
+      }
+    }
+  } catch (e) {
+    console.error('loadProfile: excepción no controlada →', e);
+    alert('Fallo de conexión al cargar tu perfil: ' + (e?.message || e));
   }
   refreshUI();
 }
@@ -228,12 +242,43 @@ async function register(){
   const password = document.getElementById('pass').value;
   if(!email || !password) return alert('Introduce correo y contraseña');
   if(password.length < 6) return alert('La contraseña debe tener al menos 6 caracteres');
-  const { data, error } = await supabaseClient.auth.signUp({ email, password });
-  if(error) return alert(translateAuthError(error.message));
-  user = data.user;
-  await loadProfile(); // Esto asignará el plan Beta automáticamente
-  alert('🎉 Cuenta creada con acceso Beta gratuito a todos los planes.');
-  refreshUI();
+
+  const btn = document.querySelector('button[onclick="register()"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creando cuenta...'; }
+
+  try {
+    const { data, error } = await supabaseClient.auth.signUp({ email, password });
+
+    if (error) {
+      console.error('register: error de Supabase →', error);
+      return alert('Error al crear la cuenta: ' + translateAuthError(error.message));
+    }
+
+    // Supabase, por seguridad (anti-enumeración), NO devuelve error si el correo ya
+    // está registrado: devuelve un "usuario" con identities:[] y sin sesión.
+    if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      return alert('Ya existe una cuenta con ese correo.\n\nSi es tuya, prueba a "Iniciar sesión". Si no confirmaste el correo al registrarte, revisa tu bandeja de entrada.');
+    }
+
+    if (!data?.session) {
+      // El proyecto tiene activada la confirmación por email: el usuario se ha creado
+      // pero todavía no hay sesión activa, así que NO se puede crear su perfil todavía
+      // (fallaría por Row Level Security). Hay que esperar a que confirme el correo.
+      alert('✅ Cuenta creada.\n\nTe hemos enviado un correo a ' + email + ' para confirmar tu cuenta. Ábrelo y confirma antes de iniciar sesión.');
+      return;
+    }
+
+    // El proyecto no requiere confirmación por email: ya hay sesión activa, seguimos.
+    user = data.user;
+    await loadProfile();
+    alert('🎉 Cuenta creada con acceso Beta gratuito a todos los planes.');
+    refreshUI();
+  } catch (e) {
+    console.error('register: excepción no controlada →', e);
+    alert('Fallo de conexión al crear la cuenta: ' + (e?.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Crear cuenta'; }
+  }
 }
 async function login(){
   const email = document.getElementById('email').value.trim().toLowerCase();
