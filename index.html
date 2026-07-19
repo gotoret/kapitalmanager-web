@@ -227,7 +227,7 @@ function translateAuthError(msg){
     [/user already registered/i, 'Ya existe una cuenta con ese correo'],
     [/email not confirmed/i, 'Debes confirmar tu correo electrónico antes de iniciar sesión'],
     [/invalid email/i, 'El correo electrónico no es válido'],
-    [/network error|failed to fetch/i, 'Error de conexión. Comprueba tu internet e inténtalo de nuevo'],
+    [/load failed|network error|failed to fetch|networkerror when attempting to fetch/i, 'No se pudo conectar con el servidor. Comprueba tu conexión a internet (o desactiva VPN / bloqueadores de contenido en Safari) e inténtalo de nuevo. Si sigue fallando, puede que el servicio esté temporalmente caído.'],
     [/rate limit/i, 'Demasiados intentos. Espera un momento y vuelve a intentarlo'],
   ];
   for (const [re, replacement] of map) {
@@ -235,6 +235,21 @@ function translateAuthError(msg){
     if (match) return typeof replacement === 'function' ? replacement(match) : replacement;
   }
   return m; // si no reconocemos el mensaje, mostramos el original tal cual
+}
+
+// Cuando el mensaje de Supabase no aporta nada útil (vacío, "{}", etc.) añadimos
+// el detalle técnico crudo (status/código/objeto) para poder diagnosticar sin consola.
+function formatSupabaseError(error) {
+  if (!error) return 'Error desconocido';
+  const translated = translateAuthError(error.message);
+  const extra = [];
+  if (error.status) extra.push(`HTTP ${error.status}`);
+  if (error.code) extra.push(`código: ${error.code}`);
+  let out = translated + (extra.length ? ` (${extra.join(', ')})` : '');
+  if (!translated || translated.trim().length < 3 || translated.trim() === '{}') {
+    try { out += '\n\nDetalle técnico: ' + JSON.stringify(error); } catch(e) { out += '\n\nDetalle técnico no disponible'; }
+  }
+  return out;
 }
 
 async function register(){
@@ -251,7 +266,7 @@ async function register(){
 
     if (error) {
       console.error('register: error de Supabase →', error);
-      return alert('Error al crear la cuenta: ' + translateAuthError(error.message));
+      return alert('Error al crear la cuenta: ' + formatSupabaseError(error));
     }
 
     // Supabase, por seguridad (anti-enumeración), NO devuelve error si el correo ya
@@ -285,7 +300,7 @@ async function login(){
   const password = document.getElementById('pass').value;
   try {
     const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-    if(error) { console.error('login: error de Supabase →', error); return alert('Error al iniciar sesión: ' + translateAuthError(error.message)); }
+    if(error) { console.error('login: error de Supabase →', error); return alert('Error al iniciar sesión: ' + formatSupabaseError(error)); }
     user = data.user;
     await loadProfile();
     if (hasAccess()) location.href = 'app.html';
