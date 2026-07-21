@@ -2692,15 +2692,15 @@ function renderHeader() {
   document.getElementById("metrics-grid").innerHTML = `
     <div class="metric-card" style="border-left:3px solid #2563eb"><div class="metric-label">INVERTIDO</div><div class="metric-value" style="color:#2563eb">${fmtEUR(totals.inv)}</div></div>
     <div class="metric-card" style="border-left:3px solid #0284c7"><div class="metric-label">VALOR ACTUAL</div><div class="metric-value" style="color:#0284c7">${fmtEUR(totals.cur)}</div></div>
-    <div class="metric-card" style="padding:0;display:flex;overflow:hidden">
-      <div style="flex:1;padding:8px 10px;border-left:3px solid ${pc}">
-        <div class="metric-label">G/P</div>
-        <div class="metric-value" style="color:${pc}">${pnl>=0?"+":""}${fmtEUR(Math.abs(pnl))}</div>
+    <div class="metric-card" style="border-left:3px solid ${pc};padding:8px 10px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <div class="metric-label" style="margin-bottom:0">G/P</div>
+        <div class="metric-value" style="color:${pc};font-size:14px">${pnl>=0?"+":""}${fmtEUR(Math.abs(pnl))}</div>
       </div>
-      <div style="width:1px;background:#e2e8f0;margin:8px 0"></div>
-      <div style="flex:1;padding:8px 10px;border-left:3px solid ${pc}">
-        <div class="metric-label">RENTAB.</div>
-        <div class="metric-value" style="color:${pc}">${fmtPct(pct)}</div>
+      <div style="height:1px;background:#e2e8f0;margin:5px 0"></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <div class="metric-label" style="margin-bottom:0">RENTAB.</div>
+        <div class="metric-value" style="color:${pc};font-size:14px">${fmtPct(pct)}</div>
       </div>
     </div>
     <div class="metric-card" style="border-left:3px solid #16a34a;cursor:pointer" onclick="openDividendCashModal()" title="Dinero acumulado en dividendos cobrados, disponible para reinvertir"><div class="metric-label">💵 CAJA DIVIDENDOS ℹ️</div><div class="metric-value" style="color:#16a34a">${fmtEUR(divCash)}</div></div>
