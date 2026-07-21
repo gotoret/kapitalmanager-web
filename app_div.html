@@ -1566,6 +1566,8 @@ function exportCarteraExcel() {
     }));
 
     // ── Hoja oculta _BACKUP: JSON completo para restauración exacta ──
+    // OJO: Excel limita cada celda a 32.767 caracteres, así que el JSON se trocea en
+    // varias filas (una por trozo) y se reconstruye concatenando al importar.
     const backup = {
       _version: "kapital-v2",
       _exportDate: new Date().toISOString(),
@@ -1578,9 +1580,13 @@ function exportCarteraExcel() {
       yieldCache: state.yieldCache || {},
       fxCache: state.fxCache || {}
     };
-    const backupRows = [
-      { "_BACKUP_JSON (no editar)": JSON.stringify(backup) }
-    ];
+    const backupJson = JSON.stringify(backup);
+    const CHUNK_SIZE = 30000; // margen de seguridad bajo el límite de 32767
+    const backupChunks = [];
+    for (let i = 0; i < backupJson.length; i += CHUNK_SIZE) {
+      backupChunks.push(backupJson.slice(i, i + CHUNK_SIZE));
+    }
+    const backupRows = backupChunks.map((chunk, i) => ({ "_BACKUP_JSON (no editar)": chunk, "_parte": i + 1 }));
 
     const wb = XLSX.utils.book_new();
 
@@ -1604,7 +1610,7 @@ function exportCarteraExcel() {
     XLSX.utils.book_append_sheet(wb, wsDivE, "Dividendos esperados");
 
     const wsBak = XLSX.utils.json_to_sheet(backupRows);
-    wsBak["!cols"] = [{wch:200}];
+    wsBak["!cols"] = [{wch:200},{wch:8}];
     XLSX.utils.book_append_sheet(wb, wsBak, "_BACKUP");
 
     XLSX.writeFile(wb, `KapitalManager_${fecha}.xlsx`);
@@ -2243,7 +2249,11 @@ async function parseImportFile() {
       if (wb.SheetNames.includes("_BACKUP")) {
         const bakSheet = wb.Sheets["_BACKUP"];
         const bakRows = XLSX.utils.sheet_to_json(bakSheet, { header: 1, raw: false, defval: "" });
-        const jsonStr = bakRows[1]?.[0] || bakRows[0]?.[1] || "";
+        // El JSON puede venir troceado en varias filas (Excel limita cada celda a 32767
+        // caracteres); reconstruimos concatenando los trozos en orden de "_parte".
+        const dataRows = bakRows.slice(1).filter(r => r[0]);
+        dataRows.sort((a, b) => (parseInt(a[1]) || 0) - (parseInt(b[1]) || 0));
+        const jsonStr = dataRows.map(r => r[0]).join("") || bakRows[1]?.[0] || bakRows[0]?.[1] || "";
         try {
           const backup = JSON.parse(jsonStr);
           if (!backup?.positions) throw new Error("JSON sin positions");
