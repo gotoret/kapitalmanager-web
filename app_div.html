@@ -230,6 +230,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
       <button id="refresh-btn" class="btn" style="padding:5px 12px;font-size:12px" onclick="refreshPrices()">↻ Actualizar</button>
       <button class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="openPriceSourcesModal()" title="Configurar fuentes de precios">⚙️</button>
       <span id="user-email-label" style="font-size:11px;color:#475569;font-weight:600;margin-left:6px"></span>
+      <span id="pos-alert-badge"></span>
       <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="location.href='index.html'">📦 Mi plan</button>
       <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="doLogout()">🚪 Salir</button>
     </div>
@@ -1502,97 +1503,111 @@ function openSnapshotCartera(btnEl) {
 }
 
 function exportCarteraExcel() {
-  const fecha = new Date().toISOString().slice(0, 10);
+  try {
+    if (!state.positions?.length) {
+      alert('Tu cartera está vacía — añade alguna posición antes de exportar.');
+      return;
+    }
+    const fecha = new Date().toISOString().slice(0, 10);
 
-  // ── Hoja 1: Cartera (posiciones actuales con precios y P&L) ──
-  const posRows = state.positions.map(p => {
-    const cp = state.priceCache[p.ticker];
-    const di = state.divInfo?.find(d => d.ticker === p.ticker);
-    const costeTotal = +(p.shares * p.avg_cost).toFixed(2);
-    const valorActual = cp ? +(p.shares * cp).toFixed(2) : costeTotal;
-    const pnl = +(valorActual - costeTotal).toFixed(2);
-    return {
-      "Ticker": p.ticker, "Empresa": p.name || "", "Acciones": p.shares,
-      "Coste medio": +p.avg_cost.toFixed(4), "Coste total": costeTotal,
-      "Precio actual": cp ? +cp.toFixed(4) : "", "Valor actual": valorActual,
-      "P&L (€)": pnl, "P&L (%)": costeTotal ? +((pnl/costeTotal)*100).toFixed(2) : 0,
-      "Divisa": p.currency || "EUR", "Sector": p.sector || "",
-      "Yield (%)": di ? +((di.div_yield||0)*100).toFixed(2) : "",
-      "Ingreso anual (€)": di ? +(di.annual_income||0).toFixed(2) : "",
-      "Fecha entrada": p.date || "", "FX compra": p.fx_rate || 1
+    // ── Hoja 1: Cartera (posiciones actuales con precios y P&L) ──
+    const posRows = state.positions.map(p => {
+      const cp = state.priceCache[p.ticker];
+      const di = state.divInfo?.find(d => d.ticker === p.ticker);
+      const shares = Number(p.shares) || 0;
+      const avgCost = Number(p.avg_cost) || 0;
+      const costeTotal = +(shares * avgCost).toFixed(2);
+      const valorActual = cp ? +(shares * cp).toFixed(2) : costeTotal;
+      const pnl = +(valorActual - costeTotal).toFixed(2);
+      return {
+        "Ticker": p.ticker, "Empresa": p.name || "", "Acciones": shares,
+        "Coste medio": +avgCost.toFixed(4), "Coste total": costeTotal,
+        "Precio actual": cp ? +cp.toFixed(4) : "", "Valor actual": valorActual,
+        "P&L (€)": pnl, "P&L (%)": costeTotal ? +((pnl/costeTotal)*100).toFixed(2) : 0,
+        "Divisa": p.currency || "EUR", "Sector": p.sector || "",
+        "Yield (%)": di ? +((di.div_yield||0)*100).toFixed(2) : "",
+        "Ingreso anual (€)": di ? +(di.annual_income||0).toFixed(2) : "",
+        "Fecha entrada": p.date || "", "FX compra": p.fx_rate || 1
+      };
+    });
+
+    // ── Hoja 2: Transacciones (historial completo) ──
+    const txRows = [...(state.transactions||[])]
+      .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
+      .map(t=>({
+        "Fecha": (t.date||"").slice(0,10), "Ticker": t.ticker, "Tipo": t.type,
+        "Acciones": t.shares, "Precio": t.price, "Comisión": t.commission||0,
+        "Divisa": t.currency||"EUR", "Broker": t.broker||"", "Notas": t.notes||""
+      }));
+
+    // ── Hoja 3: Dividendos cobrados (historial real registrado) ──
+    const divCobrados = [...(state.dividends||[])]
+      .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
+      .map(d=>({
+        "Fecha": (d.date||"").slice(0,10), "Ticker": d.ticker,
+        "Acciones": d.shares, "Importe/acción": d.amount,
+        "Total cobrado": +((d.amount||0)*(d.shares||0)).toFixed(2),
+        "Divisa": d.currency||"EUR", "Notas": d.notes||""
+      }));
+
+    // ── Hoja 4: Dividendos esperados (proyección anual) ──
+    const divEsperados = (state.divInfo||[]).map(d=>({
+      "Ticker": d.ticker, "Empresa": d.name||"", "Acciones": d.shares,
+      "Div/acción": +((d.div_rate||0)).toFixed(4),
+      "Yield (%)": +((d.div_yield||0)*100).toFixed(2),
+      "Ingreso bruto anual": +(d.annual_income||0).toFixed(2),
+      "Retención (%)": +((retencionOrigenPct(d.ticker,d.currency)||0)*100).toFixed(1),
+      "Ingreso neto anual": +((d.annual_income||0)*(1-retencionOrigenPct(d.ticker,d.currency))).toFixed(2),
+      "Próx. ex-div": d.ex_date||"", "Frecuencia": d.freq||"—"
+    }));
+
+    // ── Hoja oculta _BACKUP: JSON completo para restauración exacta ──
+    const backup = {
+      _version: "kapital-v2",
+      _exportDate: new Date().toISOString(),
+      positions: state.positions,
+      transactions: state.transactions,
+      dividends: state.dividends || [],
+      dividendCashUsed: state.dividendCashUsed || [],
+      alerts: state.alerts || [],
+      goals: state.goals || [],
+      yieldCache: state.yieldCache || {},
+      fxCache: state.fxCache || {}
     };
-  });
+    const backupRows = [
+      { "_BACKUP_JSON (no editar)": JSON.stringify(backup) }
+    ];
 
-  // ── Hoja 2: Transacciones (historial completo) ──
-  const txRows = [...(state.transactions||[])]
-    .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
-    .map(t=>({
-      "Fecha": (t.date||"").slice(0,10), "Ticker": t.ticker, "Tipo": t.type,
-      "Acciones": t.shares, "Precio": t.price, "Comisión": t.commission||0,
-      "Divisa": t.currency||"EUR", "Broker": t.broker||"", "Notas": t.notes||""
-    }));
+    const wb = XLSX.utils.book_new();
 
-  // ── Hoja 3: Dividendos cobrados (historial real registrado) ──
-  const divCobrados = [...(state.dividends||[])]
-    .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
-    .map(d=>({
-      "Fecha": (d.date||"").slice(0,10), "Ticker": d.ticker,
-      "Acciones": d.shares, "Importe/acción": d.amount,
-      "Total cobrado": +((d.amount||0)*(d.shares||0)).toFixed(2),
-      "Divisa": d.currency||"EUR", "Notas": d.notes||""
-    }));
+    // Nota: json_to_sheet([]) puede lanzar excepción en algunas versiones de la librería,
+    // así que TODAS las hojas usan un placeholder cuando están vacías (antes solo "Cartera"
+    // no lo tenía, y era la causa real de que el botón no hiciera nada con listas vacías).
+    const wsPos = XLSX.utils.json_to_sheet(posRows.length ? posRows : [{"Info":"Sin posiciones registradas"}]);
+    wsPos["!cols"] = [8,22,10,12,12,12,12,10,10,8,18,10,14,12,8].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, wsPos, "Cartera");
 
-  // ── Hoja 4: Dividendos esperados (proyección anual) ──
-  const divEsperados = (state.divInfo||[]).map(d=>({
-    "Ticker": d.ticker, "Empresa": d.name||"", "Acciones": d.shares,
-    "Div/acción": +((d.div_rate||0)).toFixed(4),
-    "Yield (%)": +((d.div_yield||0)*100).toFixed(2),
-    "Ingreso bruto anual": +(d.annual_income||0).toFixed(2),
-    "Retención (%)": +((retencionOrigenPct(d.ticker,d.currency)||0)*100).toFixed(1),
-    "Ingreso neto anual": +((d.annual_income||0)*(1-retencionOrigenPct(d.ticker,d.currency))).toFixed(2),
-    "Próx. ex-div": d.ex_date||"", "Frecuencia": d.freq||"—"
-  }));
+    const wsTx = XLSX.utils.json_to_sheet(txRows.length ? txRows : [{"Info":"Sin transacciones registradas"}]);
+    wsTx["!cols"] = [12,10,8,10,10,10,8,30].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, wsTx, "Transacciones");
 
-  // ── Hoja oculta _BACKUP: JSON completo para restauración exacta ──
-  const backup = {
-    _version: "kapital-v2",
-    _exportDate: new Date().toISOString(),
-    positions: state.positions,
-    transactions: state.transactions,
-    dividends: state.dividends || [],
-    dividendCashUsed: state.dividendCashUsed || [],
-    alerts: state.alerts || [],
-    goals: state.goals || [],
-    yieldCache: state.yieldCache || {},
-    fxCache: state.fxCache || {}
-  };
-  const backupRows = [
-    { "_BACKUP_JSON (no editar)": JSON.stringify(backup) }
-  ];
+    const wsDivC = XLSX.utils.json_to_sheet(divCobrados.length ? divCobrados : [{"Info":"Sin dividendos cobrados registrados"}]);
+    wsDivC["!cols"] = [12,10,10,14,14,8,30].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, wsDivC, "Dividendos cobrados");
 
-  const wb = XLSX.utils.book_new();
+    const wsDivE = XLSX.utils.json_to_sheet(divEsperados.length ? divEsperados : [{"Info":"Sin posiciones con dividendo"}]);
+    wsDivE["!cols"] = [8,22,10,12,10,16,12,16,12,12].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, wsDivE, "Dividendos esperados");
 
-  const wsPos = XLSX.utils.json_to_sheet(posRows);
-  wsPos["!cols"] = [8,22,10,12,12,12,12,10,10,8,18,10,14,12,8].map(w=>({wch:w}));
-  XLSX.utils.book_append_sheet(wb, wsPos, "Cartera");
+    const wsBak = XLSX.utils.json_to_sheet(backupRows);
+    wsBak["!cols"] = [{wch:200}];
+    XLSX.utils.book_append_sheet(wb, wsBak, "_BACKUP");
 
-  const wsTx = XLSX.utils.json_to_sheet(txRows.length ? txRows : [{"Info":"Sin transacciones registradas"}]);
-  wsTx["!cols"] = [12,10,8,10,10,10,8,30].map(w=>({wch:w}));
-  XLSX.utils.book_append_sheet(wb, wsTx, "Transacciones");
-
-  const wsDivC = XLSX.utils.json_to_sheet(divCobrados.length ? divCobrados : [{"Info":"Sin dividendos cobrados registrados"}]);
-  wsDivC["!cols"] = [12,10,10,14,14,8,30].map(w=>({wch:w}));
-  XLSX.utils.book_append_sheet(wb, wsDivC, "Dividendos cobrados");
-
-  const wsDivE = XLSX.utils.json_to_sheet(divEsperados.length ? divEsperados : [{"Info":"Sin posiciones con dividendo"}]);
-  wsDivE["!cols"] = [8,22,10,12,10,16,12,16,12,12].map(w=>({wch:w}));
-  XLSX.utils.book_append_sheet(wb, wsDivE, "Dividendos esperados");
-
-  const wsBak = XLSX.utils.json_to_sheet(backupRows);
-  wsBak["!cols"] = [{wch:200}];
-  XLSX.utils.book_append_sheet(wb, wsBak, "_BACKUP");
-
-  XLSX.writeFile(wb, `KapitalManager_${fecha}.xlsx`);
+    XLSX.writeFile(wb, `KapitalManager_${fecha}.xlsx`);
+  } catch (e) {
+    console.error('exportCarteraExcel: error generando el Excel →', e);
+    alert('No se pudo generar el Excel: ' + (e?.message || e));
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -2676,9 +2691,20 @@ function renderHeader() {
     <div class="metric-card" style="border-left:3px solid ${pc}"><div class="metric-label">GANANCIA / PÉRDIDA</div><div class="metric-value" style="color:${pc}">${pnl>=0?"+":""}${fmtEUR(Math.abs(pnl))}</div></div>
     <div class="metric-card" style="border-left:3px solid ${pc}"><div class="metric-label">RENTABILIDAD</div><div class="metric-value" style="color:${pc}">${fmtPct(pct)}</div></div>
     <div class="metric-card" style="border-left:3px solid #16a34a;cursor:pointer" onclick="openDividendCashModal()" title="Dinero acumulado en dividendos cobrados, disponible para reinvertir"><div class="metric-label">💵 CAJA DIVIDENDOS ℹ️</div><div class="metric-value" style="color:#16a34a">${fmtEUR(divCash)}</div></div>
-    <div class="metric-card" style="border-left:3px solid #7c3aed"><div class="metric-label">POSICIONES</div><div class="metric-value" style="color:#7c3aed">${state.positions.length}</div></div>
-    <div class="metric-card" style="border-left:3px solid #b45309"><div class="metric-label">ALERTAS ACTIVAS</div><div class="metric-value" style="color:#b45309">${activeAlerts}</div>${triggered.length?`<div style="color:#94a3b8;font-size:10px;margin-top:2px">${triggered.length} disparada(s)</div>`:""}</div>
   `;
+
+  // Posiciones + Alertas: badge compacto junto al email, en vez de tarjetas en la cuadrícula
+  // principal (así queda más despejada).
+  const badgeEl = document.getElementById("pos-alert-badge");
+  if (badgeEl) {
+    badgeEl.innerHTML = `
+      <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:4px 10px;margin-left:6px">
+        <span style="color:#7c3aed;font-weight:700">${state.positions.length}</span><span style="color:#94a3b8">pos.</span>
+        <span style="color:#e2e8f0">|</span>
+        <span style="color:#b45309;font-weight:700">${activeAlerts}</span><span style="color:#94a3b8">alertas</span>
+        ${triggered.length?`<span style="color:#dc2626;font-weight:700">· ${triggered.length} disp.</span>`:""}
+      </span>`;
+  }
 
   const banner = document.getElementById("alert-banner");
   if (triggered.length) {
