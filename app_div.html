@@ -541,6 +541,7 @@ async function loadCloudData() {
       state.alerts = data.alerts || [];
       state.dividends = data.dividends || [];
       state.dividendCashUsed = data.dividend_cash_used || [];
+      state.goalConfig = data.goal_config || state.goalConfig;
       state.transactions = data.transactions || [];
       save(); // refresca la caché local con lo que viene de la nube
     } else {
@@ -564,17 +565,20 @@ async function saveCloud() {
     alerts: state.alerts,
     dividends: state.dividends,
     dividend_cash_used: state.dividendCashUsed,
+    goal_config: state.goalConfig,
     transactions: state.transactions,
     updated_at: new Date().toISOString()
   };
   try {
     const { error } = await supabaseClient.from('portfolios').upsert(payload, { onConflict: 'user_id' });
     if (error) {
-      // Si la columna dividend_cash_used todavía no existe en Supabase (falta la migración),
+      // Si alguna columna nueva todavía no existe en Supabase (falta la migración),
       // reintentamos sin ella para no perder el resto de la sincronización.
-      if (/column .*dividend_cash_used.* does not exist/i.test(error.message || '')) {
-        console.warn('saveCloud: falta la columna dividend_cash_used en Supabase (ver ALTER TABLE), guardando el resto sin ella.');
-        const { dividend_cash_used, ...rest } = payload;
+      const missingColMatch = /column .*"?([a-z_]+)"?.* does not exist/i.exec(error.message || '');
+      if (missingColMatch) {
+        console.warn(`saveCloud: falta la columna ${missingColMatch[1]} en Supabase (ver ALTER TABLE), guardando el resto sin ella.`);
+        const rest = { ...payload };
+        delete rest[missingColMatch[1]];
         const { error: error2 } = await supabaseClient.from('portfolios').upsert(rest, { onConflict: 'user_id' });
         if (error2) console.error('Error guardando cartera en la nube:', error2);
       } else {
@@ -661,6 +665,7 @@ let state = {
   alerts: ls.get("km_alerts", []),
   dividends: ls.get("km_dividends", []),
   dividendCashUsed: ls.get("km_dividend_cash_used", []),
+  goalConfig: ls.get("km_goal_config", { goal: 100000, pg: 7, dg: 3, contrib: 5000, yrs: 10, dy: 4, reinvest: true }),
   transactions: ls.get("km_transactions", []),
   priceCache: ls.get("km_priceCache", {}),
   priceChangeCache: ls.get("km_priceChangeCache", {}),
@@ -701,6 +706,7 @@ const save = () => {
   ls.set("km_alerts", state.alerts);
   ls.set("km_dividends", state.dividends);
   ls.set("km_dividend_cash_used", state.dividendCashUsed);
+  ls.set("km_goal_config", state.goalConfig);
   ls.set("km_transactions", state.transactions);
   if (state.authUserId) saveCloud();
 };
@@ -1575,6 +1581,7 @@ function exportCarteraExcel() {
       transactions: state.transactions,
       dividends: state.dividends || [],
       dividendCashUsed: state.dividendCashUsed || [],
+      goalConfig: state.goalConfig || {},
       alerts: state.alerts || [],
       goals: state.goals || [],
       yieldCache: state.yieldCache || {},
@@ -2270,6 +2277,7 @@ async function parseImportFile() {
             state.transactions = backup.transactions || [];
             state.dividends    = backup.dividends    || [];
             state.dividendCashUsed = backup.dividendCashUsed || [];
+            state.goalConfig     = backup.goalConfig     || state.goalConfig;
             state.alerts       = backup.alerts       || state.alerts;
             state.goals        = backup.goals        || state.goals;
             state.yieldCache   = backup.yieldCache   || {};
@@ -4812,14 +4820,15 @@ function buildDividendProjectionSVG(data) {
 // TAB 5 — OBJETIVOS
 // ─────────────────────────────────────────────
 function renderGoals() {
+  const gc = state.goalConfig || {};
   const curVal=state.positions.reduce((s,p)=>s+posValEUR(p),0);
-  const goal=parseFloat((document.getElementById("g-goal")||{}).value||100000);
-  const pg=parseFloat((document.getElementById("g-pg")||{}).value||7);
-  const dg=parseFloat((document.getElementById("g-dg")||{}).value||3);
-  const contrib=parseFloat((document.getElementById("g-contrib")||{}).value||5000);
-  const yrs=parseInt((document.getElementById("g-yrs")||{}).value||10);
-  const dy=parseFloat((document.getElementById("g-dy")||{}).value||4);
-  const reinvest=(document.getElementById("g-reinvest")||{checked:true}).checked;
+  const goal=parseFloat((document.getElementById("g-goal")||{}).value ?? gc.goal ?? 100000);
+  const pg=parseFloat((document.getElementById("g-pg")||{}).value ?? gc.pg ?? 7);
+  const dg=parseFloat((document.getElementById("g-dg")||{}).value ?? gc.dg ?? 3);
+  const contrib=parseFloat((document.getElementById("g-contrib")||{}).value ?? gc.contrib ?? 5000);
+  const yrs=parseInt((document.getElementById("g-yrs")||{}).value ?? gc.yrs ?? 10);
+  const dy=parseFloat((document.getElementById("g-dy")||{}).value ?? gc.dy ?? 4);
+  const reinvest=(document.getElementById("g-reinvest")||{checked: gc.reinvest !== false}).checked;
   const pct=goal>0?Math.min(curVal/goal*100,100):0;
   const bc=pct>=100?"#16a34a":pct>=50?"#f59e0b":"#3b82f6";
   const projTable=state._projData?`<div style="overflow-x:auto"><table style="min-width:500px">
@@ -4837,7 +4846,7 @@ function renderGoals() {
     <div style="display:grid;grid-template-columns:minmax(280px,300px) 1fr;gap:12px">
       <div class="card">
         <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">🎯 Objetivo de cartera</h4>
-        <div class="field"><label>Objetivo (€)</label><input id="g-goal" type="number" class="inp" value="${goal}" min="0" step="1000" oninput="renderActiveTab()"></div>
+        <div class="field"><label>Objetivo (€)</label><input id="g-goal" type="number" class="inp" value="${goal}" min="0" step="1000" oninput="saveGoalConfig();renderActiveTab()"></div>
         <div style="font-size:11px;color:#64748b;margin-top:8px">${pct<100?`Faltan ${fmtEUR(Math.max(goal-curVal,0))} para el objetivo`:"✅ ¡Objetivo alcanzado!"}</div>
       </div>
       <div class="card" style="display:flex;flex-direction:column;justify-content:center">
@@ -4861,7 +4870,21 @@ function renderGoals() {
   </div>`;
 }
 
+function saveGoalConfig() {
+  state.goalConfig = {
+    goal: parseFloat(document.getElementById("g-goal")?.value || 100000),
+    pg: parseFloat(document.getElementById("g-pg")?.value ?? state.goalConfig?.pg ?? 7),
+    dg: parseFloat(document.getElementById("g-dg")?.value ?? state.goalConfig?.dg ?? 3),
+    contrib: parseFloat(document.getElementById("g-contrib")?.value ?? state.goalConfig?.contrib ?? 5000),
+    yrs: parseInt(document.getElementById("g-yrs")?.value ?? state.goalConfig?.yrs ?? 10),
+    dy: parseFloat(document.getElementById("g-dy")?.value ?? state.goalConfig?.dy ?? 4),
+    reinvest: document.getElementById("g-reinvest")?.checked !== false
+  };
+  save();
+}
+
 function calcProjection() {
+  saveGoalConfig(); // recordar los parámetros para la próxima vez que abras esta pestaña
   const goal=parseFloat(document.getElementById("g-goal")?.value||100000);
   const pg=parseFloat(document.getElementById("g-pg")?.value||7)/100;
   const dg=parseFloat(document.getElementById("g-dg")?.value||3)/100;
@@ -5321,7 +5344,7 @@ async function _fetchFMP(ticker, key) {
         const km = Array.isArray(kD) && kD.length ? [...kD].reverse() : [];
         const years = inc.map(x => parseInt((x.calendarYear || x.date || "").slice(0,4)));
         const r = _buildFundamentalsResult(years, inc, cf, bs, km, 0);
-        if (r) { console.log(`fetchFundamentals [FMP] OK: ${t}`, years); return r; }
+        if (r) return r;
         errors.push(`FMP: _buildFundamentalsResult vacío para ${t}`);
       } catch(e) { errors.push(`${e.message} @ ${incUrl.slice(0,50)}`); }
     }
@@ -5383,7 +5406,7 @@ async function _fetchYahooQS(ticker) {
         continue;
       }
       const r = _parseQS(json, ticker);
-      if (r) { console.log(`fetchFundamentals [Yahoo QS] OK: ${ticker} via ${url.slice(0,60)}`); return r; }
+      if (r) return r;
       errors.push(`QS vacío @ ${url.slice(0,60)}`);
     } catch(e) { errors.push(`${e.message} @ ${url.slice(0,50)}`); }
   }
@@ -5476,7 +5499,6 @@ async function _fetchYahooTimeSeries(ticker) {
         price_hist: years.map((_,i)=>i===years.length-1?curP:null),
         pe_hist, pfcf_hist, ev_ebitda_hist: years.map(()=>null), roe, roic, buybacks };
 
-      console.log(`fetchFundamentals [Yahoo TS] OK: ${ticker}`, years);
       return result;
     } catch(e) { errors.push(`${e.message} @ ${url.slice(0,50)}`); }
   }
@@ -5602,7 +5624,6 @@ async function fetchPriceAndDividendHistory(ticker) {
         }
       }
 
-      console.log(`fetchPriceAndDividendHistory OK: ${ticker}, meses:${priceWithDD.length}, divYears:${divYears}`);
       return { priceItems: priceWithDD, divByYear, divYears, yieldByYear, divCagr, projYears, projAmounts };
     } catch(e) { console.warn("fetchPriceAndDividendHistory error:", e.message); }
   }
@@ -6224,24 +6245,6 @@ function openEditPos(ticker) {
   if (!isEUR) setTimeout(updateFXPreview, 50);
 }
 
-function saveEditPos(ticker) {
-  const idx=state.positions.findIndex(p=>p.ticker===ticker);
-  if(idx<0)return;
-  const currency = document.getElementById("m-cur").value;
-  const fxRawInput = +document.getElementById("m-fx-rate")?.value || 0;
-  const fx_rate = currency === "EUR" ? 1 : (fxRawInput > 0 ? fxRawInput : (state.positions[idx].fx_rate || 1));
-  state.positions[idx]={...state.positions[idx],
-    name:document.getElementById("m-name").value,
-    shares:+document.getElementById("m-shares").value,
-    avg_cost:+document.getElementById("m-cost").value,
-    currency,
-    sector:document.getElementById("m-sector").value,
-    date:document.getElementById("m-date").value,
-    fx_rate
-  };
-  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
-}
-
 function deletePosition(ticker) {
   const tk = ticker || state.selectedTicker;
   if (!tk) { alert("Selecciona una posición primero"); return; }
@@ -6328,10 +6331,12 @@ function deleteCartera() {
   const nPos = state.positions.length;
   const nTx  = state.transactions.length;
   const nDiv = (state.dividends||[]).length;
-  if (!confirm(`⚠️ ¿Seguro que quieres ELIMINAR TODA LA CARTERA?\n\n• ${nPos} posiciones\n• ${nTx} transacciones\n• ${nDiv} dividendos registrados\n\nEsta acción no se puede deshacer.`)) return;
+  const nUsos = (state.dividendCashUsed||[]).length;
+  if (!confirm(`⚠️ ¿Seguro que quieres ELIMINAR TODA LA CARTERA?\n\n• ${nPos} posiciones\n• ${nTx} transacciones\n• ${nDiv} dividendos registrados${nUsos?`\n• ${nUsos} usos de la Caja de Dividendos`:""}\n\nEsta acción no se puede deshacer.`)) return;
   state.positions    = [];
   state.transactions = [];
   state.dividends    = [];
+  state.dividendCashUsed = [];
   state.divInfo      = [];
   state.yieldCache   = {};
   state.priceCache   = {};
