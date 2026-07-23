@@ -689,6 +689,7 @@ let state = {
   dividends: ls.get("km_dividends", []),
   dividendCashUsed: ls.get("km_dividend_cash_used", []),
   goalConfig: ls.get("km_goal_config", { goal: 100000, pg: 7, dg: 3, contrib: 5000, yrs: 10, dy: 4, reinvest: true }),
+  autoRegisterEnabled: ls.get("km_auto_register_dividends", true),
   transactions: ls.get("km_transactions", []),
   priceCache: ls.get("km_priceCache", {}),
   priceChangeCache: ls.get("km_priceChangeCache", {}),
@@ -1122,6 +1123,7 @@ function buildDivInfo() {
 const FREQ_PAYMENTS_PER_YEAR = { "Mensual": 12, "Trimestral": 4, "Semestral": 2, "Anual": 1 };
 
 function autoRegisterDividends() {
+  if (!state.autoRegisterEnabled) return [];
   if (!state.dividends) state.dividends = [];
   if (!state.divInfo) return [];
   const today = new Date().toISOString().slice(0, 10);
@@ -1175,6 +1177,13 @@ function autoRegisterDividends() {
 
 function dismissAutoDividendBanner() {
   state._newAutoDividends = [];
+  renderActiveTab();
+}
+
+function toggleAutoRegisterDividends(checked) {
+  state.autoRegisterEnabled = checked;
+  ls.set("km_auto_register_dividends", checked);
+  if (checked) autoRegisterDividends(); // por si hay pagos pendientes que registrar ya mismo
   renderActiveTab();
 }
 
@@ -3800,13 +3809,21 @@ function renderDividends() {
 
   const newAutoCount = (state._newAutoDividends || []).filter(id => (state.dividends||[]).some(d=>d.id===id)).length;
   const autoBanner = newAutoCount ? `
-    <div style="background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <div style="background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <span style="font-size:13px;color:#854d0e">🤖 Se ${newAutoCount===1?'ha registrado':'han registrado'} automáticamente <b>${newAutoCount}</b> dividendo${newAutoCount===1?'':'s'} al llegar su fecha ex-dividendo. Revisa el importe y la fecha real de cobro (marcados con 🤖 en el historial de abajo).</span>
       <button class="btn-gray" style="margin-left:auto;font-size:11px;padding:4px 10px" onclick="dismissAutoDividendBanner()">Entendido</button>
     </div>` : '';
 
+  const autoToggle = `
+    <label style="display:flex;align-items:center;gap:8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:9px 14px;margin-bottom:14px;cursor:pointer;font-size:12.5px;color:#334155">
+      <input type="checkbox" ${state.autoRegisterEnabled ? "checked" : ""} onchange="toggleAutoRegisterDividends(this.checked)" style="width:16px;height:16px;accent-color:#2563eb;cursor:pointer">
+      <span>🤖 Registrar dividendos automáticamente al llegar la fecha ex-dividendo</span>
+      <span style="margin-left:auto;font-size:10px;color:#94a3b8">${state.autoRegisterEnabled ? "Activado" : "Desactivado"}</span>
+    </label>`;
+
   return `<div style="padding:14px">
     ${autoBanner}
+    ${autoToggle}
     ${renderDivDashboard(totalAnn)}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px">
       ${["BRUTO ANUAL","NETO ANUAL","MENSUAL NETO","DIARIO NETO"].map((l,i)=>{
