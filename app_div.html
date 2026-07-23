@@ -125,6 +125,29 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
     height: auto !important;
     max-height: 320px;
 }
+/* Gráficos "Total por empresa" / "Crecimiento anual": necesitan una tarjeta que SÍ pueda
+   crecer más de 320px internamente y recortarse con scroll propio (con muchas posiciones
+   no caben todas a la vez). Deliberadamente NO reutiliza .div-chart-container, cuya regla
+   ".div-chart-container svg { max-height:320px }" forzaría a encoger el SVG entero (todas
+   las filas aplastadas) en vez de dejar que el contenedor recorte y haga scroll. */
+.div-chart-card {
+    background: #f8fafc;
+    border-radius: 10px;
+    padding: 12px;
+    border: 1px solid #e2e8f0;
+    min-height: 200px;
+}
+.div-chart-scroll {
+    max-height: 340px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+}
+.div-chart-scroll svg {
+    width: 100% !important;
+    height: auto !important;
+    display: block;
+}
 
 /* Estilos para gráficos de la pestaña "Gráficos" */
 .charts-grid {
@@ -3553,19 +3576,25 @@ function renderDivDashboard(totalAnnExpected) {
       </div>
     </div>`,
     // Tab 1: Total por empresa — altura real por fila, con scroll vertical si no caben todas
-    `<div class="div-chart-container" style="max-height:320px;overflow-y:auto;overflow-x:hidden">
-      <svg viewBox="0 0 ${W2} ${H2}" style="width:100%;height:auto;display:block">
-        ${bars2}
-        ${chart2Empty}
-      </svg>
+    `<div class="div-chart-card">
+      <div class="div-chart-scroll">
+        <svg viewBox="0 0 ${W2} ${H2}" style="display:block">
+          ${bars2}
+          ${chart2Empty}
+        </svg>
+      </div>
+      <div style="font-size:10px;color:#94a3b8;margin-top:6px;text-align:center">${tickerEntries.length>10?'⇅ Desliza dentro del gráfico para ver el resto':''}</div>
     </div>`,
     // Tab 2: Crecimiento anual — altura real por fila, con scroll vertical si no caben todas
     `<div>
-      <div class="div-chart-container" style="max-height:320px;overflow-y:auto;overflow-x:hidden">
-        <svg viewBox="0 0 ${W3} ${H3}" style="width:100%;height:auto;display:block">
-          ${chart3Empty}
-          ${bars3}
-        </svg>
+      <div class="div-chart-card">
+        <div class="div-chart-scroll">
+          <svg viewBox="0 0 ${W3} ${H3}" style="display:block">
+            ${chart3Empty}
+            ${bars3}
+          </svg>
+        </div>
+        <div style="font-size:10px;color:#94a3b8;margin-top:6px;text-align:center">${growths.length>10?'⇅ Desliza dentro del gráfico para ver el resto':''}</div>
       </div>
       ${chart3Note}
     </div>`
