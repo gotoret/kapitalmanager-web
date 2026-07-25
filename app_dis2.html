@@ -10,7 +10,7 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
-body{font-family:'IBM Plex Sans','Segoe UI',Arial,sans-serif;background:#f8fafc;min-height:100vh;font-size:13px;font-variant-numeric:tabular-nums;}
+body{font-family:'IBM Plex Sans','Segoe UI',Arial,sans-serif;background:#f8fafc;min-height:100vh;font-size:13px;}
 button,input,select{font-family:inherit;font-size:13px;}
 button{cursor:pointer;}
 input:focus,select:focus{outline:2px solid #2563eb;outline-offset:1px;}
@@ -37,13 +37,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 .btn-green{background:#1e3a5f;color:#fff;border:1px solid #1e3a5f;border-radius:5px;padding:7px 14px;font-weight:600;letter-spacing:0.2px;}
 .inp{width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:6px 10px;}
 .inp-sm{border:1px solid #cbd5e1;border-radius:6px;padding:5px 8px;}
-.card{
-  position:relative;
-  background:
-    repeating-linear-gradient(135deg, rgba(30,58,95,0.028) 0px, rgba(30,58,95,0.028) 1px, transparent 1px, transparent 8px),
-    #ffffff;
-  border-radius:4px;border:1px solid #dde3ea;border-top:3px double #1e3a5f;padding:16px;
-}
+.card{background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:16px;}
 .badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;}
 .modal{background:#fff;border-radius:16px;padding:24px;width:480px;max-width:95%;max-height:85vh;overflow-y:auto;box-shadow:0 24px 60px rgba(0,0,0,0.18);}
@@ -51,16 +45,10 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 .field{margin-bottom:12px;}
 .field label{display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
-.metric-card{
-  position:relative;
-  background:
-    repeating-linear-gradient(135deg, rgba(30,58,95,0.028) 0px, rgba(30,58,95,0.028) 1px, transparent 1px, transparent 8px),
-    #ffffff;
-  border-radius:4px;border:1px solid #dde3ea;border-top:3px double #1e3a5f;padding:10px 14px;min-width:0;
-}
+.metric-card{background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:10px 14px;min-width:0;}
 .metric-card[onclick]:hover{box-shadow:0 2px 8px rgba(0,0,0,0.08);border-color:#cbd5e1;}
 .metric-label{color:#64748b;font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;}
-.metric-value{font-size:18px;font-weight:700;line-height:1.2;font-variant-numeric:tabular-nums;letter-spacing:-0.2px;}
+.metric-value{font-size:18px;font-weight:700;line-height:1.2;}
 #app{display:flex;flex-direction:column;height:100vh;overflow:hidden;background:#e2e8f0;}
 #header{background:#fff;border-bottom:1px solid #e2e8f0;padding:10px 16px;flex-shrink:0;width:100%;max-width:1400px;margin:0 auto;box-sizing:border-box;}
 #header-top{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;}
@@ -130,7 +118,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 }
 .div-chart-container {
     background: #f8fafc;
-    border-radius: 4px;
+    border-radius: 10px;
     padding: 12px;
     border: 1px solid #e2e8f0;
     min-height: 200px;
@@ -147,7 +135,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
    las filas aplastadas) en vez de dejar que el contenedor recorte y haga scroll. */
 .div-chart-card {
     background: #f8fafc;
-    border-radius: 4px;
+    border-radius: 10px;
     padding: 12px;
     border: 1px solid #e2e8f0;
     min-height: 200px;
@@ -192,13 +180,9 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
   .charts-donut-row { grid-template-columns: 1fr; }
 }
 .chart-card {
-    position: relative;
-    background:
-      repeating-linear-gradient(135deg, rgba(30,58,95,0.028) 0px, rgba(30,58,95,0.028) 1px, transparent 1px, transparent 8px),
-      #ffffff;
-    border-radius: 4px;
-    border: 1px solid #dde3ea;
-    border-top: 3px double #1e3a5f;
+    background: #fff;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
     padding: 14px 16px 16px 16px;
     transition: box-shadow 0.15s;
 }
@@ -278,7 +262,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
       <span id="user-email-label" style="font-size:11px;color:#475569;font-weight:600;margin-left:6px"></span>
       <span id="pos-alert-badge"></span>
       <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="location.href='index.html'">📦 Mi plan</button>
-      <div id="header-evo-chart" style="flex:1 1 130px;min-width:90px;height:30px;align-self:center;display:flex;align-items:center;gap:5px" title="Evolución de la cartera desde sus inicios"></div>
+      <div id="header-evo-chart" style="flex:1 1 110px;min-width:70px;height:30px;align-self:center" title="Evolución de la cartera desde sus inicios"></div>
       <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="doLogout()">🚪 Salir</button>
     </div>
     <div id="metrics-grid"></div>
@@ -3635,7 +3619,7 @@ function renderDivDashboard(totalAnnExpected) {
   // Mostrar solo la pestaña activa
   const activeChart = chartContent[state._divChartTab] || chartContent[0];
 
-  return `<div style="position:relative;background:repeating-linear-gradient(135deg, rgba(30,58,95,0.028) 0px, rgba(30,58,95,0.028) 1px, transparent 1px, transparent 8px),#ffffff;border:1px solid #dde3ea;border-top:3px double #1e3a5f;border-radius:4px;padding:16px 18px;margin-bottom:20px;font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif;font-variant-numeric:tabular-nums">
+  return `<div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;padding:16px 18px;margin-bottom:20px;font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif">
     <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;flex-wrap:wrap">
       <div style="font-size:26px;font-weight:800;color:#0f172a;letter-spacing:-0.4px">${fmtEUR(bigTotal)}</div>
       <div style="font-size:13px;color:#64748b">${bigLabel}</div>
@@ -4497,13 +4481,11 @@ function calculatePortfolioHistory(tickers, period) {
 // total actual, para dibujar una curva de crecimiento coherente con el punto de partida (0)
 // y el valor de hoy.
 function buildHeaderEvoSparkline(totalInvested, totalValue) {
-  const titleLabel = `<span style="font-size:8.5px;color:#64748b;font-weight:600;letter-spacing:0.2px;white-space:nowrap;flex:none">Evolución cartera actual</span>`;
-
   const tickers = state.positions.map(p => p.ticker);
-  if (!tickers.length) return `${titleLabel}<div style="font-size:9px;color:#94a3b8;text-align:center;flex:1">Sin posiciones</div>`;
+  if (!tickers.length) return `<div style="font-size:9px;color:#94a3b8;text-align:center;line-height:30px">Sin posiciones</div>`;
 
   const hist = calculatePortfolioHistory(tickers, 'MAX');
-  if (!hist.length) return `${titleLabel}<div style="font-size:9px;color:#94a3b8;text-align:center;flex:1">Sin histórico aún</div>`;
+  if (!hist.length) return `<div style="font-size:9px;color:#94a3b8;text-align:center;line-height:30px">Sin histórico aún</div>`;
 
   const lastInvested = totalInvested || hist[hist.length-1].invested || 0;
   const currentValue = totalValue || hist[hist.length-1].value || lastInvested;
@@ -4514,19 +4496,22 @@ function buildHeaderEvoSparkline(totalInvested, totalValue) {
   points.unshift({ date: originDate, v: 0 });
   points.push({ date: new Date(), v: currentValue }); // aterriza siempre en el valor de hoy
 
-  if (points.length < 2) return `${titleLabel}<div style="font-size:9px;color:#94a3b8;text-align:center;flex:1">Historial insuficiente</div>`;
+  if (points.length < 2) return `<div style="font-size:9px;color:#94a3b8;text-align:center;line-height:30px">Historial insuficiente</div>`;
 
-  const W = 300, H = 30, PAD = 2;
+  // El título va DENTRO del propio SVG (banda superior), no como texto HTML aparte: así
+  // siempre se ve pase lo que pase con el ancho disponible en la fila de controles.
+  const W = 300, H = 34, PAD = 2, TITLE_H = 9;
+  const chartTop = TITLE_H, chartBottom = H - PAD;
   const minV = 0, maxV = Math.max(...points.map(p => p.v), 1);
   const range = (maxV - minV) || 1;
   const minT = points[0].date.getTime(), maxT = points[points.length-1].date.getTime();
   const spanT = (maxT - minT) || 1;
   const toX = t => PAD + ((t - minT) / spanT) * (W - PAD*2);
-  const toY = v => H - PAD - ((v - minV) / range) * (H - PAD*2);
+  const toY = v => chartBottom - ((v - minV) / range) * (chartBottom - chartTop);
 
   const coords = points.map(p => `${toX(p.date.getTime()).toFixed(1)},${toY(p.v).toFixed(1)}`);
   const linePath = `M${coords.join(" L")}`;
-  const areaPath = `${linePath} L${toX(maxT).toFixed(1)},${(H-PAD).toFixed(1)} L${toX(minT).toFixed(1)},${(H-PAD).toFixed(1)} Z`;
+  const areaPath = `${linePath} L${toX(maxT).toFixed(1)},${chartBottom.toFixed(1)} L${toX(minT).toFixed(1)},${chartBottom.toFixed(1)} Z`;
 
   const positive = currentValue >= lastInvested;
   const color = positive ? '#16a34a' : '#dc2626';
@@ -4535,7 +4520,7 @@ function buildHeaderEvoSparkline(totalInvested, totalValue) {
   const tip = `Evolución desde ${firstRealDate ? firstRealDate.toLocaleDateString('es-ES',{month:'short',year:'numeric'}) : 'el inicio'}: `
             + `${fmtEUR(currentValue)} (${pct>=0?'+':''}${pct.toFixed(1)}%)`;
 
-  return `${titleLabel}<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="flex:1;min-width:0;height:100%;display:block">
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:100%;display:block">
     <title>${esc(tip)}</title>
     <defs>
       <linearGradient id="hdrEvoFill" x1="0" y1="0" x2="0" y2="1">
@@ -4543,6 +4528,7 @@ function buildHeaderEvoSparkline(totalInvested, totalValue) {
         <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
       </linearGradient>
     </defs>
+    <text x="2" y="6.5" font-size="6.5" font-weight="600" fill="#64748b" font-family="'IBM Plex Sans',Arial,sans-serif">Evolución cartera actual</text>
     <path d="${areaPath}" fill="url(#hdrEvoFill)" stroke="none"/>
     <path d="${linePath}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
   </svg>`;
