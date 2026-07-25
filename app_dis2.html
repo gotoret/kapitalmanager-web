@@ -278,6 +278,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
       <span id="user-email-label" style="font-size:11px;color:#475569;font-weight:600;margin-left:6px"></span>
       <span id="pos-alert-badge"></span>
       <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="location.href='index.html'">📦 Mi plan</button>
+      <div id="header-evo-chart" style="flex:1 1 110px;min-width:70px;height:30px;align-self:center" title="Evolución de la cartera desde sus inicios"></div>
       <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="doLogout()">🚪 Salir</button>
     </div>
     <div id="metrics-grid"></div>
@@ -2853,6 +2854,9 @@ function renderHeader() {
       </span>`;
   }
 
+  const evoEl = document.getElementById("header-evo-chart");
+  if (evoEl) evoEl.innerHTML = buildHeaderEvoSparkline(totals.inv, totals.cur);
+
   const banner = document.getElementById("alert-banner");
   if (triggered.length) {
     banner.style.display="block";
@@ -4486,7 +4490,61 @@ function calculatePortfolioHistory(tickers, period) {
   return result;
 }
 
-// Calcular dividendos históricos
+// Mini-gráfico de evolución de la cartera desde sus inicios, para la fila de controles
+// superior (misma altura que los botones). Como no guardamos el valor real día a día del
+// pasado, se aproxima igual que el resto de la app: se toma el capital aportado real (esto
+// sí es un dato exacto, con sus fechas reales de compra) y se escala por la rentabilidad
+// total actual, para dibujar una curva de crecimiento coherente con el punto de partida (0)
+// y el valor de hoy.
+function buildHeaderEvoSparkline(totalInvested, totalValue) {
+  const tickers = state.positions.map(p => p.ticker);
+  if (!tickers.length) return `<div style="font-size:9px;color:#94a3b8;text-align:center;line-height:30px">Sin posiciones</div>`;
+
+  const hist = calculatePortfolioHistory(tickers, 'MAX');
+  if (!hist.length) return `<div style="font-size:9px;color:#94a3b8;text-align:center;line-height:30px">Sin histórico aún</div>`;
+
+  const lastInvested = totalInvested || hist[hist.length-1].invested || 0;
+  const currentValue = totalValue || hist[hist.length-1].value || lastInvested;
+  const ratio = lastInvested > 0 ? currentValue / lastInvested : 1;
+
+  const points = hist.map(h => ({ date: new Date(h.date), v: Math.max(0, (h.invested || 0) * ratio) }));
+  const originDate = new Date(points[0].date); originDate.setDate(originDate.getDate() - 1);
+  points.unshift({ date: originDate, v: 0 });
+  points.push({ date: new Date(), v: currentValue }); // aterriza siempre en el valor de hoy
+
+  if (points.length < 2) return `<div style="font-size:9px;color:#94a3b8;text-align:center;line-height:30px">Historial insuficiente</div>`;
+
+  const W = 300, H = 30, PAD = 2;
+  const minV = 0, maxV = Math.max(...points.map(p => p.v), 1);
+  const range = (maxV - minV) || 1;
+  const minT = points[0].date.getTime(), maxT = points[points.length-1].date.getTime();
+  const spanT = (maxT - minT) || 1;
+  const toX = t => PAD + ((t - minT) / spanT) * (W - PAD*2);
+  const toY = v => H - PAD - ((v - minV) / range) * (H - PAD*2);
+
+  const coords = points.map(p => `${toX(p.date.getTime()).toFixed(1)},${toY(p.v).toFixed(1)}`);
+  const linePath = `M${coords.join(" L")}`;
+  const areaPath = `${linePath} L${toX(maxT).toFixed(1)},${(H-PAD).toFixed(1)} L${toX(minT).toFixed(1)},${(H-PAD).toFixed(1)} Z`;
+
+  const positive = currentValue >= lastInvested;
+  const color = positive ? '#16a34a' : '#dc2626';
+  const pct = lastInvested > 0 ? ((currentValue - lastInvested) / lastInvested * 100) : 0;
+  const firstRealDate = points[1]?.date;
+  const tip = `Evolución desde ${firstRealDate ? firstRealDate.toLocaleDateString('es-ES',{month:'short',year:'numeric'}) : 'el inicio'}: `
+            + `${fmtEUR(currentValue)} (${pct>=0?'+':''}${pct.toFixed(1)}%)`;
+
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:100%;display:block">
+    <title>${esc(tip)}</title>
+    <defs>
+      <linearGradient id="hdrEvoFill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.32"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <path d="${areaPath}" fill="url(#hdrEvoFill)" stroke="none"/>
+    <path d="${linePath}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+  </svg>`;
+}
 function calculateDividendHistory(tickers, period) {
   const tickerSet = new Set(tickers);
   const divs = (state.dividends || []).filter(d => tickerSet.has(d.ticker));
