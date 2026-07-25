@@ -278,7 +278,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
       <span id="user-email-label" style="font-size:11px;color:#475569;font-weight:600;margin-left:6px"></span>
       <span id="pos-alert-badge"></span>
       <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="location.href='index.html'">📦 Mi plan</button>
-      <div id="header-evo-chart" style="flex:1 1 110px;min-width:70px;height:30px;align-self:center" title="Evolución de la cartera desde sus inicios"></div>
+      <div id="header-evo-chart" style="flex:1 1 130px;min-width:90px;height:30px;align-self:center;display:flex;align-items:center;gap:5px" title="Evolución de la cartera desde sus inicios"></div>
       <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="doLogout()">🚪 Salir</button>
     </div>
     <div id="metrics-grid"></div>
@@ -4497,11 +4497,13 @@ function calculatePortfolioHistory(tickers, period) {
 // total actual, para dibujar una curva de crecimiento coherente con el punto de partida (0)
 // y el valor de hoy.
 function buildHeaderEvoSparkline(totalInvested, totalValue) {
+  const titleLabel = `<span style="font-size:8.5px;color:#64748b;font-weight:600;letter-spacing:0.2px;white-space:nowrap;flex:none">Evolución cartera actual</span>`;
+
   const tickers = state.positions.map(p => p.ticker);
-  if (!tickers.length) return `<div style="font-size:9px;color:#94a3b8;text-align:center;line-height:30px">Sin posiciones</div>`;
+  if (!tickers.length) return `${titleLabel}<div style="font-size:9px;color:#94a3b8;text-align:center;flex:1">Sin posiciones</div>`;
 
   const hist = calculatePortfolioHistory(tickers, 'MAX');
-  if (!hist.length) return `<div style="font-size:9px;color:#94a3b8;text-align:center;line-height:30px">Sin histórico aún</div>`;
+  if (!hist.length) return `${titleLabel}<div style="font-size:9px;color:#94a3b8;text-align:center;flex:1">Sin histórico aún</div>`;
 
   const lastInvested = totalInvested || hist[hist.length-1].invested || 0;
   const currentValue = totalValue || hist[hist.length-1].value || lastInvested;
@@ -4512,7 +4514,7 @@ function buildHeaderEvoSparkline(totalInvested, totalValue) {
   points.unshift({ date: originDate, v: 0 });
   points.push({ date: new Date(), v: currentValue }); // aterriza siempre en el valor de hoy
 
-  if (points.length < 2) return `<div style="font-size:9px;color:#94a3b8;text-align:center;line-height:30px">Historial insuficiente</div>`;
+  if (points.length < 2) return `${titleLabel}<div style="font-size:9px;color:#94a3b8;text-align:center;flex:1">Historial insuficiente</div>`;
 
   const W = 300, H = 30, PAD = 2;
   const minV = 0, maxV = Math.max(...points.map(p => p.v), 1);
@@ -4533,7 +4535,7 @@ function buildHeaderEvoSparkline(totalInvested, totalValue) {
   const tip = `Evolución desde ${firstRealDate ? firstRealDate.toLocaleDateString('es-ES',{month:'short',year:'numeric'}) : 'el inicio'}: `
             + `${fmtEUR(currentValue)} (${pct>=0?'+':''}${pct.toFixed(1)}%)`;
 
-  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:100%;display:block">
+  return `${titleLabel}<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="flex:1;min-width:0;height:100%;display:block">
     <title>${esc(tip)}</title>
     <defs>
       <linearGradient id="hdrEvoFill" x1="0" y1="0" x2="0" y2="1">
