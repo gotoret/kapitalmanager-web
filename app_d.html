@@ -238,23 +238,6 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
     border-radius: 8px;
 }
 @media (max-width: 480px) {
-  #header-top{display:flex !important;flex-wrap:wrap !important;align-items:center !important;gap:10px !important;}
-  #header-top > *{flex:0 0 auto !important;}
-  #header-top > span:nth-of-type(1){order:1;}
-  #header-top > span:nth-of-type(2){order:2;}
-  #header-top > span:nth-of-type(3){order:3;flex:1 1 100% !important;text-align:center;margin-top:0 !important;}
-  #header-top > span:nth-of-type(4){order:4;flex:1 1 auto !important;min-width:0 !important;}
-  #header-top #refresh-btn{order:5;}
-  #header-top button[onclick="openPriceSourcesModal"]{order:6;}
-  #header-top #user-email-label{order:7;flex:1 1 100% !important;display:block !important;text-align:center;margin-top:2px;}
-  #header-top button[onclick="location.href='index.html'"]{order:8;}
-  #header-top #header-evo-chart{order:9;flex:1 1 calc(100% - 240px) !important;min-width:120px !important;max-width:100% !important;height:30px !important;}
-  #header-top button[onclick="doLogout"]{order:10;}
-  #header-top button, #header-top .btn-gray{white-space:nowrap !important;}
-  #header-top button{padding:6px 10px !important;font-size:12px !important;}
-  #header-evo-chart svg{width:100% !important;height:30px !important;display:block;}
-  #header-top span, #header-top button{font-size:12px;}
-
   .chart-card { padding: 10px 10px 12px 10px; }
   .chart-card h4 { font-size: 12px; }
   #metrics-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
