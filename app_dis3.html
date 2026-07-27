@@ -5874,8 +5874,12 @@ function priceLineChart(title, allItems, opts = {}) {
     const lbl=v>=1000?`${(v/1000).toFixed(1)}k`:v.toFixed(1);
     return `<text x="${PL-6}" y="${y+4}" text-anchor="end" font-size="8" fill="#94a3b8">${lbl}</text><line x1="${PL}" y1="${y}" x2="${W-PR}" y2="${y}" stroke="#f1f5f9" stroke-width="1"/>`;
   }).join("");
-  let lastYr=-1,xL="";
-  items.forEach((x,i)=>{const yr=x.date.getFullYear();if(yr!==lastYr){xL+=`<text x="${toX(i).toFixed(1)}" y="${H-8}" text-anchor="middle" font-size="8" fill="#94a3b8">${yr}</text>`;lastYr=yr;}});
+  let yearMarks=[], lastYr=-1;
+  items.forEach((x,i)=>{const yr=x.date.getFullYear(); if(yr!==lastYr){yearMarks.push({yr,i}); lastYr=yr;}});
+  const maxLabelsX = Math.max(3, Math.floor(W / 42));
+  const yearStepX = Math.max(1, Math.ceil(yearMarks.length / maxLabelsX));
+  const xL = yearMarks.filter((_,idx)=>idx % yearStepX === 0)
+    .map(({yr,i}) => `<text x="${toX(i).toFixed(1)}" y="${H-8}" text-anchor="middle" font-size="8" fill="#94a3b8">${yr}</text>`).join("");
 
   // "Momentos clave": fechas REALES de pago de dividendo dentro del periodo visible,
   // en vez de las noticias genéricas de Google Finance (no tenemos eso, pero esto es más
@@ -5947,33 +5951,45 @@ function priceLineChart(title, allItems, opts = {}) {
 // ── Chart: drawdown desde máximo histórico ────────────────────
 function drawdownChart(title, items) {
   if (!items || items.length < 2) return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">${title}</h4>${noDataMsg()}</div>`;
-  const W=340,H=140,PL=46,PR=12,PT=10,PB=24,gW=W-PL-PR,gH=H-PT-PB;
+  const n = items.length;
+  const H=140, PL=46, PR=12, PT=10, PB=24;
+  const W = Math.max(340, Math.min(2400, n * 7)); // se alarga con muchos años de histórico (scrollable) — antes era fijo y los años se amontonaban ilegibles
+  const gW=W-PL-PR, gH=H-PT-PB;
   const dds=items.map(x=>x.drawdown);
   const minV=Math.min(...dds)*1.05||-.01, maxV=0, range=maxV-minV||1;
-  const toX=i=>PL+(i/(items.length-1))*gW;
+  const toX=i=>PL+(i/(n-1))*gW;
   const toY=v=>PT+gH-((v-minV)/range*gH);
   const zY=toY(0);
   let areaPts=`${toX(0).toFixed(1)},${zY.toFixed(1)}`, linePts=[];
   items.forEach((x,i)=>{
     if(x.drawdown!=null){areaPts+=` ${toX(i).toFixed(1)},${toY(x.drawdown).toFixed(1)}`;linePts.push(`${toX(i).toFixed(1)},${toY(x.drawdown).toFixed(1)}`);}
   });
-  areaPts+=` ${toX(items.length-1).toFixed(1)},${zY.toFixed(1)}`;
+  areaPts+=` ${toX(n-1).toFixed(1)},${zY.toFixed(1)}`;
   const steps=[0,-0.25,-0.5,-0.75,-1];
   const yL=steps.map(f=>{
     const v=f*Math.abs(minV),y=toY(v);
     return `<text x="${PL-4}" y="${y+4}" text-anchor="end" font-size="8" fill="#94a3b8">${v.toFixed(0)}%</text><line x1="${PL}" y1="${y}" x2="${PL+gW}" y2="${y}" stroke="#f1f5f9" stroke-width="1"/>`;
   }).join("");
-  let lastYr=-1,xL="";
-  items.forEach((x,i)=>{const yr=x.date.getFullYear();if(yr!==lastYr){xL+=`<text x="${toX(i).toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="8" fill="#94a3b8">${yr}</text>`;lastYr=yr;}});
+  // Etiquetas de año con espaciado adaptativo: con empresas de 40-50 años de histórico
+  // mensual, poner una etiqueta en cada cambio de año las hacía solaparse ilegibles —
+  // ahora se calcula cuántas caben cómodamente y se saltan años si hace falta.
+  let yearMarks=[], lastYr=-1;
+  items.forEach((x,i)=>{const yr=x.date.getFullYear(); if(yr!==lastYr){yearMarks.push({yr,i}); lastYr=yr;}});
+  const maxLabels = Math.max(3, Math.floor(W / 42));
+  const yearStep = Math.max(1, Math.ceil(yearMarks.length / maxLabels));
+  const xL = yearMarks.filter((_,idx)=>idx % yearStep === 0)
+    .map(({yr,i}) => `<text x="${toX(i).toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="8" fill="#94a3b8">${yr}</text>`).join("");
   const maxDD=Math.min(...dds).toFixed(1);
+
+  const svgId = `ddchart_${Math.random().toString(36).slice(2,9)}`;
+  const innerSvg = `${yL}${xL}
+    <polygon points="${areaPts}" fill="#dc262618"/>
+    ${linePts.length>1?`<polyline points="${linePts.join(" ")}" fill="none" stroke="#dc2626" stroke-width="1.5" stroke-linejoin="round"/>` :""}`;
+
   return `<div class="card">
     <h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">${title}</h4>
     <div style="font-size:11px;color:#dc2626;margin-bottom:4px">Máx. drawdown: <strong>${maxDD}%</strong></div>
-    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;overflow:visible">
-      ${yL}${xL}
-      <polygon points="${areaPts}" fill="#dc262618"/>
-      ${linePts.length>1?`<polyline points="${linePts.join(" ")}" fill="none" stroke="#dc2626" stroke-width="1.5" stroke-linejoin="round"/>` :""}
-    </svg>
+    ${chartScrollWrap(svgId, W, H, innerSvg)}
   </div>`;
 }
 
@@ -6023,11 +6039,14 @@ function divBarChart(title, years, amounts, projYears, projAmounts, cagr) {
 // ── Chart: yield histórico por año ────────────────────────────
 function yieldLineChart(title, years, yields) {
   if(!years.length) return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">${title}</h4>${noDataMsg()}</div>`;
-  const W=340,H=150,PL=42,PR=12,PT=10,PB=24,gW=W-PL-PR,gH=H-PT-PB;
+  const n = years.length;
+  const H=150, PL=42, PR=12, PT=10, PB=24;
+  const W = Math.max(340, Math.min(2400, n * 34)); // se alarga si hay muchos años (scrollable)
+  const gW=W-PL-PR, gH=H-PT-PB;
   const vals=yields.filter(v=>v!=null);
   if(!vals.length) return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">${title}</h4>${noDataMsg()}</div>`;
   const minV=0, maxV=Math.max(...vals)*1.15||1, range=maxV-minV||1;
-  const toX=i=>PL+(years.length>1?i/(years.length-1):0.5)*gW;
+  const toX=i=>PL+(n>1?i/(n-1):0.5)*gW;
   const toY=v=>PT+gH-((v-minV)/range*gH);
   // Area fill
   let areaPts=`${toX(0).toFixed(1)},${toY(0).toFixed(1)}`, linePts=[], dotH="";
@@ -6039,22 +6058,24 @@ function yieldLineChart(title, years, yields) {
       dotH+=`<text x="${toX(i).toFixed(1)}" y="${(toY(v)-6).toFixed(1)}" text-anchor="middle" font-size="7" fill="#16a34a">${v.toFixed(2)}%</text>`;
     }
   });
-  areaPts+=` ${toX(years.length-1).toFixed(1)},${toY(0).toFixed(1)}`;
+  areaPts+=` ${toX(n-1).toFixed(1)},${toY(0).toFixed(1)}`;
   const yL=[0,.25,.5,.75,1].map(f=>{
     const v=minV+f*range,y=toY(v);
     return `<text x="${PL-4}" y="${y+4}" text-anchor="end" font-size="8" fill="#94a3b8">${v.toFixed(1)}%</text><line x1="${PL}" y1="${y}" x2="${PL+gW}" y2="${y}" stroke="#f1f5f9" stroke-width="1"/>`;
   }).join("");
   const xL=years.map((yr,i)=>`<text x="${toX(i).toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="8" fill="#94a3b8">${yr}</text>`).join("");
   const avgYield=vals.length?+(vals.reduce((s,v)=>s+v,0)/vals.length).toFixed(2):null;
+
+  const svgId = `ychart_${Math.random().toString(36).slice(2,9)}`;
+  const innerSvg = `${yL}${xL}
+    <polygon points="${areaPts}" fill="#16a34a18"/>
+    ${linePts.length>1?`<polyline points="${linePts.join(" ")}" fill="none" stroke="#16a34a" stroke-width="1.5" stroke-linejoin="round"/>` :""}
+    ${dotH}`;
+
   return `<div class="card">
     <h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:4px">${title}</h4>
     ${avgYield!=null?`<div style="font-size:11px;color:#16a34a;margin-bottom:4px">Yield medio histórico: <strong>${avgYield}%</strong></div>`:""}
-    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;overflow:visible">
-      ${yL}${xL}
-      <polygon points="${areaPts}" fill="#16a34a18"/>
-      ${linePts.length>1?`<polyline points="${linePts.join(" ")}" fill="none" stroke="#16a34a" stroke-width="1.5" stroke-linejoin="round"/>` :""}
-      ${dotH}
-    </svg>
+    ${chartScrollWrap(svgId, W, H, innerSvg)}
   </div>`;
 }
 
