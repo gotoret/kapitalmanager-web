@@ -5178,8 +5178,13 @@ function renderValuation() {
   let resultHtml="";
   if(result){
     const scores=Object.values(result.scores||{});
-    const overall=scores.length?Math.round(scores.reduce((a,b)=>a+b,0)/scores.length):0;
-    const oc=overall>=70?"#16a34a":overall>=40?"#f59e0b":"#ef4444";
+    const overallRaw=scores.length?scores.reduce((a,b)=>a+b,0)/scores.length:0;
+    const overall=+overallRaw.toFixed(1); // 1 decimal: la media de varias puntuaciones redondas ya aporta precisión real
+    const oc=overall>=70?"#16a34a":overall>=50?"#f59e0b":"#ef4444";
+    // Recomendación aplicada en el propio navegador con umbrales explícitos (≥70 precio de
+    // compra, 50-70 normal, <50 no comprar), en vez de depender de los umbrales internos
+    // del servidor, que no son ajustables desde aquí.
+    const myRec = overall>=70 ? "🟢 Precio de COMPRA" : overall>=50 ? "🟡 Precio NORMAL" : "🔴 NO comprar a este precio";
     const scoreBars=Object.entries(result.scores||{}).map(([k,v])=>{
       const c=v>=70?"#16a34a":v>=40?"#f59e0b":"#ef4444";
       const expl=methodExplanations[k]||"";
@@ -5317,8 +5322,9 @@ function renderValuation() {
               <div style="display:flex;align-items:center;gap:12px">
                 <span style="font-size:42px;font-weight:900;color:${oc};line-height:1">${overall}</span>
                 <span style="font-size:14px;color:#94a3b8">/100</span>
-                <span class="badge" style="background:${result.rec_color||"#2563eb"}22;color:${result.rec_color||"#2563eb"}">${esc(result.recommendation)}</span>
+                <span class="badge" style="background:${oc}22;color:${oc}">${myRec}</span>
               </div>
+              <div style="font-size:10px;color:#94a3b8;margin-top:6px">≥70 precio de compra · 50-70 normal · &lt;50 no comprar${result.recommendation?` · texto del servidor: "${esc(result.recommendation)}"`:""}</div>
             </div>
             <div class="card"><h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">📋 Métricas clave</h4>${metricRows}</div>
           </div>
@@ -6110,9 +6116,29 @@ async function analyzeValuation() {
   ]);
 
   try {
+    // Resumen de yield histórico propio (para el método Weiss: compara el yield actual
+    // con el rango histórico REAL de la propia empresa, no con una estimación genérica).
+    let yieldHistSummary = null;
+    if (priceHistory?.yieldByYear) {
+      const yVals = Object.values(priceHistory.yieldByYear).filter(v => v > 0);
+      if (yVals.length) yieldHistSummary = { min: +Math.min(...yVals).toFixed(2), max: +Math.max(...yVals).toFixed(2), years: yVals.length };
+    }
+
     const { data, error } = await supabaseClient.functions.invoke('valuation', {
       body: { ticker, price: livePrice || null,
-        realYieldPct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null }
+        realYieldPct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null,
+        // Datos reales ya descargados por la app (antes no se enviaban, y Gemini tenía que
+        // "recordar" las cifras de memoria en vez de calcular con datos de verdad):
+        fundamentals: fundamentals ? {
+          years: fundamentals.years, revenue: fundamentals.revenue, ebit: fundamentals.ebit,
+          net_income: fundamentals.net_income, fcf: fundamentals.fcf, net_debt: fundamentals.net_debt,
+          debt_ebitda: fundamentals.debt_ebitda, eps: fundamentals.eps, fcf_per_share: fundamentals.fcf_per_share,
+          roe: fundamentals.roe, roic: fundamentals.roic, gross_margin: fundamentals.gross_margin,
+          ebit_margin: fundamentals.ebit_margin, net_margin: fundamentals.net_margin
+        } : null,
+        yieldHistSummary,
+        divCagr: priceHistory?.divCagr ?? null
+      }
     });
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
