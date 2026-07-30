@@ -5315,7 +5315,7 @@ function renderValuation() {
       // ── Tab 0: Scoring IA ──────────────────────────────────────────────────
       resultHtml += `<div style="display:${(state._valTab||0)===0?'block':'none'}">
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">
-          <div class="card"><h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">📊 Puntuaciones por método</h4>${scoreBars}</div>
+          <div class="card"><h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">📊 Puntuaciones por método</h4>${result._note?`<div style="font-size:11px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-bottom:10px">⚠️ ${esc(result._note)}</div>`:""}${scoreBars}</div>
           <div style="display:flex;flex-direction:column;gap:10px">
             <div class="card">
               <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">🏆 Puntuación global</h4>
