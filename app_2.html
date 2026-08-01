@@ -655,6 +655,7 @@ const API = {
 const PROXIES = [
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
+  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
 ];
 
@@ -7621,9 +7622,14 @@ async function runRadarSearch() {
     }
   });
 
-  // PASO 2: Fetch tickers que no están en caché (en paralelo, grupos de 6)
+  // PASO 2: Fetch tickers que no están en caché (en paralelo, grupos de 4, con pausa entre
+  // grupos). Antes disparaba grupos de 6 sin ninguna pausa — con ~150 tickers eso son ~20
+  // ráfagas seguidas contra proxies gratuitos, que empiezan a bloquear por límite de
+  // peticiones a los pocos segundos. Por eso en la práctica solo sobrevivían los tickers
+  // que ya estaban en caché (los de la cartera), dando la sensación de que el Radar
+  // "solo busca en mi cartera".
   const missing = tickersToFetch.filter(t => !state.priceCache[t]);
-  const GROUP = 6;
+  const GROUP = 4;
   for (let i = 0; i < missing.length; i += GROUP) {
     const group = missing.slice(i, i + GROUP);
     state.radar._progress = `Descargando datos... ${Math.min(i+GROUP, missing.length)}/${missing.length}`;
@@ -7649,6 +7655,7 @@ async function runRadarSearch() {
       };
     }));
     settled.forEach(s => { if (s.status==="fulfilled" && s.value) allQuotes.push(s.value); });
+    if (i + GROUP < missing.length) await sleep(350); // pausa entre lotes para no saturar los proxies
   }
   state.radar._progress = null;
 
@@ -7656,58 +7663,69 @@ async function runRadarSearch() {
   state.radar._progress = "Enriqueciendo datos fundamentales...";
   renderActiveTab();
 
-  await Promise.allSettled(allQuotes.map(async q => {
-    for (const proxyFn of TS_PROXIES) {
-      try {
-        const res = await fetch(proxyFn(q.symbol), { signal: AbortSignal.timeout(8000) });
-        if (!res.ok) continue;
-        const json = await res.json();
-        const ts = json?.timeseries?.result;
-        if (!ts?.length) continue;
+  // Antes esto disparaba TODAS las peticiones a la vez (hasta 150 de golpe) sin agrupar
+  // ni pausar — con proxies gratuitos eso provoca bloqueos por límite de peticiones casi
+  // inmediatos, dejando sin datos fundamentales a casi todo lo que no fuera ya de la
+  // cartera. Ahora va en grupos de 5 con una pequeña pausa entre grupos.
+  const ENRICH_GROUP = 5;
+  for (let i = 0; i < allQuotes.length; i += ENRICH_GROUP) {
+    const group = allQuotes.slice(i, i + ENRICH_GROUP);
+    state.radar._progress = `Enriqueciendo datos fundamentales... ${Math.min(i+ENRICH_GROUP, allQuotes.length)}/${allQuotes.length}`;
+    renderActiveTab();
+    await Promise.allSettled(group.map(async q => {
+      for (const proxyFn of TS_PROXIES) {
+        try {
+          const res = await fetch(proxyFn(q.symbol), { signal: AbortSignal.timeout(8000) });
+          if (!res.ok) continue;
+          const json = await res.json();
+          const ts = json?.timeseries?.result;
+          if (!ts?.length) continue;
 
-        // Construir mapa tipo → último valor disponible
-        const val = {};
-        ts.forEach(item => {
-          const type = item.meta?.type?.[0];
-          if (!type) return;
-          const arr = item[type];
-          if (!Array.isArray(arr) || !arr.length) return;
-          // Coger el último valor no nulo
-          for (let i = arr.length - 1; i >= 0; i--) {
-            const v = arr[i]?.reportedValue?.raw;
-            if (v != null) { val[type] = v; break; }
+          // Construir mapa tipo → último valor disponible
+          const val = {};
+          ts.forEach(item => {
+            const type = item.meta?.type?.[0];
+            if (!type) return;
+            const arr = item[type];
+            if (!Array.isArray(arr) || !arr.length) return;
+            // Coger el último valor no nulo
+            for (let i = arr.length - 1; i >= 0; i--) {
+              const v = arr[i]?.reportedValue?.raw;
+              if (v != null) { val[type] = v; break; }
+            }
+          });
+
+          // Márgenes — vienen como decimal (0.15 = 15%)
+          if (val.annualNetIncomeMargin   != null) q.profitMargins  = +(val.annualNetIncomeMargin * 100).toFixed(1);
+          if (val.annualGrossProfitMargin != null) q.grossMargin    = +(val.annualGrossProfitMargin * 100).toFixed(1);
+          if (val.annualOperatingIncomeMargin != null) q.operatingMargin = +(val.annualOperatingIncomeMargin * 100).toFixed(1);
+          // ROE — viene como decimal (0.18 = 18%)
+          if (val.annualReturnOnEquity    != null) q.returnOnEquity = +(val.annualReturnOnEquity * 100).toFixed(1);
+          // Deuda neta / EBITDA
+          if (val.annualTotalDebt != null && val.annualEbitda != null && val.annualEbitda > 0) {
+            const nd = (val.annualTotalDebt || 0) - (val.annualCashAndCashEquivalents || 0);
+            q.debtToEquity = +(nd / val.annualEbitda).toFixed(2);
           }
-        });
+          // FCF yield
+          if (val.annualFreeCashFlow != null && q.marketCap) {
+            q.fcfYield = +((val.annualFreeCashFlow / q.marketCap) * 100).toFixed(1);
+          }
+          // EPS para calcular P/E si no lo tenemos
+          if (!q.trailingPE && val.annualBasicEPS && q.regularMarketPrice) {
+            q.trailingPE = +(q.regularMarketPrice / val.annualBasicEPS).toFixed(1);
+          }
+          break; // primer proxy que funciona, salir
+        } catch(e) { /* siguiente proxy */ }
+      }
 
-        // Márgenes — vienen como decimal (0.15 = 15%)
-        if (val.annualNetIncomeMargin   != null) q.profitMargins  = +(val.annualNetIncomeMargin * 100).toFixed(1);
-        if (val.annualGrossProfitMargin != null) q.grossMargin    = +(val.annualGrossProfitMargin * 100).toFixed(1);
-        if (val.annualOperatingIncomeMargin != null) q.operatingMargin = +(val.annualOperatingIncomeMargin * 100).toFixed(1);
-        // ROE — viene como decimal (0.18 = 18%)
-        if (val.annualReturnOnEquity    != null) q.returnOnEquity = +(val.annualReturnOnEquity * 100).toFixed(1);
-        // Deuda neta / EBITDA
-        if (val.annualTotalDebt != null && val.annualEbitda != null && val.annualEbitda > 0) {
-          const nd = (val.annualTotalDebt || 0) - (val.annualCashAndCashEquivalents || 0);
-          q.debtToEquity = +(nd / val.annualEbitda).toFixed(2);
-        }
-        // FCF yield
-        if (val.annualFreeCashFlow != null && q.marketCap) {
-          q.fcfYield = +((val.annualFreeCashFlow / q.marketCap) * 100).toFixed(1);
-        }
-        // EPS para calcular P/E si no lo tenemos
-        if (!q.trailingPE && val.annualBasicEPS && q.regularMarketPrice) {
-          q.trailingPE = +(q.regularMarketPrice / val.annualBasicEPS).toFixed(1);
-        }
-        break; // primer proxy que funciona, salir
-      } catch(e) { /* siguiente proxy */ }
-    }
-
-    // Fallback: yield del yieldCache si no vino del timeseries
-    if (!q.trailingAnnualDividendYield) {
-      const cached = state.yieldCache[q.symbol];
-      if (cached?.yield) q.trailingAnnualDividendYield = cached.yield;
-    }
-  }));
+      // Fallback: yield del yieldCache si no vino del timeseries
+      if (!q.trailingAnnualDividendYield) {
+        const cached = state.yieldCache[q.symbol];
+        if (cached?.yield) q.trailingAnnualDividendYield = cached.yield;
+      }
+    }));
+    if (i + ENRICH_GROUP < allQuotes.length) await sleep(300);
+  }
 
   state.radar._progress = null;
 
