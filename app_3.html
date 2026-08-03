@@ -6117,6 +6117,117 @@ function yieldLineChart(title, years, yields) {
   </div>`;
 }
 
+function _computeValuationInline({ ticker, price, realYieldPct, fundamentals, yieldHistSummary, divCagr }) {
+  function clamp(v, lo=0, hi=100) { return Math.max(lo, Math.min(hi, v)); }
+  function r1(v) { return Math.round(v*10)/10; }
+  function r2(v) { return Math.round(v*100)/100; }
+
+  const fd = fundamentals || {};
+  const lastIdx = (fd.years?.length || 1) - 1;
+  const lastEps        = fd.eps?.[lastIdx]        ?? null;
+  const lastRoe        = fd.roe?.[lastIdx]        ?? null;
+  const lastNetIncome  = fd.net_income?.[lastIdx] ?? null;
+  const lastRevenue    = fd.revenue?.[lastIdx]    ?? null;
+  const lastNetDebt    = fd.net_debt?.[lastIdx]   ?? null;
+  const lastDebtEbitda = fd.debt_ebitda?.[lastIdx]?? null;
+  const p = typeof price === "number" ? price : null;
+
+  const sharesEst    = (lastNetIncome != null && lastEps && lastEps !== 0) ? lastNetIncome / lastEps : null;
+  const marketCapEst = (p != null && sharesEst != null) ? p * sharesEst : null;
+  const evEst        = (marketCapEst != null && lastNetDebt != null) ? marketCapEst + lastNetDebt : null;
+  const ebitdaEst    = (lastNetDebt != null && lastDebtEbitda) ? lastNetDebt / lastDebtEbitda : null;
+
+  // 1) PER
+  const per      = (p != null && lastEps && lastEps > 0) ? p / lastEps : null;
+  const peScore  = per != null ? r1(clamp(100 - (per - 8) * 4)) : null;
+
+  // 2) DCF quality
+  let dcfScore = null;
+  {
+    const fcf     = fd.fcf     || [];
+    const revenue = fd.revenue || [];
+    const pairs   = fcf.map((f,i) => ({f, r: revenue[i]})).filter(x => x.f != null && x.r > 0);
+    if (pairs.length >= 2) {
+      const margins    = pairs.map(x => x.f / x.r);
+      const avgM       = margins.reduce((a,b) => a+b, 0) / margins.length;
+      const variance   = margins.reduce((s,m) => s + (m-avgM)**2, 0) / margins.length;
+      const stability  = clamp(100 - Math.sqrt(variance) * 350);
+      const marginScore= clamp(avgM * 650);
+      dcfScore = r1(marginScore * 0.65 + stability * 0.35);
+    }
+  }
+
+  // 3) Weiss
+  let weissScore = null;
+  if (realYieldPct != null && yieldHistSummary && yieldHistSummary.max > yieldHistSummary.min) {
+    const pos = (realYieldPct - yieldHistSummary.min) / (yieldHistSummary.max - yieldHistSummary.min);
+    weissScore = r1(clamp(pos * 100));
+  }
+
+  // 4) EV/EBITDA
+  const evEbitda      = (evEst != null && ebitdaEst && ebitdaEst > 0) ? evEst / ebitdaEst : null;
+  const evEbitdaScore = evEbitda != null ? r1(clamp(100 - (evEbitda - 6) * 6)) : null;
+
+  // 5) P/B
+  const bookValueEst = (lastNetIncome != null && lastRoe) ? lastNetIncome / (lastRoe / 100) : null;
+  const pb           = (marketCapEst != null && bookValueEst && bookValueEst > 0) ? marketCapEst / bookValueEst : null;
+  const pbScore      = pb != null ? r1(clamp(100 - (pb - 1) * 25)) : null;
+
+  // 6) EV/Revenue
+  const evRevenue      = (evEst != null && lastRevenue && lastRevenue > 0) ? evEst / lastRevenue : null;
+  const evRevenueScore = evRevenue != null ? r1(clamp(100 - (evRevenue - 1) * 20)) : null;
+
+  // 7) DDM
+  const ddmTotalReturn = realYieldPct != null ? realYieldPct + (divCagr ?? 3) : null;
+  const ddmScore       = ddmTotalReturn != null ? r1(clamp((ddmTotalReturn - 4) * 10)) : null;
+
+  // 8) EPV
+  const earningsYield = (p != null && lastEps && lastEps > 0) ? (lastEps / p) * 100 : null;
+  const epvScore      = earningsYield != null ? r1(clamp((earningsYield - 4) * 12)) : null;
+
+  const scores = { ddm: ddmScore, epv: epvScore, pe: peScore, ev_ebitda: evEbitdaScore,
+                   pb: pbScore, ev_revenue: evRevenueScore, dcf_quality: dcfScore, weiss: weissScore };
+
+  const validScores = Object.values(scores).filter(v => typeof v === "number");
+  const overall     = validScores.length ? validScores.reduce((a,b) => a+b, 0) / validScores.length : null;
+  const missingMethods = Object.entries(scores).filter(([,v]) => v == null).map(([k]) => k);
+
+  const metrics = {
+    PER:              per != null ? r1(per) : null,
+    PER_fwd:          null,
+    P_Book:           pb  != null ? r2(pb)  : null,
+    Yield_pct:        realYieldPct ?? null,
+    Payout_pct:       (realYieldPct != null && earningsYield && earningsYield > 0) ? r1((realYieldPct / earningsYield) * 100) : null,
+    Beta:             null,
+    ROE_pct:          lastRoe != null ? r1(lastRoe) : null,
+    Deuda_Patrimonio: (lastNetDebt != null && bookValueEst && bookValueEst > 0) ? r2(lastNetDebt / bookValueEst) : null,
+  };
+
+  function recFor(s) {
+    if (s == null) return { text: "⚪ Datos insuficientes para una recomendación fiable", color: "#94a3b8" };
+    if (s >= 70)  return { text: "🟢 Precio de COMPRA", color: "#16a34a" };
+    if (s >= 50)  return { text: "🟡 Precio NORMAL",   color: "#f59e0b" };
+    return           { text: "🔴 NO comprar a este precio", color: "#ef4444" };
+  }
+  const rec = recFor(overall);
+
+  const weissColor   = weissScore == null ? "#94a3b8" : weissScore >= 60 ? "#16a34a" : weissScore >= 35 ? "#f59e0b" : "#ef4444";
+  const weissVerdict = weissScore != null
+    ? `Yield actual del ${realYieldPct}%, dentro de un rango histórico propio de ${yieldHistSummary?.min}%-${yieldHistSummary?.max}%.`
+    : "No hay rango histórico de yield suficiente para aplicar el método de Weiss con datos reales.";
+
+  const result = {
+    name: ticker, ticker, sector: "",
+    description: `Análisis basado en datos financieros reales de ${ticker}. PER: ${metrics.PER ?? "N/D"}, ROE: ${metrics.ROE_pct ?? "N/D"}%, yield: ${realYieldPct ?? "N/D"}%.`,
+    scores, metrics,
+    weiss_verdict: weissVerdict, weiss_color: weissColor,
+    recommendation: rec.text, rec_color: rec.color,
+    overall_score: overall != null ? r1(overall) : null,
+    ...(missingMethods.length ? { _note: `${missingMethods.length} de 8 métodos no se han podido calcular por falta de datos reales suficientes (${missingMethods.join(", ")}).` } : {}),
+  };
+  return result;
+}
+
 async function analyzeValuation() {
   const input = document.getElementById("val-ticker");
   const ticker = (input?.value||"").trim().toUpperCase().split(" ")[0];
@@ -6157,13 +6268,7 @@ async function analyzeValuation() {
         yieldHistSummary,
         divCagr: priceHistory?.divCagr ?? null
       };
-    const _valRes = await fetch('/api/valuation', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(_valBody)
-    });
-    const data = await _valRes.json();
-    if (!_valRes.ok) throw new Error(data?.error || 'Error HTTP ' + _valRes.status);
+    const data = _computeValuationInline(_valBody);
     if (data?.error) throw new Error(data.error);
     if (divData?.yield != null && data?.metrics) {
       data.metrics.Yield_pct = +(divData.yield*100).toFixed(2);
