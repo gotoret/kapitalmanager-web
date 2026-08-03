@@ -653,21 +653,22 @@ const API = {
 };
 // CORS proxies — se prueban en orden hasta que uno funcione
 const PROXIES = [
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
+  t => `/api/yf/chart?ticker=${encodeURIComponent(t)}&interval=1d&range=1d`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
   t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
 ];
 
 const SEARCH_PROXIES = [
-  q => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
+  q => `/api/yf/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`,
   q => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
+  q => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
 ];
 
 const YIELD_PROXIES = [
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
+  t => `/api/yf/chart?ticker=${encodeURIComponent(t)}&range=2y&interval=1mo&events=div`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
+  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
 ];
 
 const MODULES = "incomeStatementHistory,cashflowStatementHistory,balanceSheetHistory,defaultKeyStatistics,financialData";
@@ -682,20 +683,19 @@ const TS_ANNUAL = [
 ].join(",");
 
 const TS_PROXIES = [
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
+  t => `/api/yf/timeseries?ticker=${encodeURIComponent(t)}&type=${encodeURIComponent(TS_ANNUAL)}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
 ];
 
 // QS_PROXIES se mantiene como fallback secundario
 const QS_PROXIES = [
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `/api/yf/quoteSummary?ticker=${encodeURIComponent(t)}&modules=${encodeURIComponent(MODULES)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
   t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
 ];
 const FUND_PROXIES = QS_PROXIES;
 
@@ -1924,9 +1924,9 @@ async function fetchQuotesEdgeFunction(tickers) {
 }
 
 const BATCH_QUOTE_PROXIES = [
-  s => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
+  s => `/api/yf/batchquote?symbols=${s}`,
   s => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
-  s => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
+  s => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
   s => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
 ];
 
@@ -4413,7 +4413,7 @@ async function loadCompanyChartsData(ticker) {
   try {
     const [priceHistory, fundamentals] = await Promise.all([
       fetchPriceAndDividendHistory(ticker),
-      getFundamentalsCached(ticker)
+      fetchFundamentals(ticker)
     ]);
     state._portfolioCharts.companyData[ticker] = { loading: false, priceHistory, fundamentals };
   } catch (e) {
@@ -5543,7 +5543,6 @@ async function _fetchFMP(ticker, key) {
   // FMP soporta CORS nativo — intentar directo primero, luego proxies
   const wrapUrl = (url) => [
     url,
-    `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
   ];
@@ -5780,10 +5779,9 @@ async function fetchFundamentals(ticker) {
 async function fetchPriceAndDividendHistory(ticker) {
   const isGBp = ticker.toUpperCase().endsWith('.L');
   const proxies = [
-    `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
+    `/api/yf/chart?ticker=${encodeURIComponent(ticker)}&range=max&interval=1mo&events=${encodeURIComponent('div,split')}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
-    `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
   ];
@@ -6119,199 +6117,100 @@ function yieldLineChart(title, years, yields) {
   </div>`;
 }
 
-// ================================================================
-// NUEVA FUNCIÓN: Obtener fundamentales con caché de 24h
-// ================================================================
-const FUND_CACHE_KEY = "km_fund_cache";
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 horas en milisegundos
-
-async function getFundamentalsCached(ticker) {
-    if (!ticker) return null;
-    
-    // Intentar cargar desde localStorage
-    try {
-        const cacheData = localStorage.getItem(FUND_CACHE_KEY);
-        if (cacheData) {
-            const cache = JSON.parse(cacheData);
-            const entry = cache[ticker];
-            if (entry && (Date.now() - entry.timestamp < CACHE_TTL)) {
-                console.log(`🔄 Usando fundamentales en caché para ${ticker}`);
-                return entry.data;
-            }
-        }
-    } catch (e) {
-        console.warn('Error al leer caché de fundamentales:', e);
-    }
-
-    // No está en caché o ha caducado: descargar
-    console.log(`⬇️ Descargando fundamentales para ${ticker}...`);
-    const data = await fetchFundamentals(ticker);
-    if (!data) {
-        console.warn(`⚠️ No se pudieron descargar fundamentales para ${ticker}`);
-        return null;
-    }
-
-    // Guardar en caché
-    try {
-        let cache = {};
-        const existing = localStorage.getItem(FUND_CACHE_KEY);
-        if (existing) cache = JSON.parse(existing);
-        cache[ticker] = { data, timestamp: Date.now() };
-        localStorage.setItem(FUND_CACHE_KEY, JSON.stringify(cache));
-        console.log(`✅ Fundamentales guardados en caché para ${ticker}`);
-    } catch (e) {
-        console.warn('Error al guardar caché de fundamentales:', e);
-    }
-
-    return data;
-}
-
-// ================================================================
-// FUNCIÓN PRINCIPAL DE VALORACIÓN (MODIFICADA)
-// ================================================================
 async function analyzeValuation() {
-    const input = document.getElementById("val-ticker");
-    const ticker = (input?.value || "").trim().toUpperCase().split(" ")[0];
-    if (!ticker) {
-        alert("Introduce un ticker válido");
-        return;
+  const input = document.getElementById("val-ticker");
+  const ticker = (input?.value||"").trim().toUpperCase().split(" ")[0];
+  if (!ticker) return;
+  state._valTicker = ticker;
+  state._valLoading = true;
+  state._valResult = null;
+  state._valError = "";
+  state._valTab = 0;
+  renderActiveTab();
+
+  // Lanzar todo en paralelo: precio, dividendo, fundamentales e histórico precio/div
+  const [livePrice, divData, fundamentals, priceHistory] = await Promise.all([
+    fetchWithProxy(PROXIES, ticker),
+    fetchDividendData(ticker),
+    fetchFundamentals(ticker),
+    fetchPriceAndDividendHistory(ticker)
+  ]);
+
+  try {
+    // Resumen de yield histórico propio (para el método Weiss: compara el yield actual
+    // con el rango histórico REAL de la propia empresa, no con una estimación genérica).
+    let yieldHistSummary = null;
+    if (priceHistory?.yieldByYear) {
+      const yVals = Object.values(priceHistory.yieldByYear).filter(v => v > 0);
+      if (yVals.length) yieldHistSummary = { min: +Math.min(...yVals).toFixed(2), max: +Math.max(...yVals).toFixed(2), years: yVals.length };
     }
-    state._valTicker = ticker;
-    state._valLoading = true;
-    state._valResult = null;
+
+    const _valBody = { ticker, price: livePrice || null,
+        realYieldPct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null,
+        fundamentals: fundamentals ? {
+          years: fundamentals.years, revenue: fundamentals.revenue, ebit: fundamentals.ebit,
+          net_income: fundamentals.net_income, fcf: fundamentals.fcf, net_debt: fundamentals.net_debt,
+          debt_ebitda: fundamentals.debt_ebitda, eps: fundamentals.eps, fcf_per_share: fundamentals.fcf_per_share,
+          roe: fundamentals.roe, roic: fundamentals.roic, gross_margin: fundamentals.gross_margin,
+          ebit_margin: fundamentals.ebit_margin, net_margin: fundamentals.net_margin
+        } : null,
+        yieldHistSummary,
+        divCagr: priceHistory?.divCagr ?? null
+      };
+    const _valRes = await fetch('/api/valuation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(_valBody)
+    });
+    const data = await _valRes.json();
+    if (!_valRes.ok) throw new Error(data?.error || 'Error HTTP ' + _valRes.status);
+    if (data?.error) throw new Error(data.error);
+    if (divData?.yield != null && data?.metrics) {
+      data.metrics.Yield_pct = +(divData.yield*100).toFixed(2);
+    }
+    if (fundamentals)  data.fundamentals  = fundamentals;
+    if (priceHistory)  data.priceHistory   = priceHistory;
+    state._valResult = data;
     state._valError = "";
-    state._valTab = 0;
-    renderActiveTab();
+  } catch(e) {
+    console.error('Error análisis IA:', e);
+    state._valResult = {
+      ticker,
+      name: ticker,
+      sector: "",
+      description: priceHistory ? "Análisis IA no disponible. Mostrando datos históricos disponibles." : "Análisis IA no disponible. Comprueba tu conexión.",
+      scores: {},
+      metrics: {
+        Precio_actual: livePrice || null,
+        Yield_pct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null
+      },
+      ranges: {},
+      recommendation: "Sin análisis IA",
+      rec_color: "#94a3b8",
+      weiss_verdict: "Análisis IA no disponible",
+      weiss_color: "#94a3b8",
+      fundamentals,
+      priceHistory
+    };
+    state._valError = priceHistory || fundamentals
+      ? "⚠️ Análisis IA no disponible, pero se muestran los datos históricos."
+      : "No se pudo conectar con el análisis IA. Comprueba tu conexión a internet.";
+  }
+  state._valLoading = false;
 
-    try {
-        // --- 1. DESCARGAR TODOS LOS DATOS EN PARALELO ---
-        console.log(`🔍 Iniciando análisis de ${ticker}...`);
-        
-        // Precio actual
-        const livePrice = await fetchWithProxy(PROXIES, ticker);
-        if (livePrice) {
-            state.priceCache[ticker] = livePrice;
-            saveCaches();
-        }
+  if (livePrice) state.priceCache[ticker] = livePrice;
+  if (divData)   state.yieldCache[ticker] = divData;
 
-        // Datos de dividendos (yield, frecuencia, etc.)
-        const divData = await fetchDividendData(ticker);
-        if (divData) {
-            state.yieldCache[ticker] = divData;
-            saveCaches();
-        }
+  renderActiveTab();
 
-        // Datos fundamentales (con caché de 24h)
-        const fundamentals = await getFundamentalsCached(ticker);
-
-        // Histórico de precios y dividendos (para rango de yield)
-        const priceHistory = await fetchPriceAndDividendHistory(ticker);
-        
-        // --- 2. CONSTRUIR EL PAYLOAD PARA LA EDGE FUNCTION ---
-        let realYieldPct = null;
-        let divCagr = null;
-        let yieldHistSummary = null;
-
-        if (divData?.yield != null) {
-            realYieldPct = +(divData.yield * 100).toFixed(2);
-        }
-
-        if (priceHistory) {
-            if (priceHistory.divCagr != null) {
-                divCagr = priceHistory.divCagr;
-            }
-            
-            if (priceHistory.yieldByYear) {
-                const yVals = Object.values(priceHistory.yieldByYear).filter(v => v > 0);
-                if (yVals.length >= 2) {
-                    yieldHistSummary = {
-                        min: +Math.min(...yVals).toFixed(2),
-                        max: +Math.max(...yVals).toFixed(2),
-                        years: yVals.length
-                    };
-                }
-            }
-        }
-
-        const payload = {
-            ticker: ticker,
-            price: livePrice || null,
-            realYieldPct: realYieldPct,
-            divCagr: divCagr,
-            yieldHistSummary: yieldHistSummary,
-            fundamentals: fundamentals ? {
-                years: fundamentals.years,
-                revenue: fundamentals.revenue,
-                ebit: fundamentals.ebit,
-                net_income: fundamentals.net_income,
-                fcf: fundamentals.fcf,
-                net_debt: fundamentals.net_debt,
-                debt_ebitda: fundamentals.debt_ebitda,
-                eps: fundamentals.eps,
-                roe: fundamentals.roe,
-                roic: fundamentals.roic,
-                gross_margin: fundamentals.gross_margin,
-                ebit_margin: fundamentals.ebit_margin,
-                net_margin: fundamentals.net_margin,
-                cfo: fundamentals.cfo,
-                buybacks: fundamentals.buybacks
-            } : null
-        };
-
-        // --- 3. LLAMAR A LA EDGE FUNCTION DE SUPABASE ---
-        const { data, error } = await supabaseClient.functions.invoke('valuation', {
-            body: payload
-        });
-
-        if (error) throw new Error(error.message);
-        if (data?.error) throw new Error(data.error);
-
-        // --- 4. PROCESAR Y MOSTRAR EL RESULTADO ---
-        const result = data;
-        result.fundamentals = fundamentals;
-        result.priceHistory = priceHistory;
-        if (result.metrics && realYieldPct != null) {
-            result.metrics.Yield_pct = realYieldPct;
-        }
-
-        state._valResult = result;
-        state._valError = "";
-
-        if (livePrice) state.priceCache[ticker] = livePrice;
-        if (divData) state.yieldCache[ticker] = divData;
-        saveCaches();
-
-        console.log(`✅ Análisis completado para ${ticker}`);
-
-    } catch (e) {
-        console.error('Error en analyzeValuation:', e);
-        state._valResult = {
-            ticker,
-            name: ticker,
-            sector: "",
-            description: "Error al obtener los datos. Comprueba tu conexión o el ticker.",
-            scores: {},
-            metrics: {},
-            recommendation: "Sin análisis",
-            rec_color: "#94a3b8",
-            weiss_verdict: "No se pudo completar el análisis",
-            weiss_color: "#94a3b8"
-        };
-        state._valError = `⚠️ Error: ${e.message}`;
-    } finally {
-        state._valLoading = false;
-        renderActiveTab();
-        setTimeout(() => {
-            setupAutocomplete("val-ticker", r => {
-                state._valTicker = r.ticker;
-                const inp = document.getElementById("val-ticker");
-                if (inp) inp.value = r.ticker;
-            });
-        }, 100);
-    }
+  setTimeout(() => {
+    setupAutocomplete("val-ticker", r => {
+      state._valTicker = r.ticker;
+      const inp = document.getElementById("val-ticker");
+      if(inp) inp.value = r.ticker;
+    });
+  }, 100);
 }
-
-// ─────────────────────────────────────────────────────────────────────────
 
 function setValTab(i) {
   state._valTab = i;
