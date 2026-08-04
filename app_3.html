@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <link rel="icon" type="image/x-icon" href="favicon.ico"/>
-<title>Kapital Manager v0.93</title>
+<title>Kapital Manager v0.92</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -653,22 +653,21 @@ const API = {
 };
 // CORS proxies — se prueban en orden hasta que uno funcione
 const PROXIES = [
-  t => `/api/yf/chart?ticker=${encodeURIComponent(t)}&interval=1d&range=1d`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
   t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
-  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
 ];
 
 const SEARCH_PROXIES = [
-  q => `/api/yf/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`,
+  q => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
   q => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
-  q => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
 ];
 
 const YIELD_PROXIES = [
-  t => `/api/yf/chart?ticker=${encodeURIComponent(t)}&range=2y&interval=1mo&events=div`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
-  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
 ];
 
 const MODULES = "incomeStatementHistory,cashflowStatementHistory,balanceSheetHistory,defaultKeyStatistics,financialData";
@@ -683,19 +682,20 @@ const TS_ANNUAL = [
 ].join(",");
 
 const TS_PROXIES = [
-  t => `/api/yf/timeseries?ticker=${encodeURIComponent(t)}&type=${encodeURIComponent(TS_ANNUAL)}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
 ];
 
 // QS_PROXIES se mantiene como fallback secundario
 const QS_PROXIES = [
-  t => `/api/yf/quoteSummary?ticker=${encodeURIComponent(t)}&modules=${encodeURIComponent(MODULES)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
   t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
-  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
 ];
 const FUND_PROXIES = QS_PROXIES;
 
@@ -1924,9 +1924,9 @@ async function fetchQuotesEdgeFunction(tickers) {
 }
 
 const BATCH_QUOTE_PROXIES = [
-  s => `/api/yf/batchquote?symbols=${s}`,
+  s => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
   s => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
-  s => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
+  s => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
   s => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
 ];
 
@@ -5483,6 +5483,10 @@ function renderValuation() {
         <button class="btn" onclick="analyzeValuation()" ${loading?"disabled":""} style="padding:6px 16px">${loading?`<span class="spinner"></span> Analizando...`:"🔍 Analizar"}</button>
       </div>
       ${error?`<div style="color:#dc2626;margin-top:10px;font-size:12px">⚠️ ${esc(error)}</div>`:""}
+      ${(state._valMissingSources||[]).length?`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:8px 10px;margin-top:10px;font-size:11px;color:#991b1b">
+        ⚠️ No se pudieron obtener estos datos tras reintentarlo (probablemente los proxies gratuitos estaban saturados en ese momento): <b>${state._valMissingSources.map(esc).join(", ")}</b>.
+        Esto explica que falten puntuaciones. Prueba a pulsar "🔍 Analizar" otra vez en unos segundos.
+      </div>`:""}
       <div style="margin-top:8px;font-size:11px;color:#64748b">Autocompletado activo con Yahoo Finance. El análisis IA requiere conexión a internet.</div>
     </div>
     ${fmpPanel}
@@ -5543,6 +5547,7 @@ async function _fetchFMP(ticker, key) {
   // FMP soporta CORS nativo — intentar directo primero, luego proxies
   const wrapUrl = (url) => [
     url,
+    `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
   ];
@@ -5779,9 +5784,10 @@ async function fetchFundamentals(ticker) {
 async function fetchPriceAndDividendHistory(ticker) {
   const isGBp = ticker.toUpperCase().endsWith('.L');
   const proxies = [
-    `/api/yf/chart?ticker=${encodeURIComponent(ticker)}&range=max&interval=1mo&events=${encodeURIComponent('div,split')}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
   ];
@@ -6117,115 +6123,21 @@ function yieldLineChart(title, years, yields) {
   </div>`;
 }
 
-function _computeValuationInline({ ticker, price, realYieldPct, fundamentals, yieldHistSummary, divCagr }) {
-  function clamp(v, lo=0, hi=100) { return Math.max(lo, Math.min(hi, v)); }
-  function r1(v) { return Math.round(v*10)/10; }
-  function r2(v) { return Math.round(v*100)/100; }
-
-  const fd = fundamentals || {};
-  const lastIdx = (fd.years?.length || 1) - 1;
-  const lastEps        = fd.eps?.[lastIdx]        ?? null;
-  const lastRoe        = fd.roe?.[lastIdx]        ?? null;
-  const lastNetIncome  = fd.net_income?.[lastIdx] ?? null;
-  const lastRevenue    = fd.revenue?.[lastIdx]    ?? null;
-  const lastNetDebt    = fd.net_debt?.[lastIdx]   ?? null;
-  const lastDebtEbitda = fd.debt_ebitda?.[lastIdx]?? null;
-  const p = typeof price === "number" ? price : null;
-
-  const sharesEst    = (lastNetIncome != null && lastEps && lastEps !== 0) ? lastNetIncome / lastEps : null;
-  const marketCapEst = (p != null && sharesEst != null) ? p * sharesEst : null;
-  const evEst        = (marketCapEst != null && lastNetDebt != null) ? marketCapEst + lastNetDebt : null;
-  const ebitdaEst    = (lastNetDebt != null && lastDebtEbitda) ? lastNetDebt / lastDebtEbitda : null;
-
-  // 1) PER
-  const per      = (p != null && lastEps && lastEps > 0) ? p / lastEps : null;
-  const peScore  = per != null ? r1(clamp(100 - (per - 8) * 4)) : null;
-
-  // 2) DCF quality
-  let dcfScore = null;
-  {
-    const fcf     = fd.fcf     || [];
-    const revenue = fd.revenue || [];
-    const pairs   = fcf.map((f,i) => ({f, r: revenue[i]})).filter(x => x.f != null && x.r > 0);
-    if (pairs.length >= 2) {
-      const margins    = pairs.map(x => x.f / x.r);
-      const avgM       = margins.reduce((a,b) => a+b, 0) / margins.length;
-      const variance   = margins.reduce((s,m) => s + (m-avgM)**2, 0) / margins.length;
-      const stability  = clamp(100 - Math.sqrt(variance) * 350);
-      const marginScore= clamp(avgM * 650);
-      dcfScore = r1(marginScore * 0.65 + stability * 0.35);
-    }
+// Reintenta una función asíncrona hasta "attempts" veces con una pequeña pausa entre
+// intentos — para la consulta puntual de Valoración sí compensa el coste extra (no es
+// un lote de 150 tickers como el Radar, es una sola empresa bajo demanda).
+async function fetchWithRetry(fn, attempts = 2, delayMs = 700) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const result = await fn();
+      if (result != null) return result;
+      lastErr = new Error("resultado vacío");
+    } catch (e) { lastErr = e; }
+    if (i < attempts - 1) await sleep(delayMs);
   }
-
-  // 3) Weiss
-  let weissScore = null;
-  if (realYieldPct != null && yieldHistSummary && yieldHistSummary.max > yieldHistSummary.min) {
-    const pos = (realYieldPct - yieldHistSummary.min) / (yieldHistSummary.max - yieldHistSummary.min);
-    weissScore = r1(clamp(pos * 100));
-  }
-
-  // 4) EV/EBITDA
-  const evEbitda      = (evEst != null && ebitdaEst && ebitdaEst > 0) ? evEst / ebitdaEst : null;
-  const evEbitdaScore = evEbitda != null ? r1(clamp(100 - (evEbitda - 6) * 6)) : null;
-
-  // 5) P/B
-  const bookValueEst = (lastNetIncome != null && lastRoe) ? lastNetIncome / (lastRoe / 100) : null;
-  const pb           = (marketCapEst != null && bookValueEst && bookValueEst > 0) ? marketCapEst / bookValueEst : null;
-  const pbScore      = pb != null ? r1(clamp(100 - (pb - 1) * 25)) : null;
-
-  // 6) EV/Revenue
-  const evRevenue      = (evEst != null && lastRevenue && lastRevenue > 0) ? evEst / lastRevenue : null;
-  const evRevenueScore = evRevenue != null ? r1(clamp(100 - (evRevenue - 1) * 20)) : null;
-
-  // 7) DDM
-  const ddmTotalReturn = realYieldPct != null ? realYieldPct + (divCagr ?? 3) : null;
-  const ddmScore       = ddmTotalReturn != null ? r1(clamp((ddmTotalReturn - 4) * 10)) : null;
-
-  // 8) EPV
-  const earningsYield = (p != null && lastEps && lastEps > 0) ? (lastEps / p) * 100 : null;
-  const epvScore      = earningsYield != null ? r1(clamp((earningsYield - 4) * 12)) : null;
-
-  const scores = { ddm: ddmScore, epv: epvScore, pe: peScore, ev_ebitda: evEbitdaScore,
-                   pb: pbScore, ev_revenue: evRevenueScore, dcf_quality: dcfScore, weiss: weissScore };
-
-  const validScores = Object.values(scores).filter(v => typeof v === "number");
-  const overall     = validScores.length ? validScores.reduce((a,b) => a+b, 0) / validScores.length : null;
-  const missingMethods = Object.entries(scores).filter(([,v]) => v == null).map(([k]) => k);
-
-  const metrics = {
-    PER:              per != null ? r1(per) : null,
-    PER_fwd:          null,
-    P_Book:           pb  != null ? r2(pb)  : null,
-    Yield_pct:        realYieldPct ?? null,
-    Payout_pct:       (realYieldPct != null && earningsYield && earningsYield > 0) ? r1((realYieldPct / earningsYield) * 100) : null,
-    Beta:             null,
-    ROE_pct:          lastRoe != null ? r1(lastRoe) : null,
-    Deuda_Patrimonio: (lastNetDebt != null && bookValueEst && bookValueEst > 0) ? r2(lastNetDebt / bookValueEst) : null,
-  };
-
-  function recFor(s) {
-    if (s == null) return { text: "⚪ Datos insuficientes para una recomendación fiable", color: "#94a3b8" };
-    if (s >= 70)  return { text: "🟢 Precio de COMPRA", color: "#16a34a" };
-    if (s >= 50)  return { text: "🟡 Precio NORMAL",   color: "#f59e0b" };
-    return           { text: "🔴 NO comprar a este precio", color: "#ef4444" };
-  }
-  const rec = recFor(overall);
-
-  const weissColor   = weissScore == null ? "#94a3b8" : weissScore >= 60 ? "#16a34a" : weissScore >= 35 ? "#f59e0b" : "#ef4444";
-  const weissVerdict = weissScore != null
-    ? `Yield actual del ${realYieldPct}%, dentro de un rango histórico propio de ${yieldHistSummary?.min}%-${yieldHistSummary?.max}%.`
-    : "No hay rango histórico de yield suficiente para aplicar el método de Weiss con datos reales.";
-
-  const result = {
-    name: ticker, ticker, sector: "",
-    description: `Análisis basado en datos financieros reales de ${ticker}. PER: ${metrics.PER ?? "N/D"}, ROE: ${metrics.ROE_pct ?? "N/D"}%, yield: ${realYieldPct ?? "N/D"}%.`,
-    scores, metrics,
-    weiss_verdict: weissVerdict, weiss_color: weissColor,
-    recommendation: rec.text, rec_color: rec.color,
-    overall_score: overall != null ? r1(overall) : null,
-    ...(missingMethods.length ? { _note: `${missingMethods.length} de 8 métodos no se han podido calcular por falta de datos reales suficientes (${missingMethods.join(", ")}).` } : {}),
-  };
-  return result;
+  console.warn("fetchWithRetry: todos los intentos fallaron:", lastErr?.message || lastErr);
+  return null;
 }
 
 async function analyzeValuation() {
@@ -6239,13 +6151,25 @@ async function analyzeValuation() {
   state._valTab = 0;
   renderActiveTab();
 
-  // Lanzar todo en paralelo: precio, dividendo, fundamentales e histórico precio/div
-  const [livePrice, divData, fundamentals, priceHistory] = await Promise.all([
-    fetchWithProxy(PROXIES, ticker),
-    fetchDividendData(ticker),
-    fetchFundamentals(ticker),
-    fetchPriceAndDividendHistory(ticker)
+  // Cada fuente de datos se reintenta por separado (2 intentos) y de forma aislada con
+  // Promise.allSettled, para que el fallo de una no arrastre a las demás ni se pierda de
+  // vista cuál falló exactamente — antes un solo fallo silencioso podía dejar las 8
+  // puntuaciones sin datos sin que se supiera por qué.
+  const settled = await Promise.allSettled([
+    fetchWithRetry(() => fetchWithProxy(PROXIES, ticker)),
+    fetchWithRetry(() => fetchDividendData(ticker)),
+    fetchWithRetry(() => fetchFundamentals(ticker)),
+    fetchWithRetry(() => fetchPriceAndDividendHistory(ticker)),
   ]);
+  const [livePrice, divData, fundamentals, priceHistory] = settled.map(s => s.status === "fulfilled" ? s.value : null);
+
+  // Diagnóstico visible de qué fuente ha fallado, para poder reportarlo con precisión.
+  const missingSources = [];
+  if (!livePrice) missingSources.push("precio actual");
+  if (!fundamentals) missingSources.push("datos fundamentales (ingresos, deuda, EPS...)");
+  if (!priceHistory) missingSources.push("histórico de precio/dividendo");
+  if (!divData) missingSources.push("yield actual");
+  state._valMissingSources = missingSources;
 
   try {
     // Resumen de yield histórico propio (para el método Weiss: compara el yield actual
@@ -6256,8 +6180,11 @@ async function analyzeValuation() {
       if (yVals.length) yieldHistSummary = { min: +Math.min(...yVals).toFixed(2), max: +Math.max(...yVals).toFixed(2), years: yVals.length };
     }
 
-    const _valBody = { ticker, price: livePrice || null,
+    const { data, error } = await supabaseClient.functions.invoke('valuation', {
+      body: { ticker, price: livePrice || null,
         realYieldPct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null,
+        // Datos reales ya descargados por la app (antes no se enviaban, y Gemini tenía que
+        // "recordar" las cifras de memoria en vez de calcular con datos de verdad):
         fundamentals: fundamentals ? {
           years: fundamentals.years, revenue: fundamentals.revenue, ebit: fundamentals.ebit,
           net_income: fundamentals.net_income, fcf: fundamentals.fcf, net_debt: fundamentals.net_debt,
@@ -6267,8 +6194,9 @@ async function analyzeValuation() {
         } : null,
         yieldHistSummary,
         divCagr: priceHistory?.divCagr ?? null
-      };
-    const data = _computeValuationInline(_valBody);
+      }
+    });
+    if (error) throw error;
     if (data?.error) throw new Error(data.error);
     if (divData?.yield != null && data?.metrics) {
       data.metrics.Yield_pct = +(divData.yield*100).toFixed(2);
