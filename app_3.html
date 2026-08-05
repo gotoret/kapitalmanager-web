@@ -6182,11 +6182,22 @@ async function analyzeValuation() {
   // --- PASO 2: RECOLECTAR DATOS EN PARALELO ---
   // Usamos fetchWithRetry con FMP para fundamentales y dividendos.
   // El histórico de precio (fetchPriceAndDividendHistory) se elimina de aquí para evitar que los proxies caídos bloqueen el análisis.
-  const settled = await Promise.allSettled([
-    fetchWithRetry(() => fetchDividendData(ticker)),
-    fetchWithRetry(() => fetchFundamentals(ticker)),
-  ]);
-  const [divData, fundamentals] = settled.map(s => s.status === "fulfilled" ? s.value : null);
+  // --- CAMBIOS PARA EVITAR EL ERROR ROJO ---
+  // 1. Intentar obtener el precio de la caché de la cartera (para no fallar por red)
+  let livePrice = state.priceCache[ticker] || null;
+  
+  // 2. Intentar obtener dividendos y fundamentales, pero capturando los errores individualmente
+  let divData = null;
+  let fundamentals = null;
+  
+  try {
+      divData = await fetchWithRetry(() => fetchDividendData(ticker));
+  } catch (e) { /* Falló dividendos, pero seguimos adelante */ }
+  
+  try {
+      fundamentals = await fetchWithRetry(() => fetchFundamentals(ticker));
+  } catch (e) { /* Falló fundamentales, pero seguimos adelante */ }
+
   const priceHistory = null; // Desactivado temporalmente para evitar el error de CORS con Yahoo
 
   // Diagnóstico de qué ha fallado
@@ -6200,22 +6211,22 @@ async function analyzeValuation() {
     let yieldHistSummary = null;
     // Si tuviéramos priceHistory podríamos calcular el yield histórico, pero lo dejamos nulo para que no falle.
     
-    const { data, error } = await supabaseClient.functions.invoke('valuation', {
-      body: { 
-        ticker: ticker, 
-        price: livePrice || null,
-        realYieldPct: divData?.yield != null ? +(divData.yield * 100).toFixed(2) : null,
-        fundamentals: fundamentals ? {
-          years: fundamentals.years, revenue: fundamentals.revenue, ebit: fundamentals.ebit,
-          net_income: fundamentals.net_income, fcf: fundamentals.fcf, net_debt: fundamentals.net_debt,
-          debt_ebitda: fundamentals.debt_ebitda, eps: fundamentals.eps, fcf_per_share: fundamentals.fcf_per_share,
-          roe: fundamentals.roe, roic: fundamentals.roic, gross_margin: fundamentals.gross_margin,
-          ebit_margin: fundamentals.ebit_margin, net_margin: fundamentals.net_margin
-        } : null,
-        yieldHistSummary: yieldHistSummary,
-        divCagr: null
-      }
-    });
+      const { data, error } = await supabaseClient.functions.invoke('valuation', {
+        body: { 
+          ticker: ticker, 
+          price: livePrice || null,
+          realYieldPct: divData?.yield != null ? +(divData.yield * 100).toFixed(2) : null,
+          fundamentals: fundamentals ? {
+            years: fundamentals.years, revenue: fundamentals.revenue, ebit: fundamentals.ebit,
+            net_income: fundamentals.net_income, fcf: fundamentals.fcf, net_debt: fundamentals.net_debt,
+            debt_ebitda: fundamentals.debt_ebitda, eps: fundamentals.eps, fcf_per_share: fundamentals.fcf_per_share,
+            roe: fundamentals.roe, roic: fundamentals.roic, gross_margin: fundamentals.gross_margin,
+            ebit_margin: fundamentals.ebit_margin, net_margin: fundamentals.net_margin
+          } : null,
+          yieldHistSummary: null,
+          divCagr: null
+        }
+      });
 
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
