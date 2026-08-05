@@ -6141,6 +6141,31 @@ async function fetchWithRetry(fn, attempts = 2, delayMs = 700) {
   return null;
 }
 
+// Nueva función para obtener dividendos directamente de la API de Financial Modeling Prep
+async function fetchDividendDataFMP(ticker) {
+    if (!state.fmpKey) return null;
+    try {
+        const res = await fetch(`https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/${ticker}?apikey=${state.fmpKey}`, {signal: AbortSignal.timeout(6000)});
+        if (!res.ok) return null;
+        const data = await res.json();
+        const list = data?.historical || [];
+        if (!list.length) return null;
+        
+        // Calcular el yield y la tasa anual a partir de los datos históricos de FMP
+        const annual = list.slice(0, 4).reduce((sum, d) => sum + (d.adjDividend || 0), 0);
+        // Si el ticker es de Londres (.L) FMP ya lo devuelve en GBP, no en peniques. No hace falta dividir /100.
+        const isGBp = String(ticker).toUpperCase().endsWith(".L");
+        const rate = isGBp ? +(annual).toFixed(4) : +annual.toFixed(4);
+        const exDate = list[0]?.date || null;
+        const price = state.priceCache[ticker] || null;
+        const yieldVal = price ? +(rate / price).toFixed(4) : null;
+
+        return { yield: yieldVal, rate: rate, exDate: exDate, freq: "Anual" };
+    } catch (e) {
+        return null;
+    }
+}
+
 async function analyzeValuation() {
   const input = document.getElementById("val-ticker");
   const ticker = (input?.value || "").trim().toUpperCase().split(" ")[0];
@@ -6189,7 +6214,7 @@ async function analyzeValuation() {
   let fundamentals = null;
   
   try {
-      divData = await fetchWithRetry(() => fetchDividendData(ticker));
+      divData = await fetchWithRetry(() => fetchDividendDataFMP(ticker));
   } catch (e) { /* Falló dividendos, pero seguimos adelante */ }
   
   try {
