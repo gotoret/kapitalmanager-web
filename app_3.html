@@ -6180,13 +6180,11 @@ async function analyzeValuation() {
   }
 
   // --- PASO 2: RECOLECTAR DATOS EN PARALELO ---
-  // Usamos fetchWithRetry con FMP para fundamentales y dividendos.
-  // El histórico de precio (fetchPriceAndDividendHistory) se elimina de aquí para evitar que los proxies caídos bloqueen el análisis.
-  // --- CAMBIOS PARA EVITAR EL ERROR ROJO ---
-  // 1. Intentar obtener el precio de la caché de la cartera (para no fallar por red)
-  let livePrice = state.priceCache[ticker] || null;
+  // Intentar obtener el precio de la caché de la cartera
+  if (!livePrice) {
+      livePrice = state.priceCache[ticker] || null;
+  }
   
-  // 2. Intentar obtener dividendos y fundamentales, pero capturando los errores individualmente
   let divData = null;
   let fundamentals = null;
   
