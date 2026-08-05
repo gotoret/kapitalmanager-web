@@ -6166,6 +6166,308 @@ async function fetchDividendDataFMP(ticker) {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// CÁLCULO LOCAL DE VALORACIÓN (reemplaza la Edge Function de Supabase)
+// Calcula los 8 métodos directamente en el navegador a partir de los datos
+// fundamentales ya disponibles: DDM, EPV, PE, EV/EBITDA, PB, EV/Revenue,
+// DCF Quality y Geraldine Weiss.
+// ─────────────────────────────────────────────────────────────────────────
+function computeValuationLocally(ticker, price, realYieldPct, fundamentals, priceHistory) {
+  const fd = fundamentals || {};
+
+  const last = arr => {
+    const valid = (arr || []).filter(v => v != null && !isNaN(v));
+    return valid.length ? valid[valid.length - 1] : null;
+  };
+  const median = arr => {
+    const valid = (arr || []).filter(v => v != null && !isNaN(v)).sort((a, b) => a - b);
+    if (!valid.length) return null;
+    const mid = Math.floor(valid.length / 2);
+    return valid.length % 2 === 0 ? (valid[mid - 1] + valid[mid]) / 2 : valid[mid];
+  };
+  const avg = arr => {
+    const valid = (arr || []).filter(v => v != null && !isNaN(v));
+    return valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : null;
+  };
+  const clampScore = v => Math.round(Math.max(0, Math.min(100, v)));
+
+  const latestEPS        = last(fd.eps);
+  const latestFCFps      = last(fd.fcf_per_share);
+  const latestROIC       = last(fd.roic);
+  const latestROE        = last(fd.roe);
+  const latestNetMargin  = last(fd.net_margin);
+  const latestEbitMargin = last(fd.ebit_margin);
+  const latestDebtEbitda = last(fd.debt_ebitda);
+  const latestRevenue    = last(fd.revenue);
+  const latestNetIncome  = last(fd.net_income);
+  const latestNetDebt    = last(fd.net_debt);
+
+  const medianPE       = median(fd.pe_hist);
+  const medianEVEBITDA = median(fd.ev_ebitda_hist);
+
+  const scores  = {};
+  const ranges  = {};
+  const metrics = {};
+
+  // ── DDM (Dividend Discount Model) ────────────────────────────────────────
+  // Gordon Growth Model: valor_intrínseco = D1 / (r - g)
+  let ddm_score = null;
+  if (realYieldPct != null && realYieldPct > 0 && price > 0) {
+    const annualDiv = (realYieldPct / 100) * price;
+    // Estimar g desde crecimiento de EPS o usar 2% conservador
+    let g = 0.02;
+    const posEPS = (fd.eps || []).filter(v => v != null && v > 0);
+    if (posEPS.length >= 3) {
+      const rates = posEPS.slice(1).map((v, i) => (v - posEPS[i]) / Math.abs(posEPS[i])).filter(v => Math.abs(v) < 0.5);
+      if (rates.length) g = Math.max(-0.02, Math.min(0.07, avg(rates)));
+    }
+    const r = 0.08; // tasa de descuento requerida 8%
+    if (r > g + 0.005) {
+      const intrinsic = annualDiv * (1 + g) / (r - g);
+      ranges.ddm_low  = +(intrinsic * 0.85).toFixed(2);
+      ranges.ddm_high = +(intrinsic * 1.15).toFixed(2);
+      const ratio = price / intrinsic;
+      ddm_score = ratio <= 0.70 ? 92 : ratio <= 0.85 ? 78 : ratio <= 1.00 ? 63
+                : ratio <= 1.20 ? 44 : ratio <= 1.50 ? 24 : 8;
+      scores.ddm = ddm_score;
+    }
+  }
+
+  // ── EPV (Earnings Power Value) ────────────────────────────────────────────
+  // EPV = EPS_normalizado / WACC  — valora sin crecimiento futuro
+  let epv_score = null;
+  if (latestEPS != null && latestEPS > 0 && price > 0) {
+    const normalEPS = median((fd.eps || []).filter(v => v != null && v > 0)) || latestEPS;
+    const wacc      = 0.08;
+    const epv       = normalEPS / wacc;
+    ranges.epv_low  = +(epv * 0.80).toFixed(2);
+    ranges.epv_high = +(epv * 1.20).toFixed(2);
+    const ratio = price / epv;
+    epv_score = ratio <= 0.60 ? 92 : ratio <= 0.80 ? 78 : ratio <= 1.00 ? 63
+              : ratio <= 1.30 ? 40 : ratio <= 1.60 ? 20 : 5;
+    scores.epv = epv_score;
+  }
+
+  // ── P/E Múltiplos ─────────────────────────────────────────────────────────
+  // Compara el PER actual frente al PER histórico mediano de la propia empresa
+  let pe_score = null;
+  if (latestEPS != null && latestEPS > 0 && price > 0) {
+    const currentPE = price / latestEPS;
+    metrics.PER_fwd  = +currentPE.toFixed(1);
+    const histPE     = medianPE || 18; // referencia sector amplio si no hay historial
+    ranges.pe_low    = +(latestEPS * histPE * 0.75).toFixed(2);
+    ranges.pe_high   = +(latestEPS * histPE * 1.25).toFixed(2);
+    const ratio = currentPE / histPE;
+    pe_score = ratio <= 0.60 ? 92 : ratio <= 0.80 ? 78 : ratio <= 1.00 ? 62
+             : ratio <= 1.20 ? 44 : ratio <= 1.50 ? 24 : 8;
+    scores.pe = pe_score;
+  }
+
+  // ── EV/EBITDA ─────────────────────────────────────────────────────────────
+  let ev_ebitda_score = null;
+  // 1º intentar histórico directo (si FMP lo devolvió)
+  const histEVEBITDA = medianEVEBITDA || last(fd.ev_ebitda_hist);
+  if (histEVEBITDA != null && histEVEBITDA > 0) {
+    metrics.EV_EBITDA = +histEVEBITDA.toFixed(1);
+    ev_ebitda_score = histEVEBITDA < 6 ? 90 : histEVEBITDA < 8 ? 75 : histEVEBITDA < 10 ? 60
+                   : histEVEBITDA < 12 ? 44 : histEVEBITDA < 16 ? 28 : 12;
+    scores.ev_ebitda = ev_ebitda_score;
+  } else if (latestRevenue && latestEbitMargin != null && latestEPS != null && latestEPS > 0 &&
+             latestNetIncome && price > 0) {
+    // Estimar a partir de market cap implícito
+    const sharesM   = latestNetIncome / latestEPS;             // millones de acciones (aprox.)
+    const marketCapM = sharesM * price;                         // market cap en millones
+    const netDebtM   = latestNetDebt || 0;
+    const ev         = marketCapM + netDebtM;
+    const ebitdaM    = latestRevenue * (latestEbitMargin / 100) * 1.2; // EBITDA ≈ EBIT * 1.20
+    if (ebitdaM > 0) {
+      const evEbitda   = ev / ebitdaM;
+      metrics.EV_EBITDA = +evEbitda.toFixed(1);
+      ranges.ev_low    = +(ebitdaM * 7).toFixed(0);
+      ranges.ev_high   = +(ebitdaM * 12).toFixed(0);
+      ev_ebitda_score  = evEbitda < 6 ? 90 : evEbitda < 8 ? 75 : evEbitda < 10 ? 60
+                       : evEbitda < 12 ? 44 : evEbitda < 16 ? 28 : 12;
+      scores.ev_ebitda = ev_ebitda_score;
+    }
+  }
+
+  // ── Price/Book (PB) ───────────────────────────────────────────────────────
+  // Sin book value directo, lo aproximamos con ROE y PE: PB = PE × ROE
+  let pb_score = null;
+  if (latestEPS != null && latestEPS > 0 && latestROE != null && latestROE > 0 && price > 0) {
+    const currentPE   = price / latestEPS;
+    const impliedPB   = currentPE * (latestROE / 100);
+    metrics.PB        = +impliedPB.toFixed(2);
+    // Negocio de alta ROE merece PB más alto: precio justo ≈ ROE/10 (ROE 20% → PB 2)
+    const fairPB      = Math.max(1.5, latestROE / 10);
+    const ratio       = impliedPB / fairPB;
+    pb_score = ratio <= 0.50 ? 90 : ratio <= 0.75 ? 75 : ratio <= 1.00 ? 60
+             : ratio <= 1.30 ? 40 : ratio <= 1.80 ? 22 : 8;
+    scores.pb = pb_score;
+  }
+
+  // ── EV/Revenue ────────────────────────────────────────────────────────────
+  let ev_revenue_score = null;
+  if (latestRevenue && latestRevenue > 0 && latestEPS != null && latestEPS > 0 &&
+      latestNetIncome && price > 0) {
+    const sharesM    = latestNetIncome / latestEPS;
+    const marketCapM = sharesM * price;
+    const netDebtM   = latestNetDebt || 0;
+    const ev         = marketCapM + netDebtM;
+    const evRevenue  = ev / latestRevenue;
+    metrics.EV_Revenue = +evRevenue.toFixed(2);
+    // El nivel "justo" sube con el margen neto: margen 20% → 3×, margen 5% → 1×
+    const marginAdj  = Math.max(0.5, 1 + (latestNetMargin || 0) / 20);
+    const fairEVRev  = 1.5 * marginAdj;
+    const ratio      = evRevenue / fairEVRev;
+    ev_revenue_score = ratio <= 0.40 ? 90 : ratio <= 0.70 ? 75 : ratio <= 1.00 ? 60
+                     : ratio <= 1.40 ? 40 : ratio <= 2.00 ? 22 : 8;
+    scores.ev_revenue = ev_revenue_score;
+
+    // También el football field de DCF (P/FCF × 15)
+    if (latestFCFps != null && latestFCFps > 0) {
+      ranges.dcf_low  = +(latestFCFps * 12).toFixed(2);
+      ranges.dcf_high = +(latestFCFps * 18).toFixed(2);
+    }
+    // Football field EV/EBITDA si no se calculó antes
+    if (ranges.ev_low == null && latestEbitMargin != null) {
+      const ebitdaM = latestRevenue * (latestEbitMargin / 100) * 1.2;
+      if (ebitdaM > 0) {
+        ranges.ev_low  = +(ebitdaM * 7).toFixed(0);
+        ranges.ev_high = +(ebitdaM * 12).toFixed(0);
+      }
+    }
+  }
+
+  // ── DCF Quality (calidad y consistencia del flujo de caja libre) ──────────
+  let dcf_score = null;
+  const fcfArr = (fd.fcf || []).filter(v => v != null);
+  if (fcfArr.length >= 3) {
+    let score = 0;
+    // (1) Consistencia: % de años con FCF positivo — 35 pts
+    const posFCF = fcfArr.filter(v => v > 0).length;
+    score += (posFCF / fcfArr.length) * 35;
+    // (2) Calidad del margen neto — 30 pts
+    if (latestNetMargin != null) {
+      score += latestNetMargin >= 20 ? 30 : latestNetMargin >= 15 ? 25
+             : latestNetMargin >= 10 ? 18 : latestNetMargin >= 5 ? 10
+             : latestNetMargin >= 0  ? 4  : 0;
+    }
+    // (3) ROIC — 25 pts
+    if (latestROIC != null) {
+      score += latestROIC >= 20 ? 25 : latestROIC >= 15 ? 20
+             : latestROIC >= 10 ? 14 : latestROIC >= 5  ? 7 : 0;
+    }
+    // (4) Consistencia del crecimiento de ingresos — 10 pts
+    const revArr = (fd.revenue || []).filter(v => v != null && v > 0);
+    if (revArr.length >= 3) {
+      const posGrowths = revArr.slice(1).filter((v, i) => v > revArr[i]).length;
+      score += (posGrowths / (revArr.length - 1)) * 10;
+    }
+    dcf_score = clampScore(score);
+    scores.dcf_quality = dcf_score;
+    // Football field FCF si no se calculó con EV/Revenue
+    if (ranges.dcf_low == null && latestFCFps != null && latestFCFps > 0) {
+      ranges.dcf_low  = +(latestFCFps * 12).toFixed(2);
+      ranges.dcf_high = +(latestFCFps * 18).toFixed(2);
+    }
+  }
+
+  // ── Geraldine Weiss ───────────────────────────────────────────────────────
+  // Compara el yield actual con el rango histórico de yield de la empresa.
+  // Si tenemos historial de precio (priceHistory), usamos los yields anuales reales.
+  // Si no, usamos umbrales absolutos como aproximación conservadora.
+  let weiss_score   = null;
+  let weiss_verdict = "Sin historial de dividendos suficiente para el método Weiss";
+  let weiss_color   = "#94a3b8";
+
+  if (priceHistory?.yieldByYear) {
+    const yieldVals = Object.values(priceHistory.yieldByYear).filter(v => v != null && v > 0);
+    if (yieldVals.length >= 3 && realYieldPct != null && realYieldPct > 0) {
+      const maxYield = Math.max(...yieldVals);   // zona de COMPRA Weiss
+      const minYield = Math.min(...yieldVals);   // zona de VENTA Weiss
+      const avgYield = avg(yieldVals);
+      const curYield = realYieldPct / 100;
+      // normalizar dentro del rango histórico (0 = mínimo yield/caro, 100 = máximo yield/barato)
+      const rangeY = maxYield - minYield || 0.01;
+      const normalized = (curYield - minYield) / rangeY; // 0..1
+      weiss_score = clampScore(normalized * 100);
+      if (curYield >= maxYield * 0.92) {
+        weiss_verdict = "🟢 Yield cerca del máximo histórico — zona de COMPRA Weiss";
+        weiss_color   = "#16a34a";
+      } else if (curYield <= minYield * 1.08) {
+        weiss_verdict = "🔴 Yield cerca del mínimo histórico — zona de VENTA Weiss";
+        weiss_color   = "#dc2626";
+      } else if (curYield >= avgYield) {
+        weiss_verdict = "🟡 Yield por encima de la media histórica — NEUTRAL tirando a barato";
+        weiss_color   = "#d97706";
+      } else {
+        weiss_verdict = "🟠 Yield por debajo de la media histórica — NEUTRAL tirando a caro";
+        weiss_color   = "#f59e0b";
+      }
+      scores.weiss = weiss_score;
+    }
+  } else if (realYieldPct != null && realYieldPct > 0) {
+    // Sin historial: umbrales absolutos orientativos
+    if      (realYieldPct >= 5.0) { weiss_score = 82; weiss_verdict = "🟢 Yield históricamente alto — posible precio de COMPRA (estimación sin historial)"; weiss_color = "#16a34a"; }
+    else if (realYieldPct >= 3.5) { weiss_score = 60; weiss_verdict = "🟡 Yield en zona media — NEUTRAL (estimación sin historial)";                          weiss_color = "#d97706"; }
+    else if (realYieldPct >= 2.0) { weiss_score = 38; weiss_verdict = "🟠 Yield relativamente bajo — valoración ajustada (estimación sin historial)";          weiss_color = "#f59e0b"; }
+    else                          { weiss_score = 18; weiss_verdict = "🔴 Yield muy bajo — posible sobrevaloración por dividendo (estimación sin historial)";    weiss_color = "#dc2626"; }
+    scores.weiss = weiss_score;
+  } else if (realYieldPct === 0 || realYieldPct == null) {
+    weiss_verdict = "Empresa sin dividendo — método Weiss no aplicable";
+    weiss_color   = "#94a3b8";
+  }
+
+  // ── Métricas complementarias ──────────────────────────────────────────────
+  if (price         != null) metrics.Precio_actual = +price.toFixed(2);
+  if (realYieldPct  != null) metrics.Yield_pct     = +realYieldPct.toFixed(2);
+  if (latestROIC    != null) metrics.ROIC           = +latestROIC.toFixed(1);
+  if (latestDebtEbitda != null) metrics.Deuda_EBITDA = +latestDebtEbitda.toFixed(2);
+  if (latestFCFps != null && price > 0 && latestFCFps > 0)
+    metrics.FCF_yield = +(latestFCFps / price * 100).toFixed(2);
+
+  // ── Puntuación global (media de métodos con dato real) ───────────────────
+  const validScores = Object.values(scores).filter(v => typeof v === "number");
+  const overall_score = validScores.length
+    ? +((validScores.reduce((a, b) => a + b, 0) / validScores.length).toFixed(1))
+    : null;
+
+  const recommendation = overall_score == null ? "⚪ Datos insuficientes"
+    : overall_score >= 70 ? "🟢 Precio de COMPRA"
+    : overall_score >= 50 ? "🟡 Precio NORMAL"
+    : "🔴 No comprar a este precio";
+  const rec_color = overall_score == null ? "#94a3b8"
+    : overall_score >= 70 ? "#16a34a"
+    : overall_score >= 50 ? "#f59e0b"
+    : "#ef4444";
+
+  // ── Nota de métodos sin datos ─────────────────────────────────────────────
+  const ALL_METHODS = ["ddm","epv","pe","ev_ebitda","pb","ev_revenue","dcf_quality","weiss"];
+  const missing = ALL_METHODS.filter(m => scores[m] == null);
+  const _note = missing.length > 0
+    ? `${missing.length} de ${ALL_METHODS.length} métodos no se han podido calcular por falta de datos reales suficientes para este ticker (no se han rellenado con estimaciones para no afectar a la precisión): ${missing.join(", ")}.`
+    : null;
+
+  return {
+    ticker,
+    name: ticker,
+    sector: "",
+    description: "Análisis calculado localmente a partir de datos fundamentales disponibles (Yahoo Finance / FMP).",
+    scores,
+    overall_score,
+    recommendation,
+    rec_color,
+    metrics,
+    ranges,
+    weiss_verdict,
+    weiss_color,
+    _note,
+    fundamentals,
+    priceHistory
+  };
+}
+
 async function analyzeValuation() {
   const input = document.getElementById("val-ticker");
   const ticker = (input?.value || "").trim().toUpperCase().split(" ")[0];
@@ -6221,58 +6523,52 @@ async function analyzeValuation() {
       fundamentals = await fetchWithRetry(() => fetchFundamentals(ticker));
   } catch (e) { /* Falló fundamentales, pero seguimos adelante */ }
 
-  const priceHistory = null; // Desactivado temporalmente para evitar el error de CORS con Yahoo
+  // --- PASO 3: HISTORIAL DE PRECIO Y DIVIDENDOS (para tabs Precio, Dividendos y Weiss) ---
+  let priceHistory = null;
+  try {
+    priceHistory = await fetchPriceAndDividendHistory(ticker);
+  } catch (e) { /* fallback: sin historial, los tabs de precio y dividendos mostrarán aviso */ }
+
+  // Si tenemos historial de precio, mejorar el yield si no lo teníamos de FMP
+  if (priceHistory && divData == null) {
+    const yieldVals = Object.values(priceHistory.yieldByYear || {}).filter(v => v != null && v > 0);
+    if (yieldVals.length > 0) {
+      const lastYear = Math.max(...Object.keys(priceHistory.yieldByYear).map(Number));
+      const yieldPct = priceHistory.yieldByYear[lastYear];
+      if (yieldPct) divData = { yield: yieldPct / 100, rate: null, exDate: null, freq: "Anual" };
+    }
+  }
 
   // Diagnóstico de qué ha fallado
   const missingSources = [];
-  if (!livePrice) missingSources.push("precio actual (FMP)");
-  if (!fundamentals) missingSources.push("datos fundamentales (FMP)");
-  if (!divData) missingSources.push("yield actual");
+  if (!livePrice)     missingSources.push("precio actual (FMP)");
+  if (!fundamentals)  missingSources.push("datos fundamentales (FMP/Yahoo)");
+  if (!divData)       missingSources.push("yield actual");
   state._valMissingSources = missingSources;
 
   try {
-    let yieldHistSummary = null;
-    // Si tuviéramos priceHistory podríamos calcular el yield histórico, pero lo dejamos nulo para que no falle.
-    
-      const { data, error } = await supabaseClient.functions.invoke('valuation', {
-        body: { 
-          ticker: ticker, 
-          price: livePrice || null,
-          realYieldPct: divData?.yield != null ? +(divData.yield * 100).toFixed(2) : null,
-          fundamentals: fundamentals ? {
-            years: fundamentals.years, revenue: fundamentals.revenue, ebit: fundamentals.ebit,
-            net_income: fundamentals.net_income, fcf: fundamentals.fcf, net_debt: fundamentals.net_debt,
-            debt_ebitda: fundamentals.debt_ebitda, eps: fundamentals.eps, fcf_per_share: fundamentals.fcf_per_share,
-            roe: fundamentals.roe, roic: fundamentals.roic, gross_margin: fundamentals.gross_margin,
-            ebit_margin: fundamentals.ebit_margin, net_margin: fundamentals.net_margin
-          } : null,
-          yieldHistSummary: null,
-          divCagr: null
-        }
-      });
+    const realYieldPct = divData?.yield != null ? +(divData.yield * 100).toFixed(2) : null;
+    const data = computeValuationLocally(ticker, livePrice, realYieldPct, fundamentals, priceHistory);
 
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    
-    if (divData?.yield != null && data?.metrics) {
-      data.metrics.Yield_pct = +(divData.yield * 100).toFixed(2);
-    }
-    if (fundamentals) data.fundamentals = fundamentals;
+    // Asegurar que priceHistory queda en el resultado para las pestañas de Precio y Dividendos
+    data.priceHistory = priceHistory;
+
     state._valResult = data;
-    state._valError = "";
+    state._valError  = "";
   } catch (e) {
-    console.error('Error análisis IA:', e);
+    console.error('Error cálculo valoración local:', e);
     state._valResult = {
       ticker,
       name: ticker,
       sector: "",
-      description: "Análisis IA no disponible. Comprueba tu conexión o clave FMP.",
+      description: "Error al calcular la valoración. Comprueba tu conexión.",
       scores: {},
-      metrics: { Precio_actual: livePrice || null, Yield_pct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null },
+      metrics: { Precio_actual: livePrice || null, Yield_pct: divData?.yield != null ? +(divData.yield * 100).toFixed(2) : null },
       ranges: {},
-      recommendation: "Sin análisis IA",
+      overall_score: null,
+      recommendation: "Sin datos suficientes",
       rec_color: "#94a3b8",
-      weiss_verdict: "Análisis IA no disponible",
+      weiss_verdict: "Error en el cálculo",
       weiss_color: "#94a3b8",
       fundamentals,
       priceHistory
