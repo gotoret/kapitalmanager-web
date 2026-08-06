@@ -10,7 +10,8 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
-body{font-family:'IBM Plex Sans','Segoe UI',Arial,sans-serif;background:#f8fafc;min-height:100vh;font-size:13px;}
+body{font-family:'IBM Plex Sans','Segoe UI',Arial,sans-serif;background:#f8fafc;min-height:100vh;font-size:13px;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
+input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default;}
 button,input,select{font-family:inherit;font-size:13px;}
 button{cursor:pointer;}
 input:focus,select:focus{outline:2px solid #2563eb;outline-offset:1px;}
@@ -318,6 +319,26 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 const SUPABASE_URL = 'https://qoezxfuxzrtzexzzplfz.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_e99iPLwtmEpykURcsz63Xg_cEvzX5yR';
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ── Medidas anti-copia básicas (disuasorias, no son seguridad real: cualquiera con
+// Ver código fuente o las herramientas de desarrollador las salta igualmente) ──
+document.addEventListener('contextmenu', e => e.preventDefault());
+
+(function devtoolsWarning() {
+  let warned = false;
+  const threshold = 160; // px de diferencia entre outer/inner que suele indicar un panel de devtools acoplado
+  setInterval(() => {
+    const widthDelta = window.outerWidth - window.innerWidth;
+    const heightDelta = window.outerHeight - window.innerHeight;
+    if ((widthDelta > threshold || heightDelta > threshold) && !warned) {
+      warned = true;
+      console.log('%cKapital Manager', 'font-size:20px;font-weight:bold;color:#1e3a5f');
+      console.log('%cEste código es propiedad de Kapital Manager. Su copia o reutilización no está autorizada.', 'font-size:13px;color:#64748b');
+    }
+    if (widthDelta <= threshold && heightDelta <= threshold) warned = false;
+  }, 1500);
+})();
+
 
 // ── Ventana de aviso propia (sustituye al alert() nativo del navegador) ──
 window.alert = function(msg){
@@ -631,21 +652,28 @@ const API = {
   quote: '/.netlify/functions/quote'
 };
 // CORS proxies — se prueban en orden hasta que uno funcione
+// CORS proxies gratuitos — orden importante: corsproxy.io cambió su política en 2026 y su
+// capa gratuita ya solo funciona en localhost, no en un dominio real como este, así que
+// ahora va SIEMPRE el último (falla predeciblemente en producción, pero no cuesta nada
+// dejarlo como último intento por si vuelve a admitir dominios reales sin pagar).
 const PROXIES = [
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
+  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
+  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1d`)}`,
 ];
 
 const SEARCH_PROXIES = [
-  q => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
+  q => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
   q => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
+  q => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`)}`,
 ];
 
 const YIELD_PROXIES = [
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
+  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
+  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=2y&interval=1mo&events=div`)}`,
 ];
 
 const MODULES = "incomeStatementHistory,cashflowStatementHistory,balanceSheetHistory,defaultKeyStatistics,financialData";
@@ -660,20 +688,20 @@ const TS_ANNUAL = [
 ].join(",");
 
 const TS_PROXIES = [
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
-  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
-  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
 ];
 
 // QS_PROXIES se mantiene como fallback secundario
 const QS_PROXIES = [
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
-  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
   t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
-  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v11/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
+  t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=${MODULES}`)}`,
 ];
 const FUND_PROXIES = QS_PROXIES;
 
@@ -1902,10 +1930,11 @@ async function fetchQuotesEdgeFunction(tickers) {
 }
 
 const BATCH_QUOTE_PROXIES = [
-  s => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
+  s => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
   s => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
-  s => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
+  s => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
   s => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
+  s => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${s}`)}`,
 ];
 
 // Pide TODOS los tickers en una sola petición (mucho más rápido que uno a uno).
@@ -3030,10 +3059,11 @@ async function fetchPriceHistory(ticker, range="1y") {
   const interval = range === "10y" || range === "5y" ? "1mo" : range === "3y" ? "1wk" : range === "6mo" || range === "ytd" ? "1d" : "1wk";
 
   const histProxies = [
-    `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${range}`)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${range}`)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${range}`)}`,
-    `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${range}`)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${range}`)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${range}`)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${range}`)}`,
   ];
 
   for (const url of histProxies) {
@@ -4179,7 +4209,7 @@ function safeGetValues(data, key, fallback = []) {
 if (!state._portfolioCharts) {
   state._portfolioCharts = {
     selectedTicker: 'Todas',   // por defecto se muestran ya las gráficas de "Todas las empresas"
-    period: '1A',
+    period: 'MAX',   // por defecto desde que se adquirió la primera posición, no solo los últimos meses
     divPeriod: 'Anual',
     companyData: {},   // caché por ticker: { loading, priceHistory, fundamentals }
     loading: false
@@ -5124,19 +5154,17 @@ function toggleMethodInfo(key) {
 }
 
 function createValAlert(ticker, name, perFwd, yieldPct) {
-  // Precio óptimo: basado en el PER_fwd y precio actual disponible, con descuento del 10%.
-  // Si no hay precio actual, pedimos al usuario que lo confirme.
+  // Precio de alerta por defecto: el precio actual de mercado, editable por el usuario.
   const livePrice = state.priceCache[ticker];
   let suggestedPrice = null;
 
   if (livePrice) {
-    // Precio óptimo = precio actual con descuento del 10% como margen de seguridad
-    suggestedPrice = +(livePrice * 0.90).toFixed(2);
+    suggestedPrice = +livePrice.toFixed(2);
   }
 
   const priceTxt = suggestedPrice ? `${suggestedPrice}` : "";
   const infoTxt = suggestedPrice
-    ? `Precio actual: ${livePrice?.toFixed(2)}€ · Óptimo sugerido (−10% margen seguridad): ${suggestedPrice}€`
+    ? `Precio actual: ${livePrice?.toFixed(2)}€ — puesto por defecto abajo, cámbialo si quieres un precio de alerta distinto.`
     : `No hay precio en tiempo real para ${ticker}. Introduce el precio de alerta manualmente.`;
 
   openModal(`
@@ -5177,23 +5205,26 @@ function renderValuation() {
 
   let resultHtml="";
   if(result){
-    const scores=Object.values(result.scores||{});
-    const overallRaw=scores.length?scores.reduce((a,b)=>a+b,0)/scores.length:0;
-    const overall=+overallRaw.toFixed(1); // 1 decimal: la media de varias puntuaciones redondas ya aporta precisión real
-    const oc=overall>=70?"#16a34a":overall>=50?"#f59e0b":"#ef4444";
+    // El servidor ya calcula la media SOLO con los métodos que tienen dato real (los que
+    // faltan quedan en null de verdad, no se rellenan con 50 ni con nada inventado), así
+    // que usamos su overall_score directamente en vez de recalcular aquí con posibles null.
+    const validScores=Object.values(result.scores||{}).filter(v=>typeof v==="number");
+    const overall = result.overall_score!=null ? result.overall_score : (validScores.length?+((validScores.reduce((a,b)=>a+b,0)/validScores.length).toFixed(1)):null);
+    const oc=overall==null?"#94a3b8":overall>=70?"#16a34a":overall>=50?"#f59e0b":"#ef4444";
     // Recomendación aplicada en el propio navegador con umbrales explícitos (≥70 precio de
     // compra, 50-70 normal, <50 no comprar), en vez de depender de los umbrales internos
     // del servidor, que no son ajustables desde aquí.
-    const myRec = overall>=70 ? "🟢 Precio de COMPRA" : overall>=50 ? "🟡 Precio NORMAL" : "🔴 NO comprar a este precio";
+    const myRec = overall==null ? "⚪ Datos insuficientes" : overall>=70 ? "🟢 Precio de COMPRA" : overall>=50 ? "🟡 Precio NORMAL" : "🔴 NO comprar a este precio";
     const scoreBars=Object.entries(result.scores||{}).map(([k,v])=>{
-      const c=v>=70?"#16a34a":v>=40?"#f59e0b":"#ef4444";
+      const hasData = typeof v==="number";
+      const c=!hasData?"#94a3b8":v>=70?"#16a34a":v>=40?"#f59e0b":"#ef4444";
       const expl=methodExplanations[k]||"";
       return `<div style="margin-bottom:9px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;font-size:12px">
           <span style="color:#475569;display:flex;align-items:center;gap:5px">${methodLabels[k]||k}<span onclick="toggleMethodInfo('${k}')" title="Cómo se calcula" style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:700;cursor:pointer;flex-shrink:0">?</span></span>
-          <span style="color:${c};font-weight:700">${v}/100</span>
+          <span style="color:${c};font-weight:700">${hasData?`${v}/100`:"Sin datos"}</span>
         </div>
-        <div style="background:#e2e8f0;border-radius:6px;height:8px"><div style="background:${c};border-radius:6px;height:8px;width:${v}%"></div></div>
+        <div style="background:#e2e8f0;border-radius:6px;height:8px"><div style="background:${c};border-radius:6px;height:8px;width:${hasData?v:0}%"></div></div>
         <div id="method-info-${k}" style="display:none;font-size:11px;color:#64748b;background:#f8fafc;border-radius:6px;padding:7px 9px;margin-top:5px;line-height:1.45">${esc(expl)}</div>
       </div>`;
     }).join("");
@@ -5458,8 +5489,11 @@ function renderValuation() {
           <input id="val-ticker" class="inp-sm" placeholder="Empresa o ticker: Iberdrola, GOOGL, KO..." style="width:100%;background:#fff" value="${esc(ticker)}" onkeydown="if(event.key==='Enter')analyzeValuation()">
         </div>
         <button class="btn" onclick="analyzeValuation()" ${loading?"disabled":""} style="padding:6px 16px">${loading?`<span class="spinner"></span> Analizando...`:"🔍 Analizar"}</button>
+        ${(!loading && state._valFromCache)?`<button class="btn-gray" onclick="analyzeValuation(true)" style="padding:6px 12px;font-size:11px" title="Vuelve a descargar los datos en vez de usar la caché compartida de 24h">🔄 Forzar actualización</button>`:""}
       </div>
+      ${(!loading && state._valFromCache)?`<div style="font-size:10.5px;color:#94a3b8;margin-top:6px">📦 Datos en caché compartida de hace ${state._valCacheAgeHours<1?Math.round(state._valCacheAgeHours*60)+" min":state._valCacheAgeHours.toFixed(1)+" h"} (se renuevan solos pasadas 24h) — resultado idéntico para todos los usuarios hasta entonces.</div>`:""}
       ${error?`<div style="color:#dc2626;margin-top:10px;font-size:12px">⚠️ ${esc(error)}</div>`:""}
+      ${result?._note?`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:8px 10px;margin-top:10px;font-size:11px;color:#991b1b">⚠️ ${esc(result._note)}</div>`:""}
       <div style="margin-top:8px;font-size:11px;color:#64748b">Autocompletado activo con Yahoo Finance. El análisis IA requiere conexión a internet.</div>
     </div>
     ${fmpPanel}
@@ -5520,9 +5554,9 @@ async function _fetchFMP(ticker, key) {
   // FMP soporta CORS nativo — intentar directo primero, luego proxies
   const wrapUrl = (url) => [
     url,
-    `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
   ];
 
   const errors = [];
@@ -5757,12 +5791,11 @@ async function fetchFundamentals(ticker) {
 async function fetchPriceAndDividendHistory(ticker) {
   const isGBp = ticker.toUpperCase().endsWith('.L');
   const proxies = [
-    `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
-    `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
   ];
   for (const url of proxies) {
     try {
@@ -6096,7 +6129,10 @@ function yieldLineChart(title, years, yields) {
   </div>`;
 }
 
-async function analyzeValuation() {
+// Reintenta una función asíncrona hasta "attempts" veces con una pequeña pausa entre
+// intentos — para la consulta puntual de Valoración sí compensa el coste extra (no es
+// un lote de 150 tickers como el Radar, es una sola empresa bajo demanda).
+async function analyzeValuation(forceRefresh = false) {
   const input = document.getElementById("val-ticker");
   const ticker = (input?.value||"").trim().toUpperCase().split(" ")[0];
   if (!ticker) return;
@@ -6104,80 +6140,39 @@ async function analyzeValuation() {
   state._valLoading = true;
   state._valResult = null;
   state._valError = "";
+  state._valMissingSources = [];
   state._valTab = 0;
   renderActiveTab();
 
-  // Lanzar todo en paralelo: precio, dividendo, fundamentales e histórico precio/div
-  const [livePrice, divData, fundamentals, priceHistory] = await Promise.all([
-    fetchWithProxy(PROXIES, ticker),
-    fetchDividendData(ticker),
-    fetchFundamentals(ticker),
-    fetchPriceAndDividendHistory(ticker)
-  ]);
-
+  // Todo el trabajo de descarga (precio, fundamentales, histórico, dividendos) ahora
+  // ocurre DENTRO de la función de Supabase, directamente contra Yahoo/FMP sin ningún
+  // proxy CORS (un servidor no tiene esa restricción, solo el navegador la tiene). Con
+  // caché compartida de 24h en Supabase, así que la segunda consulta de cualquier
+  // usuario a ese ticker es instantánea. El navegador ya no descarga nada él mismo.
   try {
-    // Resumen de yield histórico propio (para el método Weiss: compara el yield actual
-    // con el rango histórico REAL de la propia empresa, no con una estimación genérica).
-    let yieldHistSummary = null;
-    if (priceHistory?.yieldByYear) {
-      const yVals = Object.values(priceHistory.yieldByYear).filter(v => v > 0);
-      if (yVals.length) yieldHistSummary = { min: +Math.min(...yVals).toFixed(2), max: +Math.max(...yVals).toFixed(2), years: yVals.length };
-    }
-
     const { data, error } = await supabaseClient.functions.invoke('valuation', {
-      body: { ticker, price: livePrice || null,
-        realYieldPct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null,
-        // Datos reales ya descargados por la app (antes no se enviaban, y Gemini tenía que
-        // "recordar" las cifras de memoria en vez de calcular con datos de verdad):
-        fundamentals: fundamentals ? {
-          years: fundamentals.years, revenue: fundamentals.revenue, ebit: fundamentals.ebit,
-          net_income: fundamentals.net_income, fcf: fundamentals.fcf, net_debt: fundamentals.net_debt,
-          debt_ebitda: fundamentals.debt_ebitda, eps: fundamentals.eps, fcf_per_share: fundamentals.fcf_per_share,
-          roe: fundamentals.roe, roic: fundamentals.roic, gross_margin: fundamentals.gross_margin,
-          ebit_margin: fundamentals.ebit_margin, net_margin: fundamentals.net_margin
-        } : null,
-        yieldHistSummary,
-        divCagr: priceHistory?.divCagr ?? null
-      }
+      body: { ticker, forceRefresh }
     });
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
-    if (divData?.yield != null && data?.metrics) {
-      data.metrics.Yield_pct = +(divData.yield*100).toFixed(2);
-    }
-    if (fundamentals)  data.fundamentals  = fundamentals;
-    if (priceHistory)  data.priceHistory   = priceHistory;
+
     state._valResult = data;
+    state._valFromCache = !!data._fromCache;
+    state._valCacheAgeHours = data._cacheAgeHours || 0;
     state._valError = "";
+
+    if (data.metrics?.PER != null || data.priceHistory) {
+      // Refresca también las cachés que usa el resto de la app con el mismo dato real.
+      const lastPrice = data.priceHistory?.priceItems?.length
+        ? data.priceHistory.priceItems[data.priceHistory.priceItems.length-1].close : null;
+      if (lastPrice) state.priceCache[ticker] = lastPrice;
+    }
   } catch(e) {
-    console.error('Error análisis IA:', e);
-    state._valResult = {
-      ticker,
-      name: ticker,
-      sector: "",
-      description: priceHistory ? "Análisis IA no disponible. Mostrando datos históricos disponibles." : "Análisis IA no disponible. Comprueba tu conexión.",
-      scores: {},
-      metrics: {
-        Precio_actual: livePrice || null,
-        Yield_pct: divData?.yield != null ? +(divData.yield*100).toFixed(2) : null
-      },
-      ranges: {},
-      recommendation: "Sin análisis IA",
-      rec_color: "#94a3b8",
-      weiss_verdict: "Análisis IA no disponible",
-      weiss_color: "#94a3b8",
-      fundamentals,
-      priceHistory
-    };
-    state._valError = priceHistory || fundamentals
-      ? "⚠️ Análisis IA no disponible, pero se muestran los datos históricos."
-      : "No se pudo conectar con el análisis IA. Comprueba tu conexión a internet.";
+    console.error('Error análisis Valoración:', e);
+    state._valResult = null;
+    state._valError = "No se pudo conectar con el servidor de Valoración. Comprueba tu conexión a internet e inténtalo de nuevo — " + (e?.message || e);
   }
   state._valLoading = false;
-
-  if (livePrice) state.priceCache[ticker] = livePrice;
-  if (divData)   state.yieldCache[ticker] = divData;
-
   renderActiveTab();
 
   setTimeout(() => {
@@ -7441,14 +7436,15 @@ function setRadarFilter(key, val) {
 
 // Listas de tickers representativas por región (cubren los mercados principales)
 const RADAR_TICKERS = {
-  "España": [
+  "España": [ // IBEX 35 completo + varios del mercado continuo
     "SAN.MC","BBVA.MC","ITX.MC","IBE.MC","REP.MC","TEF.MC","ACS.MC","FER.MC",
     "ANA.MC","MAP.MC","ENG.MC","RED.MC","NTGY.MC","ACX.MC","GRF.MC","CIE.MC",
     "LOG.MC","MCM.MC","EBRO.MC","VIS.MC","TRE.MC","CAF.MC","AMS.MC","ELE.MC",
     "MEL.MC","PHM.MC","CLNX.MC","SAB.MC","BKT.MC","MRL.MC","COL.MC","SOL.MC",
-    "IAG.MC","ALM.MC","NXT.MC","AENA.MC","ENC.MC","TL5.MC","A3M.MC"
+    "IAG.MC","ALM.MC","NXT.MC","AENA.MC","ENC.MC","TL5.MC","A3M.MC","FDR.MC",
+    "IDR.MC","ROVI.MC","UNI.MC","FAE.MC","BAMI.MC","GCO.MC","LOG.MC","PRS.MC"
   ],
-  "EE.UU.": [
+  "EE.UU.": [ // Ampliado: gran capitalización + aristócratas y reyes del dividendo de varios sectores
     "AAPL","MSFT","GOOGL","AMZN","META","NVDA","BRK-B","LLY","V","JPM",
     "UNH","XOM","JNJ","MA","PG","AVGO","HD","CVX","MRK","ABBV",
     "KO","PEP","WMT","BAC","MCD","COST","CSCO","ACN","TMO","ABT",
@@ -7456,32 +7452,56 @@ const RADAR_TICKERS = {
     "RTX","HON","UPS","LOW","BMY","UNP","NEE","QCOM","AMGN","GE",
     "CAT","DE","MMM","GS","MS","BLK","SPGI","AXP","ISRG","MDT",
     "WPC","O","MAIN","MO","BTI","KHC","CVS","WBA","ENB","TRP",
-    "BEN","TROW","NWN","UVV","VFC","EMR","ETN","FDX","NSC","ROST"
+    "BEN","TROW","NWN","UVV","VFC","EMR","ETN","FDX","NSC","ROST",
+    "ADP","ADM","AFL","ALL","APD","AON","BDX","CB","CINF","CL",
+    "CTAS","DOV","ECL","ED","ES","ESS","EXPD","FRT","GD","GPC",
+    "HRL","ITW","JKHY","KMB","LEG","LOW","MKC","NDSN","NUE","PPG",
+    "PNR","SHW","SJM","SWK","SYY","WMT","WST","XEL","ATO","AWK",
+    "BKH","BRO","CHD","CHRW","CTSH","D","DUK","EIX","EOG","EQR",
+    "EXC","FE","IBM","ICE","INTC","IP","IPG","IRM","K","KMI",
+    "KO","LMT","MDLZ","MMC","MOS","NKE","NOC","OKE","ORCL","PAYX",
+    "PSA","REG","SBUX","SO","STT","SYK","TGT","TROW","TXT","USB",
+    "VLO","VTR","WEC","WELL","WM","WY","XOM","YUM","ZTS"
   ],
-  "Reino Unido": [
+  "Reino Unido": [ // FTSE 100 ampliado
     "SHEL.L","AZN.L","ULVR.L","HSBA.L","BP.L","DGE.L","RIO.L","GSK.L",
     "BATS.L","REL.L","NG.L","LSEG.L","LLOY.L","NWG.L","BARC.L","AAL.L",
-    "CPG.L","PSON.L","IMB.L","LAND.L","SGE.L","EXPN.L","WTB.L","SGRO.L"
+    "CPG.L","PSON.L","IMB.L","LAND.L","SGE.L","EXPN.L","WTB.L","SGRO.L",
+    "VOD.L","BT-A.L","STAN.L","PRU.L","ABF.L","CRH.L","FLTR.L","SMIN.L",
+    "RTO.L","BNZL.L","AHT.L","SPX.L","ANTO.L","GLEN.L","EZJ.L","IAG.L",
+    "III.L","JD.L","MNG.L","NXT.L","PSN.L","RMV.L","RKT.L","SBRY.L",
+    "SVT.L","TSCO.L","UU.L","WPP.L","ITRK.L","HLMA.L","HL.L","BME.L"
   ],
-  "Europa": [
+  "Europa": [ // DAX, CAC 40, Eurostoxx principales (Alemania, Francia, Italia, Países Bajos)
     "ASML.AS","MC.PA","LVMH.PA","SAP.DE","SIE.DE","ALV.DE","BAS.DE","BMW.DE",
     "DTE.DE","MUV2.DE","RWE.DE","VOW3.DE","MBG.DE","ADS.DE","DBK.DE","HNR1.DE",
     "AIR.PA","BNP.PA","SAN.PA","OR.PA","CS.PA","RI.PA","SGO.PA","CAP.PA",
     "RACE.MI","ENI.MI","ISP.MI","UCG.MI","TRN.MI","MB.MI","ENEL.MI","ATL.MI",
-    "PHIA.AS","INGA.AS","REN.AS","HEIA.AS","AD.AS","UNA.AS","ABN.AS"
+    "PHIA.AS","INGA.AS","REN.AS","HEIA.AS","AD.AS","UNA.AS","ABN.AS",
+    "IFX.DE","HEN3.DE","FRE.DE","EOAN.DE","BAYN.DE","CON.DE","DHL.DE","DPW.DE",
+    "SU.PA","DG.PA","BN.PA","VIE.PA","KER.PA","EL.PA","STLAM.MI","PIRC.MI",
+    "NOVN.SW","ROG.SW","NESN.SW","ZURN.SW","UBSG.SW","ABBN.SW","GIVN.SW",
+    "EQNR.OL","NOVO-B.CO","MAERSK-B.CO","VWS.CO","ORSTED.CO"
   ],
-  "Asia": [
+  "Asia": [ // Japón, Hong Kong/China, Corea del Sur ampliados
     "7203.T","9984.T","6861.T","6758.T","8306.T","9432.T","7974.T","6954.T",
     "700.HK","9988.HK","3690.HK","1299.HK","941.HK","2318.HK","1398.HK",
-    "005930.KS","000660.KS","051910.KS","035420.KS","207940.KS"
+    "005930.KS","000660.KS","051910.KS","035420.KS","207940.KS",
+    "6501.T","6098.T","8035.T","9433.T","4063.T","4502.T","6178.T","8058.T",
+    "0005.HK","0388.HK","1810.HK","2020.HK","0016.HK","1928.HK",
+    "005380.KS","035720.KS","012330.KS","066570.KS"
   ],
-  "Global": [] // se rellena dinámicamente combinando todos
+  "Global": [] // se rellena dinámicamente combinando TODAS las regiones (sin recortar)
 };
+// El universo "Global" incluye TODOS los tickers de todas las regiones, sin recortar a un
+// puñado de cada una (antes solo cogía los 15-25 primeros de cada lista, dando la sensación
+// de que el Radar era un universo muy pequeño).
 RADAR_TICKERS["Global"] = [
-  ...RADAR_TICKERS["España"].slice(0,15),
-  ...RADAR_TICKERS["EE.UU."].slice(0,25),
-  ...RADAR_TICKERS["Reino Unido"].slice(0,10),
-  ...RADAR_TICKERS["Europa"].slice(0,15),
+  ...RADAR_TICKERS["España"],
+  ...RADAR_TICKERS["EE.UU."],
+  ...RADAR_TICKERS["Reino Unido"],
+  ...RADAR_TICKERS["Europa"],
+  ...RADAR_TICKERS["Asia"],
 ];
 
 const TICKER_SECTOR = {
@@ -7546,8 +7566,10 @@ async function runRadarSearch() {
     ? RADAR_TICKERS["Global"]
     : (RADAR_TICKERS[r.region] || RADAR_TICKERS["Global"]);
 
-  // 2. Fetch cotizaciones en lotes de 20 via Yahoo v7/quote (funciona con proxies)
-  const tickersToFetch = tickers.slice(0, 50);
+  // 2. Fetch cotizaciones (antes se limitaba a 50 tickers pase lo que pase, ahora sube a 150
+  // para aprovechar el universo mucho más amplio; los que ya están en priceCache son
+  // instantáneos, así que el coste real de red solo afecta a los que faltan).
+  const tickersToFetch = tickers.slice(0, 150);
   state.radar._progress = `Preparando datos...`;
   renderActiveTab();
 
@@ -7575,9 +7597,14 @@ async function runRadarSearch() {
     }
   });
 
-  // PASO 2: Fetch tickers que no están en caché (en paralelo, grupos de 6)
+  // PASO 2: Fetch tickers que no están en caché (en paralelo, grupos de 4, con pausa entre
+  // grupos). Antes disparaba grupos de 6 sin ninguna pausa — con ~150 tickers eso son ~20
+  // ráfagas seguidas contra proxies gratuitos, que empiezan a bloquear por límite de
+  // peticiones a los pocos segundos. Por eso en la práctica solo sobrevivían los tickers
+  // que ya estaban en caché (los de la cartera), dando la sensación de que el Radar
+  // "solo busca en mi cartera".
   const missing = tickersToFetch.filter(t => !state.priceCache[t]);
-  const GROUP = 6;
+  const GROUP = 4;
   for (let i = 0; i < missing.length; i += GROUP) {
     const group = missing.slice(i, i + GROUP);
     state.radar._progress = `Descargando datos... ${Math.min(i+GROUP, missing.length)}/${missing.length}`;
@@ -7603,6 +7630,7 @@ async function runRadarSearch() {
       };
     }));
     settled.forEach(s => { if (s.status==="fulfilled" && s.value) allQuotes.push(s.value); });
+    if (i + GROUP < missing.length) await sleep(350); // pausa entre lotes para no saturar los proxies
   }
   state.radar._progress = null;
 
@@ -7610,58 +7638,69 @@ async function runRadarSearch() {
   state.radar._progress = "Enriqueciendo datos fundamentales...";
   renderActiveTab();
 
-  await Promise.allSettled(allQuotes.map(async q => {
-    for (const proxyFn of TS_PROXIES) {
-      try {
-        const res = await fetch(proxyFn(q.symbol), { signal: AbortSignal.timeout(8000) });
-        if (!res.ok) continue;
-        const json = await res.json();
-        const ts = json?.timeseries?.result;
-        if (!ts?.length) continue;
+  // Antes esto disparaba TODAS las peticiones a la vez (hasta 150 de golpe) sin agrupar
+  // ni pausar — con proxies gratuitos eso provoca bloqueos por límite de peticiones casi
+  // inmediatos, dejando sin datos fundamentales a casi todo lo que no fuera ya de la
+  // cartera. Ahora va en grupos de 5 con una pequeña pausa entre grupos.
+  const ENRICH_GROUP = 5;
+  for (let i = 0; i < allQuotes.length; i += ENRICH_GROUP) {
+    const group = allQuotes.slice(i, i + ENRICH_GROUP);
+    state.radar._progress = `Enriqueciendo datos fundamentales... ${Math.min(i+ENRICH_GROUP, allQuotes.length)}/${allQuotes.length}`;
+    renderActiveTab();
+    await Promise.allSettled(group.map(async q => {
+      for (const proxyFn of TS_PROXIES) {
+        try {
+          const res = await fetch(proxyFn(q.symbol), { signal: AbortSignal.timeout(8000) });
+          if (!res.ok) continue;
+          const json = await res.json();
+          const ts = json?.timeseries?.result;
+          if (!ts?.length) continue;
 
-        // Construir mapa tipo → último valor disponible
-        const val = {};
-        ts.forEach(item => {
-          const type = item.meta?.type?.[0];
-          if (!type) return;
-          const arr = item[type];
-          if (!Array.isArray(arr) || !arr.length) return;
-          // Coger el último valor no nulo
-          for (let i = arr.length - 1; i >= 0; i--) {
-            const v = arr[i]?.reportedValue?.raw;
-            if (v != null) { val[type] = v; break; }
+          // Construir mapa tipo → último valor disponible
+          const val = {};
+          ts.forEach(item => {
+            const type = item.meta?.type?.[0];
+            if (!type) return;
+            const arr = item[type];
+            if (!Array.isArray(arr) || !arr.length) return;
+            // Coger el último valor no nulo
+            for (let i = arr.length - 1; i >= 0; i--) {
+              const v = arr[i]?.reportedValue?.raw;
+              if (v != null) { val[type] = v; break; }
+            }
+          });
+
+          // Márgenes — vienen como decimal (0.15 = 15%)
+          if (val.annualNetIncomeMargin   != null) q.profitMargins  = +(val.annualNetIncomeMargin * 100).toFixed(1);
+          if (val.annualGrossProfitMargin != null) q.grossMargin    = +(val.annualGrossProfitMargin * 100).toFixed(1);
+          if (val.annualOperatingIncomeMargin != null) q.operatingMargin = +(val.annualOperatingIncomeMargin * 100).toFixed(1);
+          // ROE — viene como decimal (0.18 = 18%)
+          if (val.annualReturnOnEquity    != null) q.returnOnEquity = +(val.annualReturnOnEquity * 100).toFixed(1);
+          // Deuda neta / EBITDA
+          if (val.annualTotalDebt != null && val.annualEbitda != null && val.annualEbitda > 0) {
+            const nd = (val.annualTotalDebt || 0) - (val.annualCashAndCashEquivalents || 0);
+            q.debtToEquity = +(nd / val.annualEbitda).toFixed(2);
           }
-        });
+          // FCF yield
+          if (val.annualFreeCashFlow != null && q.marketCap) {
+            q.fcfYield = +((val.annualFreeCashFlow / q.marketCap) * 100).toFixed(1);
+          }
+          // EPS para calcular P/E si no lo tenemos
+          if (!q.trailingPE && val.annualBasicEPS && q.regularMarketPrice) {
+            q.trailingPE = +(q.regularMarketPrice / val.annualBasicEPS).toFixed(1);
+          }
+          break; // primer proxy que funciona, salir
+        } catch(e) { /* siguiente proxy */ }
+      }
 
-        // Márgenes — vienen como decimal (0.15 = 15%)
-        if (val.annualNetIncomeMargin   != null) q.profitMargins  = +(val.annualNetIncomeMargin * 100).toFixed(1);
-        if (val.annualGrossProfitMargin != null) q.grossMargin    = +(val.annualGrossProfitMargin * 100).toFixed(1);
-        if (val.annualOperatingIncomeMargin != null) q.operatingMargin = +(val.annualOperatingIncomeMargin * 100).toFixed(1);
-        // ROE — viene como decimal (0.18 = 18%)
-        if (val.annualReturnOnEquity    != null) q.returnOnEquity = +(val.annualReturnOnEquity * 100).toFixed(1);
-        // Deuda neta / EBITDA
-        if (val.annualTotalDebt != null && val.annualEbitda != null && val.annualEbitda > 0) {
-          const nd = (val.annualTotalDebt || 0) - (val.annualCashAndCashEquivalents || 0);
-          q.debtToEquity = +(nd / val.annualEbitda).toFixed(2);
-        }
-        // FCF yield
-        if (val.annualFreeCashFlow != null && q.marketCap) {
-          q.fcfYield = +((val.annualFreeCashFlow / q.marketCap) * 100).toFixed(1);
-        }
-        // EPS para calcular P/E si no lo tenemos
-        if (!q.trailingPE && val.annualBasicEPS && q.regularMarketPrice) {
-          q.trailingPE = +(q.regularMarketPrice / val.annualBasicEPS).toFixed(1);
-        }
-        break; // primer proxy que funciona, salir
-      } catch(e) { /* siguiente proxy */ }
-    }
-
-    // Fallback: yield del yieldCache si no vino del timeseries
-    if (!q.trailingAnnualDividendYield) {
-      const cached = state.yieldCache[q.symbol];
-      if (cached?.yield) q.trailingAnnualDividendYield = cached.yield;
-    }
-  }));
+      // Fallback: yield del yieldCache si no vino del timeseries
+      if (!q.trailingAnnualDividendYield) {
+        const cached = state.yieldCache[q.symbol];
+        if (cached?.yield) q.trailingAnnualDividendYield = cached.yield;
+      }
+    }));
+    if (i + ENRICH_GROUP < allQuotes.length) await sleep(300);
+  }
 
   state.radar._progress = null;
 
