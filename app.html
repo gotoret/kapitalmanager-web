@@ -5922,6 +5922,19 @@ async function analyzeValuation(forceRefresh = false) {
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
 
+    // El Edge Function devuelve JSON puro: las fechas llegan como strings, no como Date.
+    // Hay que reconstruirlas o priceLineChart()/drawdownChart() fallan con "x.date.getFullYear is not a function".
+    if (data.priceHistory?.priceItems) {
+      data.priceHistory.priceItems = data.priceHistory.priceItems
+        .map(p => ({ ...p, date: new Date(p.date) }))
+        .filter(p => !isNaN(p.date.getTime()));
+    }
+    if (data.priceHistory?.divList) {
+      data.priceHistory.divList = data.priceHistory.divList
+        .map(d => ({ ...d, date: new Date(d.date) }))
+        .filter(d => !isNaN(d.date.getTime()));
+    }
+
     state._valResult = data;
     state._valFromCache = !!data._fromCache;
     state._valCacheAgeHours = data._cacheAgeHours || 0;
