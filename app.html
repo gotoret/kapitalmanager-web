@@ -1175,8 +1175,18 @@ function autoRegisterDividends() {
     const exDateMs = new Date(d.ex_date).getTime();
     const alreadyCovered = state.dividends.some(x => {
       if (x.ticker !== d.ticker) return false;
-      const xMs = new Date(x.date).getTime();
-      return !isNaN(xMs) && Math.abs(xMs - exDateMs) <= 45 * 86400000;
+      let xDate;
+      if (x.date instanceof Date) {
+        xDate = x.date;
+      } else if (typeof x.date === 'string') {
+        xDate = new Date(x.date);
+      } else if (typeof x.date === 'number') {
+        xDate = new Date(x.date);
+      } else {
+        return false;
+      }
+      if (isNaN(xDate.getTime())) return false;
+      return Math.abs(xDate.getTime() - exDateMs) <= 45 * 86400000;
     });
     if (alreadyCovered) return;
 
@@ -3366,7 +3376,14 @@ function setDivChartTab(idx) {
   if (idx !== 0) {
     // En "Total por empresa" y "Crecimiento anual" mostramos por defecto el total del último año
     const dividends = state.dividends || [];
-    const years = [...new Set(dividends.map(d => new Date(d.date).getFullYear()).filter(y=>!isNaN(y)))].sort((a,b)=>b-a);
+    const years = [...new Set(dividends.map(d => {
+      let dt;
+      if (d.date instanceof Date) dt = d.date;
+      else if (typeof d.date === 'string') dt = new Date(d.date);
+      else if (typeof d.date === 'number') dt = new Date(d.date);
+      else return null;
+      return isNaN(dt.getTime()) ? null : dt.getFullYear();
+    }).filter(y => y !== null))].sort((a,b)=>b-a);
     state._divYearSel = years.length > 0 ? years[0] : "Anual";
   }
   renderActiveTab();
@@ -3375,12 +3392,26 @@ function setDivChartTab(idx) {
 // ─── RENDER DASHBOARD CON PESTAÑAS ────────────────────────────
 function renderDivDashboard(totalAnnExpected) {
   const dividends = state.dividends || [];
-  const years = [...new Set(dividends.map(d => new Date(d.date).getFullYear()).filter(y=>!isNaN(y)))].sort((a,b)=>b-a);
+  const years = [...new Set(dividends.map(d => {
+    let dt;
+    if (d.date instanceof Date) dt = d.date;
+    else if (typeof d.date === 'string') dt = new Date(d.date);
+    else if (typeof d.date === 'number') dt = new Date(d.date);
+    else return null;
+    return isNaN(dt.getTime()) ? null : dt.getFullYear();
+  }).filter(y => y !== null))].sort((a,b)=>b-a);
   if (state._divYearSel === undefined) state._divYearSel = "Anual";
   const sel = state._divYearSel;
 
   // Filtrar por año seleccionado
-  const filtered = sel === "Anual" ? dividends : dividends.filter(d => new Date(d.date).getFullYear() === +sel);
+  const filtered = sel === "Anual" ? dividends : dividends.filter(d => {
+    let dt;
+    if (d.date instanceof Date) dt = d.date;
+    else if (typeof d.date === 'string') dt = new Date(d.date);
+    else if (typeof d.date === 'number') dt = new Date(d.date);
+    else return false;
+    return !isNaN(dt.getTime()) && dt.getFullYear() === +sel;
+  });
 
   // Total histórico registrado en la vista actual
   const totalHist = filtered.reduce((s,d) => s + ((+d.amount||0) * (+d.shares||0)), 0);
@@ -3752,16 +3783,23 @@ function renderDividends() {
   `).join("");
 
   // ── Historial de cobros registrados (ordenable) ──
-  let histRowsData = state.dividends.map(d => ({
-    id: d.id,
-    date: (d.date||"").slice(0,10),
-    ticker: d.ticker,
-    shares: d.shares,
-    amount: d.amount,
-    total: d.amount * d.shares,
-    notes: d.notes||"—",
-    source: d.source||"manual"
-  }));
+  let histRowsData = state.dividends.map(d => {
+    let dateStr = (d.date || "").slice(0,10);
+    // Si date es un objeto Date, convertirlo
+    if (d.date instanceof Date) dateStr = d.date.toISOString().slice(0,10);
+    else if (typeof d.date === 'string') dateStr = d.date.slice(0,10);
+    else if (typeof d.date === 'number') dateStr = new Date(d.date).toISOString().slice(0,10);
+    return {
+      id: d.id,
+      date: dateStr,
+      ticker: d.ticker,
+      shares: d.shares,
+      amount: d.amount,
+      total: d.amount * d.shares,
+      notes: d.notes||"—",
+      source: d.source||"manual"
+    };
+  });
 
   const sortHist = state._divSort;
   histRowsData.sort((a,b) => {
@@ -4432,6 +4470,117 @@ async function loadCompanyChartsData(ticker) {
   if (state.activeTab === 4) renderActiveTab();
 }
 
+// ─── FUNCIÓN PRINCIPAL fetchPriceAndDividendHistory (CORREGIDA) ──
+async function fetchPriceAndDividendHistory(ticker) {
+  const isGBp = ticker.toUpperCase().endsWith('.L');
+  const proxies = [
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
+  ];
+  for (const url of proxies) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
+      if (!res.ok) continue;
+      const json = await res.json();
+      const result = json?.chart?.result?.[0];
+      if (!result) continue;
+      const timestamps = result.timestamp || [];
+      const quotes = result.indicators?.quote?.[0] || {};
+      const adjclose = result.indicators?.adjclose?.[0]?.adjclose || quotes.close || [];
+      const dividendsRaw = result.events?.dividends || {};
+      const gbpDiv = (v) => isGBp ? v / 100 : v;
+
+      // ── Precios mensuales (CORREGIDO) ──
+      const raw = timestamps
+        .map((ts, i) => {
+          const dateObj = new Date(ts * 1000);
+          if (isNaN(dateObj.getTime())) return null;
+          const closeVal = adjclose[i] ?? quotes.close?.[i];
+          if (closeVal == null || isNaN(closeVal)) return null;
+          return {
+            date: dateObj,
+            close: gbpDiv(closeVal)
+          };
+        })
+        .filter(x => x !== null);
+
+      if (raw.length < 2) continue;
+
+      // SMA 12 meses
+      const W = 12;
+      const priceItems = raw.map((x, i) => {
+        let sma = null;
+        if (i >= W - 1) {
+          const sl = raw.slice(i - W + 1, i + 1);
+          sma = +(sl.reduce((s, p) => s + p.close, 0) / W).toFixed(2);
+        }
+        // Drawdown desde máximo histórico
+        const maxSoFar = Math.max(...raw.slice(0, i + 1).map(p => p.close));
+        const drawdown = maxSoFar > 0 ? +((x.close / maxSoFar - 1) * 100).toFixed(1) : 0;
+        return { date: x.date, close: +(x.close.toFixed(2)), sma, drawdown };
+      });
+
+      // ── Dividendos (CORREGIDO) ──
+      const divList = Object.values(dividendsRaw)
+        .map((d) => {
+          let dateObj;
+          if (d.date instanceof Date) {
+            dateObj = d.date;
+          } else if (typeof d.date === 'number') {
+            dateObj = new Date(d.date * 1000);
+          } else if (typeof d.date === 'string') {
+            dateObj = new Date(d.date);
+          } else {
+            return null;
+          }
+          if (isNaN(dateObj.getTime())) return null;
+          return { date: dateObj, amount: gbpDiv(d.amount) };
+        })
+        .filter(d => d !== null)
+        .sort((a, b) => a.date - b.date);
+
+      const divByYear = {};
+      divList.forEach(d => {
+        const yr = d.date.getFullYear();
+        divByYear[yr] = (divByYear[yr] || 0) + d.amount;
+      });
+      const divYears = Object.keys(divByYear).map(Number).sort((a, b) => a - b);
+
+      // Yield histórico
+      const yieldByYear = {};
+      divYears.forEach(yr => {
+        const yrPrices = priceItems.filter(p => p.date.getFullYear() === yr).map(p => p.close);
+        const lastP = yrPrices[yrPrices.length - 1];
+        if (lastP && divByYear[yr]) yieldByYear[yr] = +((divByYear[yr] / lastP) * 100).toFixed(2);
+      });
+
+      // CAGR dividendo
+      let divCagr = null;
+      if (divYears.length >= 3) {
+        const first = divByYear[divYears[0]], last = divByYear[divYears[divYears.length - 1]];
+        const n = divYears[divYears.length - 1] - divYears[0];
+        if (first > 0 && n > 0) divCagr = +((Math.pow(last / first, 1 / n) - 1) * 100).toFixed(2);
+      }
+
+      // Proyección 3 años
+      const projYears = [], projAmounts = [];
+      if (divCagr !== null && divByYear[divYears[divYears.length - 1]]) {
+        const lastDiv = divByYear[divYears[divYears.length - 1]], g = divCagr / 100;
+        for (let i = 1; i <= 3; i++) {
+          projYears.push(divYears[divYears.length - 1] + i);
+          projAmounts.push(+(lastDiv * Math.pow(1 + g, i)).toFixed(4));
+        }
+      }
+
+      return { priceItems, divList, divByYear, divYears, yieldByYear, divCagr, projYears, projAmounts };
+    } catch(e) { console.warn("fetchPriceAndDividendHistory error:", e.message); }
+  }
+  return null;
+}
+
 // Calcula el reparto de valor (en EUR) de un conjunto de posiciones agrupado por
 // el criterio indicado (sector, divisa, ticker...), para pintar un rosco.
 function calculateAllocationBreakdown(positions, keyFn, maxSlices = 10) {
@@ -4558,13 +4707,26 @@ function buildHeaderEvoSparkline(totalInvested, totalValue) {
     <path d="${linePath}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
   </svg>`;
 }
+
+// ─── FUNCIONES CORREGIDAS PARA DIVIDENDOS ─────────────────────
+
 function calculateDividendHistory(tickers, period) {
   const tickerSet = new Set(tickers);
   const divs = (state.dividends || []).filter(d => tickerSet.has(d.ticker));
   const result = [];
   
-  const groupKey = (date) => {
-    const d = new Date(date);
+  const groupKey = (dateVal) => {
+    let d;
+    if (dateVal instanceof Date) {
+      d = dateVal;
+    } else if (typeof dateVal === 'string') {
+      d = new Date(dateVal);
+    } else if (typeof dateVal === 'number') {
+      d = new Date(dateVal);
+    } else {
+      return String(dateVal);
+    }
+    if (isNaN(d.getTime())) return String(dateVal);
     if (period === 'Anual') return `${d.getFullYear()}`;
     if (period === 'Trimestral') return `${d.getFullYear()}-Q${Math.floor(d.getMonth()/3)+1}`;
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
@@ -4614,17 +4776,36 @@ function calculateDividendProjection(tickers) {
     return { current: currentAnnualDiv, years: [], projected: [], cagr: 3 };
   }
   
-  const sortedDivs = [...divs].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-  const firstYear = new Date(sortedDivs[0].date).getFullYear();
-  const lastYear = new Date(sortedDivs[sortedDivs.length-1].date).getFullYear();
+  const sortedDivs = [...divs].sort((a, b) => {
+    const da = a.date instanceof Date ? a.date : new Date(a.date);
+    const db = b.date instanceof Date ? b.date : new Date(b.date);
+    if (isNaN(da.getTime())) return 1;
+    if (isNaN(db.getTime())) return -1;
+    return da - db;
+  });
+  
+  // Obtener años válidos
+  const validDivs = sortedDivs.filter(d => {
+    const dt = d.date instanceof Date ? d.date : new Date(d.date);
+    return !isNaN(dt.getTime());
+  });
+  
+  if (validDivs.length < 2) {
+    return { current: currentAnnualDiv, years: [], projected: [], cagr: 3 };
+  }
+  
+  const firstYear = new Date(validDivs[0].date).getFullYear();
+  const lastYear = new Date(validDivs[validDivs.length-1].date).getFullYear();
 
-  // Agrupar el importe total cobrado por año natural, para comparar el primer y el último
-  // año completo de forma correcta (antes se sumaba todo el histórico dos veces).
+  // Agrupar el importe total cobrado por año natural
   const byYear = {};
-  sortedDivs.forEach(d => {
-    const yr = new Date(d.date).getFullYear();
+  validDivs.forEach(d => {
+    const dt = d.date instanceof Date ? d.date : new Date(d.date);
+    if (isNaN(dt.getTime())) return;
+    const yr = dt.getFullYear();
     byYear[yr] = (byYear[yr] || 0) + (d.amount || 0) * (d.shares || 1);
   });
+  
   const firstAmount = byYear[firstYear] || 0;
   const lastAmount = byYear[lastYear] || 0;
   
@@ -5169,7 +5350,7 @@ function createValAlert(ticker, name, perFwd, yieldPct) {
 
   openModal(`
     <h3>🔔 Alerta de compra óptima — ${esc(ticker)}</h3>
-    <div style="background:#f0fdf4;border-radius:8px;padding:10px;font-size:11px;color:#166534;margin-bottom:14px">${infoTxt}</div>
+    <div style="background:#f0fdf4;border-radius:8px;padding:10px;font-size:11px;color:#166534">${infoTxt}</div>
     <div class="field"><label>Ticker</label><input class="inp" id="va-ticker" value="${esc(ticker)}" readonly style="background:#f8fafc"/></div>
     <div class="field"><label>Precio de alerta (€) — avisar cuando BAJE a este precio</label><input class="inp" id="va-price" type="number" step="0.01" value="${priceTxt}" placeholder="Ej: 42.50"/></div>
     <button class="btn" style="width:100%;margin-top:6px;" onclick="saveValAlert()">🔔 Crear alerta</button>
@@ -5614,7 +5795,12 @@ function _parseQS(json, ticker) {
   const cf =[...(r.cashflowStatementHistory?.cashflowStatementHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
   const bs =[...(r.balanceSheetHistory?.balanceSheetHistory||[])].sort((a,b)=>a.endDate?.raw-b.endDate?.raw);
   const ks =r.defaultKeyStatistics||{};
-  const years=inc.map(x=>new Date((x.endDate?.raw||0)*1000).getFullYear());
+  const years=inc.map(x=>{
+    const ts = x.endDate?.raw;
+    if (!ts) return null;
+    const d = new Date(ts * 1000);
+    return isNaN(d.getTime()) ? null : d.getFullYear();
+  }).filter(y => y !== null);
   if(!years.length) return null;
   const revenue   =inc.map(x=>{const v=getV(x,"totalRevenue");return v!=null?+(v/M).toFixed(0):null;});
   const ebit      =inc.map(x=>{const v=getV(x,"ebit","operatingIncome");return v!=null?+(v/M).toFixed(0):null;});
@@ -5641,28 +5827,6 @@ function _parseQS(json, ticker) {
     pe_hist:eps.map(e=>e&&curP?+(curP/e).toFixed(1):null),
     pfcf_hist:fsh.map(f=>f&&f>0&&curP?+(curP/f).toFixed(1):null),
     ev_ebitda_hist:years.map(()=>null),roe:roe_r,roic:roic_r,buybacks:buybacks_r};
-}
-
-async function _fetchYahooQS(ticker) {
-  const errors = [];
-  for (const proxyFn of QS_PROXIES) {
-    const url = proxyFn(ticker);
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
-      if (!res.ok) { errors.push(`HTTP ${res.status} @ ${url.slice(0,60)}`); continue; }
-      const json = await res.json();
-      // Yahoo devuelve error en quoteSummary.error
-      if (json?.quoteSummary?.error) {
-        errors.push(`YF error: ${json.quoteSummary.error.description||"unknown"}`);
-        continue;
-      }
-      const r = _parseQS(json, ticker);
-      if (r) return r;
-      errors.push(`QS vacío @ ${url.slice(0,60)}`);
-    } catch(e) { errors.push(`${e.message} @ ${url.slice(0,50)}`); }
-  }
-  console.warn("Yahoo QS todos fallaron:", errors);
-  return { _errors: errors, _failed: true };
 }
 
 // ── Fetch via Yahoo Finance timeseries (no requiere sesión) ────
@@ -5693,7 +5857,10 @@ async function _fetchYahooTimeSeries(ticker) {
       const M = 1e6;
       const getTS = (key, i) => { const s=map[key]; return s?.[i]?.reportedValue?.raw ?? null; };
       const n = revSeries.length;
-      const years = revSeries.map(x => parseInt(x.asOfDate?.slice(0,4)));
+      const years = revSeries.map(x => {
+        const year = parseInt(x.asOfDate?.slice(0,4));
+        return isNaN(year) ? null : year;
+      }).filter(y => y !== null);
 
       // Helper: filtrar valores fuera de rango razonable
       const clamp = (v, min, max) => v != null && v >= min && v <= max ? v : null;
@@ -5788,97 +5955,7 @@ async function fetchFundamentals(ticker) {
 // ─────────────────────────────────────────────────────────────────────────
 // FETCH HISTÓRICO DE PRECIO + DIVIDENDOS (Yahoo Finance chart API — fiable)
 // ─────────────────────────────────────────────────────────────────────────
-async function fetchPriceAndDividendHistory(ticker) {
-  const isGBp = ticker.toUpperCase().endsWith('.L');
-  const proxies = [
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
-    `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
-  ];
-  for (const url of proxies) {
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
-      if (!res.ok) continue;
-      const json = await res.json();
-      const result = json?.chart?.result?.[0];
-      if (!result) continue;
-      const timestamps = result.timestamp || [];
-      const quotes = result.indicators?.quote?.[0] || {};
-      const adjclose = result.indicators?.adjclose?.[0]?.adjclose || quotes.close || [];
-      const dividends = result.events?.dividends || {};
-      const gbpDiv = v => isGBp ? v / 100 : v;
-
-      // ── Precios mensuales ──────────────────────────────────────────────
-      const raw = timestamps.map((ts, i) => ({
-        date: new Date(ts * 1000),
-        close: (adjclose[i] ?? quotes.close?.[i]) != null ? gbpDiv(adjclose[i] ?? quotes.close?.[i]) : null
-      })).filter(x => x.close != null && !isNaN(x.close));
-      if (!raw.length) continue;
-
-      // SMA 12 meses
-      const W = 12;
-      const priceItems = raw.map((x, i) => {
-        let sma = null;
-        if (i >= W - 1) {
-          const sl = raw.slice(i - W + 1, i + 1);
-          sma = +(sl.reduce((s, p) => s + p.close, 0) / W).toFixed(2);
-        }
-        return { date: x.date, close: +(x.close.toFixed(2)), sma };
-      });
-
-      // Drawdown desde máximo histórico
-      let peak = -Infinity;
-      const priceWithDD = priceItems.map(x => {
-        peak = Math.max(peak, x.close);
-        const dd = +((x.close - peak) / peak * 100).toFixed(2);
-        return { ...x, drawdown: dd };
-      });
-
-      // ── Dividendos ────────────────────────────────────────────────────
-      const divList = Object.values(dividends)
-        .map(d => ({ date: new Date(d.date * 1000), amount: gbpDiv(d.amount) }))
-        .sort((a, b) => a.date - b.date);
-
-      const divByYear = {};
-      divList.forEach(d => {
-        const yr = d.date.getFullYear();
-        divByYear[yr] = +((divByYear[yr] || 0) + d.amount).toFixed(4);
-      });
-      const divYears = Object.keys(divByYear).map(Number).sort();
-
-      // Yield histórico: dividendo anual / precio de cierre de diciembre de ese año
-      const yieldByYear = {};
-      divYears.forEach(yr => {
-        const yrPrices = priceWithDD.filter(p => p.date.getFullYear() === yr);
-        const lastP = yrPrices[yrPrices.length - 1]?.close;
-        if (lastP && divByYear[yr]) yieldByYear[yr] = +((divByYear[yr] / lastP) * 100).toFixed(2);
-      });
-
-      // CAGR dividendo
-      let divCagr = null;
-      if (divYears.length >= 3) {
-        const first = divByYear[divYears[0]], last = divByYear[divYears[divYears.length - 1]];
-        const n = divYears[divYears.length - 1] - divYears[0];
-        if (first > 0 && n > 0) divCagr = +((Math.pow(last / first, 1 / n) - 1) * 100).toFixed(2);
-      }
-
-      // Proyección 3 años
-      const projYears = [], projAmounts = [];
-      if (divCagr !== null && divByYear[divYears[divYears.length - 1]]) {
-        const lastDiv = divByYear[divYears[divYears.length - 1]], g = divCagr / 100;
-        for (let i = 1; i <= 3; i++) {
-          projYears.push(divYears[divYears.length - 1] + i);
-          projAmounts.push(+(lastDiv * Math.pow(1 + g, i)).toFixed(4));
-        }
-      }
-
-      return { priceItems: priceWithDD, divList, divByYear, divYears, yieldByYear, divCagr, projYears, projAmounts };
-    } catch(e) { console.warn("fetchPriceAndDividendHistory error:", e.message); }
-  }
-  return null;
-}
+// NOTA: fetchPriceAndDividendHistory ya está definida arriba en la sección TAB 4
 
 // ── Chart: serie temporal de precios con SMA (con scroll horizontal y tooltip) ──
 const PRICE_CHART_PERIODS = { '1M':1, '6M':6, '1A':12, '5A':60, 'MAX':Infinity };
