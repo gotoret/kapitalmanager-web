@@ -5151,12 +5151,14 @@ function renderValuation() {
       const hasData = typeof v==="number";
       const c=!hasData?"#94a3b8":v>=70?"#16a34a":v>=40?"#f59e0b":"#ef4444";
       const expl=methodExplanations[k]||"";
+      const note=(result.method_notes||{})[k];
       return `<div style="margin-bottom:9px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;font-size:12px">
           <span style="color:#475569;display:flex;align-items:center;gap:5px">${methodLabels[k]||k}<span onclick="toggleMethodInfo('${k}')" title="Cómo se calcula" style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:700;cursor:pointer;flex-shrink:0">?</span></span>
           <span style="color:${c};font-weight:700">${hasData?`${v}/100`:"Sin datos"}</span>
         </div>
         <div style="background:#e2e8f0;border-radius:6px;height:8px"><div style="background:${c};border-radius:6px;height:8px;width:${hasData?v:0}%"></div></div>
+        ${note?`<div style="font-size:11px;color:#b45309;background:#fffbeb;border-radius:6px;padding:6px 8px;margin-top:5px;line-height:1.4">⚠️ ${esc(note)}</div>`:""}
         <div id="method-info-${k}" style="display:none;font-size:11px;color:#64748b;background:#f8fafc;border-radius:6px;padding:7px 9px;margin-top:5px;line-height:1.45">${esc(expl)}</div>
       </div>`;
     }).join("");
