@@ -38,7 +38,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 .btn-green{background:#1e3a5f;color:#fff;border:1px solid #1e3a5f;border-radius:5px;padding:7px 14px;font-weight:600;letter-spacing:0.2px;}
 .inp{width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:6px 10px;}
 .inp-sm{border:1px solid #cbd5e1;border-radius:6px;padding:5px 8px;}
-.card{background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:16px;}
+.card{background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:16px;min-width:0;overflow-wrap:break-word;}
 .badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;}
 .modal{background:#fff;border-radius:16px;padding:24px;width:480px;max-width:95%;max-height:85vh;overflow-y:auto;box-shadow:0 24px 60px rgba(0,0,0,0.18);}
@@ -5266,12 +5266,12 @@ function renderValuation() {
       </div>`;
 
       resultHtml += `<div style="display:${(state._valTab||0)===0?'block':'none'}">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;min-width:0">
           <div class="card"><h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">📊 Puntuaciones por método</h4>${result._note?`<div style="font-size:11px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-bottom:10px">⚠️ ${esc(result._note)}</div>`:""}${scoreBars}</div>
-          <div style="display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
             <div class="card">
               <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">🏆 Puntuación global</h4>
-              <div style="display:flex;align-items:center;gap:12px">
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
                 <span style="font-size:42px;font-weight:900;color:${oc};line-height:1">${overall}</span>
                 <span style="font-size:14px;color:#94a3b8">/100</span>
                 <span class="badge" style="background:${oc}22;color:${oc}">${myRec}</span>
