@@ -7421,7 +7421,27 @@ async function runRadarSearch() {
     state.radar._progress = `Enriqueciendo datos fundamentales... ${Math.min(i+ENRICH_GROUP, allQuotes.length)}/${allQuotes.length}`;
     renderActiveTab();
     await Promise.allSettled(group.map(async q => {
-      for (const proxyFn of TS_PROXIES) {
+      let filledByFmp = false;
+      if (state.fmpKey) {
+        try {
+          const res = await fetch(`https://financialmodelingprep.com/api/v3/ratios-ttm/${encodeURIComponent(q.symbol)}?apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(8000) });
+          if (res.ok) {
+            const arr = await res.json();
+            const rt = Array.isArray(arr) ? arr[0] : null;
+            if (rt) {
+              if (rt.netProfitMarginTTM   != null) q.profitMargins  = +(rt.netProfitMarginTTM * 100).toFixed(1);
+              if (rt.returnOnEquityTTM    != null) q.returnOnEquity = +(rt.returnOnEquityTTM * 100).toFixed(1);
+              if (rt.priceToBookRatioTTM  != null) q.priceToBook    = +rt.priceToBookRatioTTM.toFixed(2);
+              if (rt.debtEquityRatioTTM   != null) q.debtToEquity   = +(rt.debtEquityRatioTTM * 100).toFixed(1);
+              if (rt.payoutRatioTTM       != null) q.payoutRatio    = +(rt.payoutRatioTTM * 100).toFixed(1);
+              if (!q.trailingPE && rt.priceEarningsRatioTTM != null) q.trailingPE = +rt.priceEarningsRatioTTM.toFixed(1);
+              if (rt.dividendYieldTTM != null && !q.trailingAnnualDividendYield) q.trailingAnnualDividendYield = rt.dividendYieldTTM;
+              filledByFmp = q.profitMargins != null || q.returnOnEquity != null || q.priceToBook != null;
+            }
+          }
+        } catch (e) { /* se cae al respaldo de Yahoo */ }
+      }
+      if (!filledByFmp) for (const proxyFn of TS_PROXIES) {
         try {
           const res = await fetch(proxyFn(q.symbol), { signal: AbortSignal.timeout(8000) });
           if (!res.ok) continue;
