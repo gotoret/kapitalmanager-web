@@ -2787,6 +2787,14 @@ function switchTab(i) { state.activeTab=i; state.selectedTicker=null; renderTabs
 
 function renderActiveTab() {
   const el = document.getElementById("content");
+  // Se guarda qué campo tenía el foco (y la posición del cursor) antes de
+  // repintar, porque el repintado reemplaza todo el HTML y por tanto destruye
+  // y recrea los inputs — sin esto, cualquier campo con oninput pierde el
+  // foco a cada tecla y hay que volver a hacer clic para cada carácter.
+  const active = document.activeElement;
+  const activeId = active && active.id && el.contains(active) ? active.id : null;
+  const selStart = activeId && typeof active.selectionStart === "number" ? active.selectionStart : null;
+  const selEnd = activeId && typeof active.selectionEnd === "number" ? active.selectionEnd : null;
   try {
     switch(state.activeTab) {
       case 0: el.innerHTML = renderPortfolio(); break;
@@ -2798,6 +2806,15 @@ function renderActiveTab() {
       case 6: el.innerHTML = renderValuation(); break;
       case 7: el.innerHTML = renderRenta(); break;
       case 8: el.innerHTML = renderRadar(); break;
+    }
+    if (activeId) {
+      const restored = document.getElementById(activeId);
+      if (restored) {
+        restored.focus();
+        if (selStart != null && typeof restored.setSelectionRange === "function") {
+          try { restored.setSelectionRange(selStart, selEnd); } catch(e) {}
+        }
+      }
     }
   } catch(e) {
     console.error("Error en renderActiveTab (tab "+state.activeTab+"):", e);
