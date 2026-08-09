@@ -1743,6 +1743,46 @@ async function fetchQuotesFMP(tickers) {
   }
 }
 
+// Quotes "completos" (marketCap, PE, exchange, nombre...) por lotes vía FMP,
+// para el Radar de empresas — mucho más fiable que encadenar cientos de
+// peticiones individuales a proxies CORS gratuitos, que se saturan/bloquean
+// con facilidad y hacían que la búsqueda global fallara por completo,
+// cayendo siempre al respaldo de "solo mostrar mi cartera".
+async function fetchRadarQuotesFMP(tickers) {
+  if (!state.fmpKey) return null;
+  const CHUNK = 50;
+  const out = {};
+  for (let i = 0; i < tickers.length; i += CHUNK) {
+    const chunk = tickers.slice(i, i + CHUNK);
+    try {
+      const symbols = chunk.map(t => encodeURIComponent(t)).join(',');
+      const res = await fetch(`https://financialmodelingprep.com/api/v3/quote/${symbols}?apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) continue;
+      const arr = await res.json();
+      if (!Array.isArray(arr)) continue;
+      arr.forEach(r => {
+        if (r?.price == null || !r?.symbol) return;
+        let price = r.price;
+        if (String(r.symbol).toUpperCase().endsWith(".L")) price = +(price / 100).toFixed(4);
+        out[r.symbol] = {
+          symbol: r.symbol,
+          shortName: r.name || r.symbol,
+          regularMarketPrice: price,
+          marketCap: r.marketCap ?? ((price && r.sharesOutstanding) ? price * r.sharesOutstanding : null),
+          currency: r.symbol.endsWith(".MC") ? "EUR" : r.symbol.endsWith(".L") ? "GBP" : r.symbol.endsWith(".PA") || r.symbol.endsWith(".DE") || r.symbol.endsWith(".AS") || r.symbol.endsWith(".MI") ? "EUR" : "USD",
+          exchange: r.exchange || "",
+          sector: TICKER_SECTOR[r.symbol] || null,
+          trailingPE: r.pe ?? null,
+          forwardPE: null, priceToBook: null,
+          trailingAnnualDividendYield: state.yieldCache[r.symbol]?.yield ?? null,
+          returnOnEquity: null, profitMargins: null, debtToEquity: null, payoutRatio: null,
+        };
+      });
+    } catch (e) { console.warn("fetchRadarQuotesFMP chunk falló:", e); }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 async function fetchQuotesTwelveData(tickers) {
   if (!state.twelveDataKey) return null;
   const capped = tickers.slice(0, 8);
@@ -7306,8 +7346,21 @@ async function runRadarSearch() {
   renderActiveTab();
 
   const allQuotes = [];
+  const coveredByFmp = new Set();
+
+  // Fuente principal: FMP en lotes (mucho más fiable que 150 llamadas
+  // individuales a proxies CORS gratuitos, que se saturan fácilmente).
+  if (state.fmpKey) {
+    state.radar._progress = `Descargando datos (Financial Modeling Prep)...`;
+    renderActiveTab();
+    const fmpQuotes = await fetchRadarQuotesFMP(tickersToFetch);
+    if (fmpQuotes) {
+      Object.values(fmpQuotes).forEach(q => { allQuotes.push(q); coveredByFmp.add(q.symbol); });
+    }
+  }
 
   tickersToFetch.forEach(ticker => {
+    if (coveredByFmp.has(ticker)) return;
     const cached = state.priceCache[ticker];
     if (cached) {
       const div = state.yieldCache[ticker];
@@ -7328,7 +7381,7 @@ async function runRadarSearch() {
     }
   });
 
-  const missing = tickersToFetch.filter(t => !state.priceCache[t]);
+  const missing = tickersToFetch.filter(t => !coveredByFmp.has(t) && !state.priceCache[t]);
   const GROUP = 4;
   for (let i = 0; i < missing.length; i += GROUP) {
     const group = missing.slice(i, i + GROUP);
@@ -7368,7 +7421,27 @@ async function runRadarSearch() {
     state.radar._progress = `Enriqueciendo datos fundamentales... ${Math.min(i+ENRICH_GROUP, allQuotes.length)}/${allQuotes.length}`;
     renderActiveTab();
     await Promise.allSettled(group.map(async q => {
-      for (const proxyFn of TS_PROXIES) {
+      let filledByFmp = false;
+      if (state.fmpKey) {
+        try {
+          const res = await fetch(`https://financialmodelingprep.com/api/v3/ratios-ttm/${encodeURIComponent(q.symbol)}?apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(8000) });
+          if (res.ok) {
+            const arr = await res.json();
+            const rt = Array.isArray(arr) ? arr[0] : null;
+            if (rt) {
+              if (rt.netProfitMarginTTM   != null) q.profitMargins  = +(rt.netProfitMarginTTM * 100).toFixed(1);
+              if (rt.returnOnEquityTTM    != null) q.returnOnEquity = +(rt.returnOnEquityTTM * 100).toFixed(1);
+              if (rt.priceToBookRatioTTM  != null) q.priceToBook    = +rt.priceToBookRatioTTM.toFixed(2);
+              if (rt.debtEquityRatioTTM   != null) q.debtToEquity   = +(rt.debtEquityRatioTTM * 100).toFixed(1);
+              if (rt.payoutRatioTTM       != null) q.payoutRatio    = +(rt.payoutRatioTTM * 100).toFixed(1);
+              if (!q.trailingPE && rt.priceEarningsRatioTTM != null) q.trailingPE = +rt.priceEarningsRatioTTM.toFixed(1);
+              if (rt.dividendYieldTTM != null && !q.trailingAnnualDividendYield) q.trailingAnnualDividendYield = rt.dividendYieldTTM;
+              filledByFmp = q.profitMargins != null || q.returnOnEquity != null || q.priceToBook != null;
+            }
+          }
+        } catch (e) { /* se cae al respaldo de Yahoo */ }
+      }
+      if (!filledByFmp) for (const proxyFn of TS_PROXIES) {
         try {
           const res = await fetch(proxyFn(q.symbol), { signal: AbortSignal.timeout(8000) });
           if (!res.ok) continue;
@@ -7545,10 +7618,17 @@ function renderRadar() {
     if (r._error) {
       resultsHtml += `<div style="padding:10px 12px;background:#fef3c7;border-radius:8px;font-size:11px;color:#92400e;margin-bottom:10px">⚠️ ${r._error}</div>`;
     }
-    if (!r._results.length) {
+    const visibleResults = r.hideOwned !== false
+      ? r._results.filter(q => !state.positions.some(p => p.ticker === q.symbol))
+      : r._results;
+    const withoutRatios = visibleResults.filter(q => q.returnOnEquity==null && q.profitMargins==null && q.priceToBook==null).length;
+    if (withoutRatios > 0 && visibleResults.length) {
+      resultsHtml += `<div style="padding:10px 12px;background:#eff6ff;border-radius:8px;font-size:11px;color:#1e40af;margin-bottom:10px">ℹ️ ${withoutRatios} de ${visibleResults.length} empresas muestran precio y PER, pero sin ROE/P·B/margen — tu plan de datos no trae esos ratios detallados para esos tickers concretos (suele pasar con valores pequeños o poco seguidos fuera de EE.UU.).</div>`;
+    }
+    if (!visibleResults.length) {
       resultsHtml += `<div style="text-align:center;padding:24px;color:#94a3b8;font-size:13px">😔 Ninguna empresa cumple los filtros. Amplía los criterios.</div>`;
     } else {
-      const rows = r._results.map(q => {
+      const rows = visibleResults.map(q => {
         const ticker = q.symbol||"";
         const name = q.shortName||q.longName||ticker;
         const price = q.regularMarketPrice!=null ? fmtNum(q.regularMarketPrice) : "—";
@@ -7596,7 +7676,7 @@ function renderRadar() {
           <tbody>${rows}</tbody>
         </table>
       </div>
-      <div style="font-size:11px;color:#94a3b8;margin-top:8px;text-align:right">${r._results.length} resultado${r._results.length!==1?"s":""} · Fuente: Yahoo Finance</div>`;
+      <div style="font-size:11px;color:#94a3b8;margin-top:8px;text-align:right">${visibleResults.length} resultado${visibleResults.length!==1?"s":""} · Fuente: Yahoo Finance${r.hideOwned!==false && r._results.length!==visibleResults.length?` (${r._results.length-visibleResults.length} de tu cartera ocultas)`:""}</div>`;
     }
   }
 
@@ -7657,6 +7737,10 @@ function renderRadar() {
         style="padding:10px 16px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;cursor:pointer">
         ✕ Limpiar filtros
       </button>
+      <label style="font-size:11px;color:#475569;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">
+        <input type="checkbox" ${r.hideOwned!==false?"checked":""} onchange="setRadarFilter('hideOwned',this.checked)" style="width:13px;height:13px">
+        Ocultar las que ya tengo en cartera
+      </label>
       ${r._searched&&!r._loading?`<span style="font-size:11px;color:#94a3b8">${r._results.length} resultado${r._results.length!==1?"s":""}</span>`:""}
     </div>
 
