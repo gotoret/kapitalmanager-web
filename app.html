@@ -48,7 +48,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
 .metric-card{background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:10px 14px;min-width:0;}
 .metric-card[onclick]:hover{box-shadow:0 2px 8px rgba(0,0,0,0.08);border-color:#cbd5e1;}
-.metric-label{color:#64748b;font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;}
+.metric-label{color:#64748b;font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;min-height:2.5em;display:flex;align-items:flex-end;}
 .metric-value{font-size:18px;font-weight:700;line-height:1.2;}
 #app{display:flex;flex-direction:column;height:100vh;overflow:hidden;background:#e2e8f0;}
 #header{background:#fff;border-bottom:1px solid #e2e8f0;padding:10px 16px;flex-shrink:0;width:100%;max-width:1400px;margin:0 auto;box-sizing:border-box;}
@@ -243,7 +243,7 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
   .chart-card h4 { font-size: 12px; }
   #metrics-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
   .metric-card { padding: 8px 10px; }
-  .metric-label { font-size: 9px; letter-spacing: 0.5px; margin-bottom: 2px; }
+  .metric-label { font-size: 9px; letter-spacing: 0.5px; margin-bottom: 2px; min-height: 2.3em; }
   .metric-value { font-size: 15px; }
 }
 </style>
@@ -2781,7 +2781,7 @@ function renderHeader() {
   document.getElementById("metrics-grid").innerHTML = `
     <div class="metric-card" style="border-left:3px solid #2563eb"><div class="metric-label">INVERTIDO</div><div class="metric-value" style="color:#2563eb">${fmtEUR(totals.inv)}</div></div>
     <div class="metric-card" style="border-left:3px solid #0284c7"><div class="metric-label">VALOR ACTUAL</div><div class="metric-value" style="color:#0284c7">${fmtEUR(totals.cur)}</div></div>
-    <div class="metric-card" style="border-left:3px solid ${pc}"><div class="metric-label">GANANCIA / PÉRDIDA</div><div class="metric-value" style="color:${pc}">${pnl>=0?"+":""}${fmtEUR(Math.abs(pnl))}</div></div>
+    <div class="metric-card" style="border-left:3px solid ${pc}"><div class="metric-label">GANANCIA/PÉRDIDA</div><div class="metric-value" style="color:${pc}">${pnl>=0?"+":""}${fmtEUR(Math.abs(pnl))}</div></div>
     <div class="metric-card" style="border-left:3px solid ${pc}"><div class="metric-label">RENTABILIDAD</div><div class="metric-value" style="color:${pc}">${fmtPct(pct)}</div></div>
     <div class="metric-card" style="border-left:3px solid #16a34a;cursor:pointer" onclick="openDividendCashModal()" title="Dinero acumulado en dividendos cobrados, disponible para reinvertir"><div class="metric-label">💵 CAJA DIVIDENDOS ℹ️</div><div class="metric-value" style="color:#16a34a">${fmtEUR(divCash)}</div></div>
     <div class="metric-card" style="border-left:3px solid #7c3aed;padding:8px 10px">
@@ -3521,6 +3521,14 @@ function renderDivDashboard(totalAnnExpected) {
   });
   growths.sort((a,b)=>b.avg-a.avg);
 
+  // Escala dinámica: la barra más larga ocupa el ancho máximo disponible y el
+  // resto se escala proporcionalmente a ella. Antes se dividía siempre entre
+  // un 12% fijo, así que cualquier empresa con un CAGR mayor (frecuente si el
+  // dividendo se reanudó tras estar en 0, o creció muy rápido desde una base
+  // pequeña) desbordaba la barra fuera del gráfico, y todas se veían cortadas
+  // al mismo tamaño máximo en vez de proporcionales entre sí.
+  const maxAbsGrowth = growths.length ? Math.max(1, ...growths.map(g => Math.abs(g.avg))) : 1;
+
   const ROW_H3 = 24;
   const W3 = 500, ML3 = 80, MR3 = 40, MT3 = 8, MB3 = 12;
   const cw3 = W3 - ML3 - MR3;
@@ -3528,7 +3536,7 @@ function renderDivDashboard(totalAnnExpected) {
   const zeroX3 = ML3 + cw3 * 0.5;
 
   const bars3 = growths.map((g, i) => {
-    const w = Math.abs(g.avg) / 12 * (cw3 * 0.45);
+    const w = Math.abs(g.avg) / maxAbsGrowth * (cw3 * 0.45);
     const y = MT3 + i * ROW_H3 + ROW_H3 * 0.1;
     const h = ROW_H3 * 0.7;
     const positive = g.avg >= 0;
