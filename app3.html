@@ -728,6 +728,10 @@ const TS_PROXIES = [
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
+  // Dos proxies adicionales de respaldo: los CORS proxies gratuitos se caen o
+  // se saturan con frecuencia, así que cuantos más se prueben en cadena, más
+  // probable es que alguno esté vivo en un momento dado.
+  t => `https://thingproxy.freeboard.io/fetch/${`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`}`,
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
 ];
@@ -7454,13 +7458,13 @@ async function runRadarSearch() {
           }
         } catch (e) { /* se cae al respaldo de Yahoo */ }
       }
-      if (!filledByFmp) for (const proxyFn of TS_PROXIES) {
+      if (!filledByFmp) for (let pi = 0; pi < TS_PROXIES.length; pi++) {
         try {
-          const res = await fetch(proxyFn(q.symbol), { signal: AbortSignal.timeout(8000) });
-          if (!res.ok) continue;
+          const res = await fetch(TS_PROXIES[pi](q.symbol), { signal: AbortSignal.timeout(8000) });
+          if (!res.ok) { console.warn(`[radar enrich] ${q.symbol} proxy#${pi}: HTTP ${res.status}`); continue; }
           const json = await res.json();
           const ts = json?.timeseries?.result;
-          if (!ts?.length) continue;
+          if (!ts?.length) { console.warn(`[radar enrich] ${q.symbol} proxy#${pi}: respuesta OK pero sin timeseries.result`); continue; }
 
           const val = {};
           ts.forEach(item => {
@@ -7489,7 +7493,7 @@ async function runRadarSearch() {
             q.trailingPE = +(q.regularMarketPrice / val.annualBasicEPS).toFixed(1);
           }
           break;
-        } catch(e) { /* siguiente proxy */ }
+        } catch(e) { console.warn(`[radar enrich] ${q.symbol} proxy#${pi}: excepción →`, e?.message || e); }
       }
 
       if (!q.trailingAnnualDividendYield) {
