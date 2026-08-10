@@ -1724,7 +1724,7 @@ async function fetchQuotesFMP(tickers) {
   if (!state.fmpKey) return null;
   try {
     const symbols = tickers.map(t => encodeURIComponent(t)).join(',');
-    const res = await fetch(`https://financialmodelingprep.com/stable/batch-quote?symbols=${symbols}&apikey=${state.fmpKey}`, {signal: AbortSignal.timeout(8000)});
+    const res = await fetch(`https://financialmodelingprep.com/api/v3/quote/${symbols}?apikey=${state.fmpKey}`, {signal: AbortSignal.timeout(8000)});
     if (!res.ok) return null;
     const arr = await res.json();
     if (!Array.isArray(arr) || !arr.length) return null;
@@ -1756,7 +1756,7 @@ async function fetchRadarQuotesFMP(tickers) {
     const chunk = tickers.slice(i, i + CHUNK);
     try {
       const symbols = chunk.map(t => encodeURIComponent(t)).join(',');
-      const res = await fetch(`https://financialmodelingprep.com/stable/batch-quote?symbols=${symbols}&apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(10000) });
+      const res = await fetch(`https://financialmodelingprep.com/api/v3/quote/${symbols}?apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(10000) });
       if (!res.ok) continue;
       const arr = await res.json();
       if (!Array.isArray(arr)) continue;
@@ -7432,7 +7432,7 @@ async function runRadarSearch() {
       let filledByFmp = false;
       if (state.fmpKey) {
         try {
-          const res = await fetch(`https://financialmodelingprep.com/stable/ratios-ttm?symbol=${encodeURIComponent(q.symbol)}&apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(8000) });
+          const res = await fetch(`https://financialmodelingprep.com/api/v3/ratios-ttm/${encodeURIComponent(q.symbol)}?apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(8000) });
           if (res.ok) {
             const arr = await res.json();
             const rt = Array.isArray(arr) ? arr[0] : null;
