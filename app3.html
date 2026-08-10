@@ -622,19 +622,11 @@ async function loadCloudData() {
     if (data) {
       state.positions = data.positions || [];
       state.alerts = data.alerts || [];
-      state.dividends = (data.dividends || []).map(d => {
-        // Normalizar fechas de dividendos
-        if (d.date && !(d.date instanceof Date)) {
-          const dt = typeof d.date === 'string' || typeof d.date === 'number' ? new Date(d.date) : null;
-          if (dt && !isNaN(dt.getTime())) {
-            d.date = dt;
-          }
-        }
-        return d;
-      });
+      state.dividends = data.dividends || [];
       state.dividendCashUsed = data.dividend_cash_used || [];
       state.goalConfig = data.goal_config || state.goalConfig;
       state.transactions = data.transactions || [];
+      normalizeAllDates(); // dividendos y transacciones llegan como strings ISO desde Supabase
       save(); // refresca la caché local con lo que viene de la nube
     } else {
       await saveCloud();
@@ -728,10 +720,9 @@ const TS_PROXIES = [
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
-  // Dos proxies adicionales de respaldo: los CORS proxies gratuitos se caen o
-  // se saturan con frecuencia, así que cuantos más se prueben en cadena, más
+  // Proxy adicional de respaldo: los CORS proxies gratuitos se caen o se
+  // saturan con frecuencia, así que cuantos más se prueben en cadena, más
   // probable es que alguno esté vivo en un momento dado.
-  t => `https://thingproxy.freeboard.io/fetch/${`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`}`,
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
   t => `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${t}?type=${TS_ANNUAL}&period1=1420070400&period2=${Math.floor(Date.now()/1000)}`)}`,
 ];
@@ -794,6 +785,27 @@ let state = {
   _divHistorialCollapsed: false,
   _divChartTab: 0,
 };
+
+// Normaliza TODAS las fechas de dividendos y transacciones a objetos Date
+// reales. localStorage/JSON nunca guarda objetos Date (siempre strings), así
+// que sin esto cualquier código que asuma d.date.getFullYear() rompe justo
+// al arrancar la app, antes incluso de que loadCloudData() tenga ocasión de
+// sincronizar — este era el origen real del error "x.date.getFullYear is not
+// a function" que seguía apareciendo pese a arreglos anteriores en otros
+// puntos concretos del código.
+function normalizeAllDates() {
+  const toDate = (v) => {
+    if (v instanceof Date) return isNaN(v.getTime()) ? new Date() : v;
+    if (typeof v === "string" || typeof v === "number") {
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? new Date() : d;
+    }
+    return new Date();
+  };
+  state.dividends = (state.dividends || []).map(d => ({ ...d, date: toDate(d.date) }));
+  state.transactions = (state.transactions || []).map(t => ({ ...t, date: toDate(t.date) }));
+}
+normalizeAllDates();
 
 const save = () => {
   // Convertir fechas de dividendos a string ISO antes de guardar
@@ -1493,8 +1505,8 @@ function openSnapshotCartera(btnEl) {
     const by=ROW2_Y+34+i*19, bxStart=C3X+70, bMaxW=C3W-130;
     f(p.ticker.replace(".MC","").replace(".L","").slice(0,7), C3X+65, by, {sz:8, col:"#94a3b8", al:"right"});
     const bw=(p.divAnual/maxDiv)*bMaxW;
-    ctx.fillStyle="#22c55e"; ctx.globalAlpha=0.85;
-    ctx.beginPath(); ctx.roundRect(bxStart,by-11,Math.max(bw,2),13,3); ctx.fill();
+    ctx.globalAlpha=0.85;
+    rr(bxStart,by-11,Math.max(bw,2),13,3,"#22c55e");
     ctx.globalAlpha=1;
     f(fmtEUR(p.divAnual), bxStart+bw+4, by, {sz:7.5, col:"#4ade80"});
   });
@@ -1512,8 +1524,8 @@ function openSnapshotCartera(btnEl) {
     const bw=(Math.abs(p.retPct)/maxR)*(R1W-midX-40);
     const col2=p.retPct>=0?"#22c55e":"#ef4444";
     const bx=p.retPct>=0?16+midX:16+midX-bw;
-    ctx.fillStyle=col2; ctx.globalAlpha=0.85;
-    ctx.beginPath(); ctx.roundRect(bx,ry-11,Math.max(bw,2),13,3); ctx.fill();
+    ctx.globalAlpha=0.85;
+    rr(bx,ry-11,Math.max(bw,2),13,3,col2);
     ctx.globalAlpha=1;
     const lx=p.retPct>=0?16+midX+bw+3:16+midX-bw-3;
     f((p.retPct>=0?"+":"")+p.retPct.toFixed(1)+"%", lx, ry, {sz:7.5, col:col2, al:p.retPct>=0?"left":"right"});
@@ -3004,6 +3016,7 @@ function renderPortfolio() {
 
 async function fetchPriceHistory(ticker, range="1y") {
   if (!state._chartCache) state._chartCache = {};
+  if (!state._chartCacheOrder) state._chartCacheOrder = [];
   const key = `${ticker}_${range}`;
   if (state._chartCache[key] === "loading") return;
   state._chartCache[key] = "loading";
@@ -3036,6 +3049,17 @@ async function fetchPriceHistory(ticker, range="1y") {
 
       if (prices.length < 3) continue;
       state._chartCache[key] = prices;
+      // LRU: si un usuario abre muchas posiciones distintas (o varios rangos de
+      // la misma) en una sesión larga, el array de precios de 10 años de cada
+      // una se iba acumulando en memoria sin límite — se purga la más antigua
+      // al superar 20 entradas cacheadas.
+      state._chartCacheOrder = state._chartCacheOrder.filter(k => k !== key);
+      state._chartCacheOrder.push(key);
+      const MAX_PRICE_HIST_CACHE = 20;
+      while (state._chartCacheOrder.length > MAX_PRICE_HIST_CACHE) {
+        const old = state._chartCacheOrder.shift();
+        delete state._chartCache[old];
+      }
       if (state.selectedTicker === ticker && state.activeTab === 0) renderActiveTab();
       return;
     } catch(e) {}
@@ -4154,6 +4178,19 @@ if (!state._portfolioCharts) {
 }
 if (!state._portfolioCharts.companyData) state._portfolioCharts.companyData = {};
 if (!state._multiChartCache) state._multiChartCache = {};
+if (!state._multiChartCacheOrder) state._multiChartCacheOrder = [];
+// Los gráficos con ID aleatorio (donut, ddchart, dchart, ychart, blchart)
+// generan una clave nueva en state._multiChartCache cada vez que se repintan,
+// dejando huérfana la entrada anterior para siempre — esto purga las más
+// antiguas para que la caché no crezca sin límite en sesiones largas.
+function registerChartCacheKey(svgId) {
+  state._multiChartCacheOrder.push(svgId);
+  const MAX_CHART_CACHE = 40;
+  while (state._multiChartCacheOrder.length > MAX_CHART_CACHE) {
+    const old = state._multiChartCacheOrder.shift();
+    delete state._multiChartCache[old];
+  }
+}
 
 function renderCharts() {
   const tickers = state.positions.map(p => p.ticker).filter(Boolean);
@@ -4908,6 +4945,7 @@ function buildDonutChartSVG(items, opts = {}) {
   }
   const total = items.reduce((s, it) => s + it.value, 0) || 1;
   const svgId = `donut_${Math.random().toString(36).slice(2, 9)}`;
+  registerChartCacheKey(svgId);
   const SIZE = 220, CX = SIZE / 2, CY = SIZE / 2, R = 88, r = 54;
 
   const polar = (cx, cy, rad, ang) => [cx + rad * Math.cos(ang), cy + rad * Math.sin(ang)];
@@ -5214,8 +5252,8 @@ function renderValuation() {
   if(result){
     const validScores=Object.values(result.scores||{}).filter(v=>typeof v==="number");
     const overall = result.overall_score!=null ? result.overall_score : (validScores.length?+((validScores.reduce((a,b)=>a+b,0)/validScores.length).toFixed(1)):null);
-    const oc=overall==null?"#94a3b8":overall>=70?"#16a34a":overall>=50?"#f59e0b":"#ef4444";
-    const myRec = overall==null ? "⚪ Datos insuficientes" : overall>=70 ? "🟢 Precio de COMPRA" : overall>=50 ? "🟡 Precio NORMAL" : "🔴 NO comprar a este precio";
+    const oc=overall==null?"#94a3b8":overall>=60?"#16a34a":overall>=45?"#f59e0b":"#ef4444";
+    const myRec = overall==null ? "⚪ Datos insuficientes" : overall>=60 ? "🟢 Precio de COMPRA" : overall>=45 ? "🟡 Precio NORMAL" : "🔴 NO comprar a este precio";
     const scoreBars=Object.entries(result.scores||{}).map(([k,v])=>{
       const hasData = typeof v==="number";
       const c=!hasData?"#94a3b8":v>=70?"#16a34a":v>=40?"#f59e0b":"#ef4444";
@@ -5474,7 +5512,7 @@ function renderValuation() {
         <div class="ac-wrap" style="flex:1;max-width:340px">
           <input id="val-ticker" class="inp-sm" placeholder="Empresa o ticker: Iberdrola, GOOGL, KO..." style="width:100%;background:#fff" value="${esc(ticker)}" onkeydown="if(event.key==='Enter')analyzeValuation()">
         </div>
-        <button class="btn" onclick="analyzeValuation()" ${loading?"disabled":""} style="padding:6px 16px">${loading?`<span class="spinner"></span> Analizando...`:"🔍 Analizar"}</button>
+        <button class="btn" onclick="analyzeValuation()" ${loading?"disabled":""} style="padding:6px 16px">${loading?`<span class="spinner"></span> Analizando${state._valProgressSec?` (${state._valProgressSec}s)`:""}...`:"🔍 Analizar"}</button>
         ${(!loading && state._valFromCache)?`<button class="btn-gray" onclick="analyzeValuation(true)" style="padding:6px 12px;font-size:11px" title="Vuelve a descargar los datos en vez de usar la caché compartida de 24h">🔄 Forzar actualización</button>`:""}
       </div>
       ${(!loading && state._valFromCache)?`<div style="font-size:10.5px;color:#94a3b8;margin-top:6px">📦 Datos en caché compartida de hace ${state._valCacheAgeHours<1?Math.round(state._valCacheAgeHours*60)+" min":state._valCacheAgeHours.toFixed(1)+" h"} (se renuevan solos pasadas 24h) — resultado idéntico para todos los usuarios hasta entonces.</div>`:""}
@@ -5797,6 +5835,7 @@ function priceLineChart(title, allItems, opts = {}) {
     return { i: closestIdx, date: d.date, amount: d.amount };
   });
   const svgIdForKM = `pchart_${Math.random().toString(36).slice(2,9)}`;
+  registerChartCacheKey(svgIdForKM);
   const keyMomentDots = keyMoments.map(km => {
     const x = toX(km.i), y = toY(items[km.i].close);
     const tipText = `💰 Dividendo: ${fmtEUR(km.amount)} · ${km.date.toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'})}`;
@@ -5880,6 +5919,7 @@ function drawdownChart(title, items) {
   const maxDD=Math.min(...dds).toFixed(1);
 
   const svgId = `ddchart_${Math.random().toString(36).slice(2,9)}`;
+  registerChartCacheKey(svgId);
   const innerSvg = `${yL}${xL}
     <polygon points="${areaPts}" fill="#dc262618"/>
     ${linePts.length>1?`<polyline points="${linePts.join(" ")}" fill="none" stroke="#dc2626" stroke-width="1.5" stroke-linejoin="round"/>` :""}`;
@@ -5915,6 +5955,7 @@ function divBarChart(title, years, amounts, projYears, projAmounts, cagr) {
   }).join("");
 
   const svgId = `dchart_${Math.random().toString(36).slice(2,9)}`;
+  registerChartCacheKey(svgId);
   state._multiChartCache[svgId] = {
     toY,
     points: allYears.map((yr,i) => ({ label: `${yr}${projYears?.includes(yr) ? ' (proy.)' : ''}`, values: [allAmounts[i]] })),
@@ -5962,6 +6003,7 @@ function yieldLineChart(title, years, yields) {
   const avgYield=vals.length?+(vals.reduce((s,v)=>s+v,0)/vals.length).toFixed(2):null;
 
   const svgId = `ychart_${Math.random().toString(36).slice(2,9)}`;
+  registerChartCacheKey(svgId);
   const innerSvg = `${yL}${xL}
     <polygon points="${areaPts}" fill="#16a34a18"/>
     ${linePts.length>1?`<polyline points="${linePts.join(" ")}" fill="none" stroke="#16a34a" stroke-width="1.5" stroke-linejoin="round"/>` :""}
@@ -5984,7 +6026,16 @@ async function analyzeValuation(forceRefresh = false) {
   state._valError = "";
   state._valMissingSources = [];
   state._valTab = 0;
+  state._valProgressSec = 0;
   renderActiveTab();
+
+  // Progreso visible cada segundo: el análisis puede tardar bastante (varias
+  // fuentes de datos + posible generación de texto con IA), y sin esto el
+  // usuario no sabe si sigue trabajando o se ha quedado colgado.
+  const progressTimer = setInterval(() => {
+    state._valProgressSec = (state._valProgressSec || 0) + 1;
+    if (state._valLoading) renderActiveTab();
+  }, 1000);
 
   try {
     const { data, error } = await supabaseClient.functions.invoke('valuation', {
@@ -6020,6 +6071,8 @@ async function analyzeValuation(forceRefresh = false) {
     console.error('Error análisis Valoración:', e);
     state._valResult = null;
     state._valError = "No se pudo conectar con el servidor de Valoración. Comprueba tu conexión a internet e inténtalo de nuevo — " + (e?.message || e);
+  } finally {
+    clearInterval(progressTimer);
   }
   state._valLoading = false;
   renderActiveTab();
@@ -6132,6 +6185,7 @@ function barLineChart(title, years, series, unit="") {
   const xLabels=years.map((yr,i)=>`<text x="${(PL+i*bspace+bspace/2).toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="8" fill="#94a3b8">${yr}</text>`).join("");
 
   const svgId = `blchart_${Math.random().toString(36).slice(2,9)}`;
+  registerChartCacheKey(svgId);
   state._multiChartCache[svgId] = {
     points: years.map((yr,i) => ({ label: String(yr), values: series.map(s => s.values[i]) })),
     series: series.map(s => ({ label: s.label, color: s.color, fmt: v => v!=null ? `${v.toLocaleString('es-ES',{maximumFractionDigits:1})}${s.axis==='right'?'':' '+unit}` : '-' }))
@@ -6350,7 +6404,16 @@ function saveNewPos() {
   const pos={ticker,name:document.getElementById("m-name").value||ticker,shares,avg_cost:cost,currency,sector:document.getElementById("m-sector").value,date:document.getElementById("m-date").value,fx_rate};
   const idx=state.positions.findIndex(p=>p.ticker===ticker);
   if(idx<0 && state.positions.length >= (state.planMaxPositions||5)){
-    alert(`Tu plan actual permite un máximo de ${state.planMaxPositions} posiciones. Mejora tu plan para añadir más.`);
+    openModal(`
+      <h3>🔒 Límite de tu plan alcanzado</h3>
+      <div style="font-size:13px;color:#475569;line-height:1.6;margin-bottom:14px">
+        Tu plan actual permite un máximo de <strong>${state.planMaxPositions}</strong> posiciones en cartera.
+        Para añadir "${esc(ticker)}" necesitas ampliar tu plan.
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn-gray" onclick="closeModal()">Cancelar</button>
+        <button class="btn" onclick="location.href='index.html'">⭐ Mejorar plan</button>
+      </div>`);
     return;
   }
   if(idx>=0) state.positions[idx]=pos; else state.positions.push(pos);
