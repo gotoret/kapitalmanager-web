@@ -7432,18 +7432,23 @@ async function runRadarSearch() {
       let filledByFmp = false;
       if (state.fmpKey) {
         try {
-          const res = await fetch(`https://financialmodelingprep.com/api/v3/ratios-ttm/${encodeURIComponent(q.symbol)}?apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(8000) });
+          // El endpoint TTM (ratios-ttm) devuelve 403 en el plan actual — se
+          // prueba el endpoint "clásico" anual (sin sufijo TTM), que en FMP
+          // suele quedar en el nivel gratuito mientras el TTM es de pago.
+          // No es exactamente lo mismo (datos del último año fiscal cerrado,
+          // no de los últimos 12 meses móviles) pero es mejor que nada.
+          const res = await fetch(`https://financialmodelingprep.com/api/v3/ratios/${encodeURIComponent(q.symbol)}?limit=1&apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(8000) });
           if (res.ok) {
             const arr = await res.json();
             const rt = Array.isArray(arr) ? arr[0] : null;
             if (rt) {
-              if (rt.netProfitMarginTTM   != null) q.profitMargins  = +(rt.netProfitMarginTTM * 100).toFixed(1);
-              if (rt.returnOnEquityTTM    != null) q.returnOnEquity = +(rt.returnOnEquityTTM * 100).toFixed(1);
-              if (rt.priceToBookRatioTTM  != null) q.priceToBook    = +rt.priceToBookRatioTTM.toFixed(2);
-              if (rt.debtEquityRatioTTM   != null) q.debtToEquity   = +(rt.debtEquityRatioTTM * 100).toFixed(1);
-              if (rt.payoutRatioTTM       != null) q.payoutRatio    = +(rt.payoutRatioTTM * 100).toFixed(1);
-              if (!q.trailingPE && rt.priceEarningsRatioTTM != null) q.trailingPE = +rt.priceEarningsRatioTTM.toFixed(1);
-              if (rt.dividendYieldTTM != null && !q.trailingAnnualDividendYield) q.trailingAnnualDividendYield = rt.dividendYieldTTM;
+              if (rt.netProfitMargin   != null) q.profitMargins  = +(rt.netProfitMargin * 100).toFixed(1);
+              if (rt.returnOnEquity    != null) q.returnOnEquity = +(rt.returnOnEquity * 100).toFixed(1);
+              if (rt.priceToBookRatio  != null) q.priceToBook    = +rt.priceToBookRatio.toFixed(2);
+              if (rt.debtEquityRatio   != null) q.debtToEquity   = +(rt.debtEquityRatio * 100).toFixed(1);
+              if (rt.payoutRatio       != null) q.payoutRatio    = +(rt.payoutRatio * 100).toFixed(1);
+              if (!q.trailingPE && rt.priceEarningsRatio != null) q.trailingPE = +rt.priceEarningsRatio.toFixed(1);
+              if (rt.dividendYield != null && !q.trailingAnnualDividendYield) q.trailingAnnualDividendYield = rt.dividendYield;
               filledByFmp = q.profitMargins != null || q.returnOnEquity != null || q.priceToBook != null;
             }
           }
