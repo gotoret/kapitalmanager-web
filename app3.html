@@ -309,6 +309,28 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
   </div>
 </div>
 
+<div id="onboarding-overlay" class="overlay" style="z-index:1900;display:none">
+  <div class="modal" style="width:480px">
+    <div style="text-align:center;font-size:40px;margin-bottom:8px">👋</div>
+    <h2 style="text-align:center;color:#1e3a5f;font-size:16px;font-weight:700;margin-bottom:18px">Bienvenido a Kapital Manager</h2>
+    <div style="display:flex;flex-direction:column;gap:14px;margin-bottom:22px">
+      <div style="display:flex;gap:12px;align-items:flex-start">
+        <span style="flex-shrink:0;width:26px;height:26px;border-radius:50%;background:#1e3a5f;color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center">1</span>
+        <p style="font-size:13px;color:#334155;line-height:1.5;padding-top:3px">Añade tus primeras posiciones en la pestaña <strong>📋 Cartera</strong>.</p>
+      </div>
+      <div style="display:flex;gap:12px;align-items:flex-start">
+        <span style="flex-shrink:0;width:26px;height:26px;border-radius:50%;background:#1e3a5f;color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center">2</span>
+        <p style="font-size:13px;color:#334155;line-height:1.5;padding-top:3px">Registra tus dividendos en la pestaña <strong>💰 Dividendos</strong> (o actívalo automático).</p>
+      </div>
+      <div style="display:flex;gap:12px;align-items:flex-start">
+        <span style="flex-shrink:0;width:26px;height:26px;border-radius:50%;background:#1e3a5f;color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center">3</span>
+        <p style="font-size:13px;color:#334155;line-height:1.5;padding-top:3px">Analiza si una acción está cara o barata en la pestaña <strong>📐 Valoración</strong>, y descubre otras nuevas en <strong>🔭 Radar</strong>.</p>
+      </div>
+    </div>
+    <button class="btn" style="width:100%;padding:13px;font-size:13px" onclick="closeOnboarding()">¡Entendido, vamos allá! 🚀</button>
+  </div>
+</div>
+
 <div id="modal-overlay" class="overlay" style="display:none" onclick="if(event.target===this)closeModal()">
   <div id="modal-box" class="modal"></div>
 </div>
@@ -2197,9 +2219,32 @@ function checkAlerts() {
     const cpE = pos ? priceToEUR(cp, pos) : toEUR(cp, pos?.currency||"EUR");
     if ((a.direction==="ABOVE"&&cpE>=a.price)||(a.direction==="BELOW"&&cpE<=a.price)) {
       a.triggered=true; a.active=false;
+      notifyAlertTriggered(a, cpE);
     }
   });
   save();
+}
+
+// Notificación del navegador cuando una alerta se dispara — solo si el
+// usuario ya concedió permiso explícitamente (nunca se fuerza el aviso).
+function notifyAlertTriggered(alert, currentPrice) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  try {
+    const n = new Notification(`🔔 ${alert.ticker} ha ${alert.direction==="ABOVE"?"subido":"bajado"} de precio`, {
+      body: `Precio objetivo: ${fmtEUR(alert.price)} · Precio actual: ${fmtEUR(currentPrice)}`,
+      tag: `km-alert-${alert.id}`,
+    });
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch(e) { console.warn("No se pudo mostrar la notificación:", e); }
+}
+
+// Se pide permiso de notificaciones de forma discreta al arrancar, solo si
+// el usuario no lo ha decidido ya antes (no se insiste si lo rechazó).
+function maybeRequestNotificationPermission() {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "default") {
+    Notification.requestPermission().catch(() => {});
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -3467,7 +3512,7 @@ function renderDivDashboard(totalAnnExpected) {
     const monthName = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"][i];
     const tipText = `${monthName}: ${fmtEUR(v)}`;
     return `<rect x="${(x - bw1/2).toFixed(1)}" y="${y.toFixed(1)}" width="${bw1.toFixed(1)}" height="${Math.max(0,h).toFixed(1)}" fill="${GREEN_FILL}" stroke="${GREEN_STROKE}" stroke-width="0.6" rx="3" style="cursor:pointer"
-      onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onclick="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()"></rect>`;
+      onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onclick="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()" ontouchstart="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" ontouchmove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')"></rect>`;
   }).join("");
 
   const monthAbbr = ["E","F","M","A","M","J","J","A","S","O","N","D"];
@@ -3495,7 +3540,7 @@ function renderDivDashboard(totalAnnExpected) {
     const dots = coords.map(c => {
       const tipText = `Acumulado: ${fmtEUR(c.v)}`;
       return `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="7" fill="transparent" style="cursor:pointer"
-        onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onclick="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()"></circle>`;
+        onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onclick="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()" ontouchstart="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" ontouchmove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')"></circle>`;
     }).join("");
     line1 = `<path d="${path}" fill="none" stroke="${GREEN_DARK}" stroke-width="1.4" opacity="0.9"/>${dots}`;
   }
@@ -3521,7 +3566,7 @@ function renderDivDashboard(totalAnnExpected) {
     return `
       <text x="${ML2 - 6}" y="${(y + h*0.6).toFixed(1)}" fill="#334155" font-size="10" text-anchor="end" font-family="system-ui,sans-serif" font-weight="600">${esc(tk)}</text>
       <rect x="${ML2}" y="${y.toFixed(1)}" width="${Math.max(w, 2).toFixed(1)}" height="${h.toFixed(1)}" fill="${GREEN_FILL}" stroke="${GREEN_STROKE}" stroke-width="0.6" rx="3" style="cursor:pointer"
-        onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onclick="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()"></rect>
+        onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onclick="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()" ontouchstart="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" ontouchmove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')"></rect>
       <text x="${(ML2 + Math.max(w, 2) + 4).toFixed(1)}" y="${(y + h*0.6).toFixed(1)}" fill="#334155" font-size="9" text-anchor="start" font-family="system-ui,sans-serif">${fmtEUR(val)}</text>
     `;
   }).join("");
@@ -3575,7 +3620,7 @@ function renderDivDashboard(totalAnnExpected) {
     return `
       <text x="${ML3 - 6}" y="${(y + h*0.6).toFixed(1)}" fill="#334155" font-size="10" text-anchor="end" font-family="system-ui,sans-serif" font-weight="600">${esc(g.tk)}</text>
       <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(w, 2).toFixed(1)}" height="${h.toFixed(1)}" fill="${fill}" stroke="${stroke}" stroke-width="0.6" rx="3" style="cursor:pointer"
-        onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onclick="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()"></rect>
+        onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onclick="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()" ontouchstart="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" ontouchmove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')"></rect>
       <text x="${positive ? (x + Math.max(w, 2) + 4) : (x - 4)}" y="${(y + h*0.6).toFixed(1)}" fill="${positive?GREEN_DARK:"#b91c1c"}" font-size="9" text-anchor="${positive?"start":"end"}" font-family="system-ui,sans-serif" font-weight="600">${g.avg>=0?"+":""}${g.avg.toFixed(1)}%</text>
     `;
   }).join("");
@@ -3883,6 +3928,7 @@ function deleteDividend(id){ state.dividends=state.dividends.filter(d=>d.id!==id
 function renderTransactions() {
   if (!state._txSort) state._txSort = "date";
   if (!state._txDir)  state._txDir  = "desc";
+  const txFilter = state._txFilter || "";
 
   const COLS = [
     {key:"id",    label:"ID"},
@@ -3901,10 +3947,17 @@ function renderTransactions() {
 
   const sel = state._selTx || null;
   const dir = state._txDir === "asc" ? 1 : -1;
-  const sorted = [...state.transactions].sort((a,b) => {
+  const filteredTx = txFilter
+    ? state.transactions.filter(t =>
+        (t.ticker||"").toUpperCase().includes(txFilter.toUpperCase()) ||
+        (t.notes||"").toLowerCase().includes(txFilter.toLowerCase()) ||
+        (t.broker||"").toLowerCase().includes(txFilter.toLowerCase()))
+    : state.transactions;
+  const sorted = [...filteredTx].sort((a,b) => {
     const k = state._txSort;
     const va = k==="total" ? (a.shares||0)*(a.price||0) : (a[k]||"");
     const vb = k==="total" ? (b.shares||0)*(b.price||0) : (b[k]||"");
+    if (va instanceof Date && vb instanceof Date) return dir*(va.getTime()-vb.getTime());
     if (typeof va === "number") return dir*(va-vb);
     return dir*String(va).localeCompare(String(vb));
   });
@@ -3924,7 +3977,7 @@ function renderTransactions() {
     const isSel = sel === t.id;
     return `<tr style="cursor:pointer;background:${isSel?"#eff6ff":""}" onclick="state._selTx=${t.id===sel?"null":t.id};renderActiveTab()">
       <td style="color:#94a3b8;font-size:10px">${t.id}</td>
-      <td style="color:#64748b;white-space:nowrap">${String(t.date||"").slice(0,10)}</td>
+      <td style="color:#64748b;white-space:nowrap">${safeDateStr(t.date)}</td>
       <td><div style="display:flex;align-items:center;gap:6px">${logoImg(t.ticker,"",22)}<span style="color:#1d4ed8;font-weight:700">${esc(t.ticker)}</span></div></td>
       <td><span class="badge" style="background:${t.type==="BUY"?"#2563eb22":t.type==="SELL"?"#dc262622":"#b4530922"};color:${t.type==="BUY"?"#2563eb":t.type==="SELL"?"#dc2626":"#b45309"}">${esc(t.type)}</span></td>
       <td style="text-align:right">${t.shares}</td>
@@ -3945,7 +3998,8 @@ function renderTransactions() {
     <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn" style="font-size:11px;padding:5px 12px" onclick="openAddTxManual()">＋ Nueva transacción</button>
       ${sel!=null?`<button class="btn" style="font-size:11px;padding:5px 12px;" onclick="openEditTransaction(${sel})">✏️ Editar seleccionada</button>`:""}
-      <span style="font-size:11px;color:#94a3b8">${state.transactions.length} transacciones · Click cabecera para ordenar</span>
+      <input id="tx-filter" class="inp-sm" placeholder="🔍 Filtrar por ticker, broker o notas..." value="${esc(txFilter)}" style="width:220px" oninput="state._txFilter=this.value;renderActiveTab()">
+      <span style="font-size:11px;color:#94a3b8">${txFilter?`${sorted.length} de ${state.transactions.length} transacciones`:`${state.transactions.length} transacciones`} · Click cabecera para ordenar</span>
     </div>
     <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:11px;color:#92400e;margin-bottom:10px">
       ℹ️ <strong>Las posiciones se calculan automáticamente desde las transacciones (método FIFO).</strong> Al añadir, editar o borrar una transacción, la cartera se actualiza sola.
@@ -3953,7 +4007,7 @@ function renderTransactions() {
     <div style="overflow-x:auto">
       <table style="min-width:1000px">
         <thead><tr>${headers}</tr></thead>
-        <tbody>${rows||`<tr><td colspan="12" style="text-align:center;color:#94a3b8;padding:28px">Sin transacciones</td></tr>`}</tbody>
+        <tbody>${rows||`<tr><td colspan="12" style="text-align:center;color:#94a3b8;padding:28px">${txFilter?"Ninguna transacción coincide con el filtro":"Sin transacciones"}</td></tr>`}</tbody>
       </table>
     </div>
   </div>`;
@@ -4021,7 +4075,7 @@ function openEditTransaction(id) {
       </div>
     </div>
     <div class="grid2">
-      <div class="field"><label>Fecha</label><input id="etx-date" type="date" class="inp" value="${String(t.date||"").slice(0,10)}"></div>
+      <div class="field"><label>Fecha</label><input id="etx-date" type="date" class="inp" value="${safeDateStr(t.date)}"></div>
       <div class="field"><label>Acciones</label><input id="etx-shares" type="number" step="any" class="inp" value="${t.shares||0}"></div>
     </div>
     <div class="grid2">
@@ -4339,6 +4393,8 @@ function renderCompanyFundamentalCharts(ticker) {
           ? priceLineChart(`📈 Cotización histórica de ${esc(ticker)}`, ph.priceItems, { divList: ph.divList })
           : `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📈 Cotización histórica</h4>${noDataMsg()}</div>`}
 
+        ${ph?.priceItems?.length ? renderIndexComparisonCard(ticker, ph.priceItems) : ""}
+
         ${ph?.divYears?.length
           ? divBarChart(`💰 Dividendos repartidos por ${esc(ticker)}`, ph.divYears, divAmounts)
           : `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">💰 Dividendos históricos</h4>
@@ -4359,6 +4415,97 @@ function renderCompanyFundamentalCharts(ticker) {
           : fundamentalsFallback}
       </div>
   `;
+}
+
+// ── Comparador vs índice de referencia (IBEX 35 / S&P 500 / FTSE 100) ──
+function referenceIndexFor(ticker) {
+  const t = (ticker || "").toUpperCase();
+  if (t.endsWith(".MC")) return { symbol: "^IBEX", label: "IBEX 35" };
+  if (t.endsWith(".L"))  return { symbol: "^FTSE", label: "FTSE 100" };
+  if (t.endsWith(".PA") || t.endsWith(".DE") || t.endsWith(".AS") || t.endsWith(".MI")) return { symbol: "^STOXX50E", label: "EURO STOXX 50" };
+  return { symbol: "^GSPC", label: "S&P 500" };
+}
+
+function toggleIndexComparison(ticker) {
+  if (!state._portfolioCharts.indexCompare) state._portfolioCharts.indexCompare = {};
+  state._portfolioCharts.indexCompare[ticker] = !state._portfolioCharts.indexCompare[ticker];
+  if (state._portfolioCharts.indexCompare[ticker]) loadIndexData(referenceIndexFor(ticker).symbol);
+  renderActiveTab();
+}
+
+async function loadIndexData(indexSymbol) {
+  if (!state._portfolioCharts.indexData) state._portfolioCharts.indexData = {};
+  if (state._portfolioCharts.indexData[indexSymbol]?.loading || state._portfolioCharts.indexData[indexSymbol]?.priceHistory) return;
+  state._portfolioCharts.indexData[indexSymbol] = { loading: true };
+  try {
+    const priceHistory = await fetchPriceAndDividendHistory(indexSymbol);
+    state._portfolioCharts.indexData[indexSymbol] = { loading: false, priceHistory };
+  } catch (e) {
+    console.warn(`Error cargando índice ${indexSymbol}:`, e.message);
+    state._portfolioCharts.indexData[indexSymbol] = { loading: false, priceHistory: null };
+  }
+  if (state.activeTab === 4) renderActiveTab();
+}
+
+function renderIndexComparisonCard(ticker, tickerPriceItems) {
+  const on = !!(state._portfolioCharts.indexCompare && state._portfolioCharts.indexCompare[ticker]);
+  const idx = referenceIndexFor(ticker);
+  const toggleBtn = `<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#475569;cursor:pointer;margin-bottom:8px">
+    <input type="checkbox" ${on?"checked":""} onchange="toggleIndexComparison('${esc(ticker)}')" style="width:13px;height:13px">
+    Comparar con ${idx.label}
+  </label>`;
+
+  if (!on) {
+    return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📊 Comparativa vs índice</h4>${toggleBtn}
+      <div style="padding:20px;text-align:center;color:#94a3b8;font-size:11px">Activa la casilla para comparar la evolución de ${esc(ticker)} frente al ${idx.label}, ambos normalizados a 100 en la fecha de inicio.</div></div>`;
+  }
+
+  const idxData = state._portfolioCharts.indexData?.[idx.symbol];
+  if (!idxData || idxData.loading) {
+    return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📊 Comparativa vs índice</h4>${toggleBtn}
+      <div style="padding:20px;text-align:center;color:#94a3b8"><div class="spinner" style="width:22px;height:22px;border-width:2px;margin:0 auto 8px"></div>Cargando ${idx.label}...</div></div>`;
+  }
+  if (!idxData.priceHistory?.priceItems?.length) {
+    return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📊 Comparativa vs índice</h4>${toggleBtn}${noDataMsg()}</div>`;
+  }
+
+  // Normalizar ambas series a base 100 en la primera fecha común disponible.
+  const idxMap = {};
+  idxData.priceHistory.priceItems.forEach(p => { idxMap[safeDateStr(p.date).slice(0,7)] = p.close; });
+  const tickerMonthly = tickerPriceItems.filter((p,i) => i===0 || safeDateStr(p.date).slice(0,7) !== safeDateStr(tickerPriceItems[i-1].date).slice(0,7));
+
+  const labels = [], tickerVals = [], idxVals = [];
+  let baseTicker = null, baseIdx = null;
+  tickerMonthly.forEach(p => {
+    const ym = safeDateStr(p.date).slice(0,7);
+    if (idxMap[ym] == null) return;
+    if (baseTicker == null) { baseTicker = p.close; baseIdx = idxMap[ym]; }
+    labels.push(ym);
+    tickerVals.push(+((p.close/baseTicker)*100).toFixed(2));
+    idxVals.push(+((idxMap[ym]/baseIdx)*100).toFixed(2));
+  });
+
+  if (labels.length < 2) {
+    return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📊 Comparativa vs índice</h4>${toggleBtn}
+      <div style="padding:20px;text-align:center;color:#94a3b8;font-size:11px">No hay suficiente solapamiento de fechas entre ${esc(ticker)} y el ${idx.label} para comparar.</div></div>`;
+  }
+
+  const finalTicker = tickerVals[tickerVals.length-1], finalIdx = idxVals[idxVals.length-1];
+  const chart = lineChart(
+    `📊 ${esc(ticker)} vs ${idx.label} (base 100)`,
+    labels,
+    [
+      { label: ticker, values: tickerVals, color: "#2563eb" },
+      { label: idx.label, values: idxVals, color: "#94a3b8" },
+    ],
+    ""
+  );
+  const diff = finalTicker - finalIdx;
+  const diffTxt = `${esc(ticker)} ${diff>=0?"ha batido":"ha rendido peor que"} el ${idx.label} en ${Math.abs(diff).toFixed(1)} puntos en este periodo.`;
+  return chart.replace(
+    '</h4>',
+    `</h4>${toggleBtn}`
+  ) + `<div style="font-size:10px;color:#64748b;margin-top:-6px;padding:0 4px">${diffTxt}</div>`;
 }
 
 async function loadCompanyChartsData(ticker) {
@@ -5228,6 +5375,7 @@ function saveValAlert() {
   state.alerts.push({id:uid(), ticker, direction:"BELOW", price, active:true, triggered:false, created_at:new Date().toISOString()});
   save();
   closeModal();
+  maybeRequestNotificationPermission();
   alert(`✅ Alerta creada: aviso cuando ${ticker} baje a ${price.toFixed(2)}€`);
 }
 
@@ -5840,7 +5988,7 @@ function priceLineChart(title, allItems, opts = {}) {
     const x = toX(km.i), y = toY(items[km.i].close);
     const tipText = `💰 Dividendo: ${fmtEUR(km.amount)} · ${km.date.toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'})}`;
     return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5" fill="#f59e0b" stroke="#fff" stroke-width="1.3" style="cursor:pointer"
-      onmousemove="divChartTip(event,'${svgIdForKM}_wrap','${esc(tipText)}')" onclick="divChartTip(event,'${svgIdForKM}_wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()"></circle>`;
+      onmousemove="divChartTip(event,'${svgIdForKM}_wrap','${esc(tipText)}')" onclick="divChartTip(event,'${svgIdForKM}_wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()" ontouchstart="divChartTip(event,'${svgIdForKM}_wrap','${esc(tipText)}')" ontouchmove="divChartTip(event,'${svgIdForKM}_wrap','${esc(tipText)}')"></circle>`;
   }).join("");
 
   const svgId = svgIdForKM;
@@ -6584,6 +6732,7 @@ function saveAlertModal() {
   if(!ticker||price<=0){alert("Completa todos los campos");return;}
   state.alerts.push({id:uid(),ticker,direction,price,active:true,triggered:false,created_at:new Date().toISOString()});
   save(); closeModal(); renderActiveTab(); renderHeader();
+  maybeRequestNotificationPermission();
 }
 
 function exportDividendsCsv() {
@@ -7198,6 +7347,22 @@ function printRenta() {
 function acceptDisclaimer() {
   ls.set("km_disclaimer",true);
   document.getElementById("disclaimer-overlay").style.display="none";
+  maybeShowOnboarding();
+}
+
+function closeOnboarding() {
+  ls.set("km_onboarding_done", true);
+  const el = document.getElementById("onboarding-overlay");
+  if (el) el.style.display = "none";
+}
+
+function maybeShowOnboarding() {
+  // Solo la primera vez, y solo si la cartera está vacía — un usuario que ya
+  // tiene posiciones cargadas evidentemente no necesita el tutorial de inicio.
+  if (ls.get("km_onboarding_done", false)) return;
+  if ((state.positions || []).length > 0) { ls.set("km_onboarding_done", true); return; }
+  const el = document.getElementById("onboarding-overlay");
+  if (el) el.style.display = "flex";
 }
 
 // ─────────────────────────────────────────────
@@ -7241,6 +7406,7 @@ async function startAppIfNeeded() {
 
   if (ls.get("km_disclaimer", false)) {
     document.getElementById("disclaimer-overlay").style.display = "none";
+    maybeShowOnboarding();
   } else {
     document.getElementById("disclaimer-overlay").style.display = "flex";
   }
