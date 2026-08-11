@@ -3876,9 +3876,7 @@ function openEditTransaction(id) {
         <datalist id="etx-ticker-list">${tickers.map(tk=>`<option>${tk}</option>`).join("")}</datalist>
       </div>
       <div class="field"><label>Tipo</label>
-        <select id="etx-type" class="inp">
-          ${["BUY","SELL","DIVIDEND"].map(tp=>`<option ${t.type===tp?"selected":""}>${tp}</option>`).join("")}
-        </select>
+        <select id="etx-type" class="inp">${["BUY","SELL","DIVIDEND"].map(tp=>`<option ${t.type===tp?"selected":""}>${tp}</option>`).join("")}</select>
       </div>
     </div>
     <div class="grid2">
@@ -3985,7 +3983,7 @@ function deleteTransaction(id) {
 }
 
 // ============================================================
-// GRÁFICOS (TAB 4)
+// GRÁFICOS (TAB 4) - Funciones completas
 // ============================================================
 const CURRENCIES = ["EUR","USD","GBP","CHF","CAD","AUD","JPY"];
 const SECTORS = ["Tecnología","Servicios Financieros","Salud","Consumo Cíclico","Consumo Defensivo","Energía","Materiales Básicos","Industria","Utilities","Inmobiliario","Comunicaciones"];
@@ -4031,6 +4029,9 @@ function logoImg(ticker, name, size=28) {
   </div>`;
 }
 
+// ============================================================
+// GRÁFICOS - Funciones principales
+// ============================================================
 if (!state._portfolioCharts) {
   state._portfolioCharts = {
     selectedTicker: 'Todas',
@@ -4055,7 +4056,6 @@ function registerChartCacheKey(svgId) {
 
 function renderCharts() {
   const tickers = state.positions.map(p => p.ticker).filter(Boolean);
-
   if (!tickers.length) {
     return `<div style="padding:40px 20px;text-align:center;color:#94a3b8;font-size:13px">
       <div style="font-size:48px;margin-bottom:12px">📊</div>
@@ -4063,13 +4063,10 @@ function renderCharts() {
       <p style="font-size:12px">Ve a la pestaña "Cartera" y haz clic en "➕ Añadir" para empezar</p>
     </div>`;
   }
-
   const selected = state._portfolioCharts.selectedTicker;
-
   if (selected && selected !== 'Todas') {
     return `<div style="padding:14px">${renderChartsSelector(tickers)}${renderCompanyFundamentalCharts(selected)}</div>`;
   }
-
   return `<div style="padding:14px">${renderChartsSelector(tickers)}${renderPortfolioChartsBody(tickers)}</div>`;
 }
 
@@ -4081,16 +4078,13 @@ function onChartsSelectorChange(field, value) {
 function renderChartsSelector(tickers) {
   const selected = state._portfolioCharts.selectedTicker;
   const period = state._portfolioCharts.period || '1A';
-
   const tickerOptions = [
     `<option value="Todas" ${selected === 'Todas' ? 'selected' : ''}>📊 Todas las empresas</option>`,
     ...tickers.map(t => `<option value="${t}" ${selected === t ? 'selected' : ''}>${t}</option>`)
   ].join('');
-
   const periodOptions = ['1A', '3A', '5A', '10A', 'MAX'].map(p =>
     `<option value="${p}" ${period === p ? 'selected' : ''}>${p}</option>`
   ).join('');
-
   return `
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;align-items:center;background:#f8fafc;padding:12px 16px;border-radius:12px;border:1px solid #e2e8f0">
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -4110,1145 +4104,6 @@ function renderChartsSelector(tickers) {
     </div>`;
 }
 
-function renderPortfolioChartsBody(tickers) {
-  const period = state._portfolioCharts.period || '1A';
-  const divPeriod = state._portfolioCharts.divPeriod || 'Anual';
-  const activeTickers = tickers;
-  const activePositions = state.positions.filter(p => activeTickers.includes(p.ticker));
-
-  const portfolioData = calculatePortfolioHistory(activeTickers, period);
-  const divData = calculateDividendHistory(activeTickers, divPeriod);
-  const projectionData = calculateDividendProjection(activeTickers);
-
-  const sectorBreakdown = calculateAllocationBreakdown(activePositions, p => p.sector || 'Otros');
-  const currencyBreakdown = calculateAllocationBreakdown(activePositions, p => p.currency || 'EUR');
-  const companyBreakdown = calculateAllocationBreakdown(activePositions, p => p.ticker, 8);
-
-  return `
-      <div class="charts-donut-row">
-        <div class="chart-card">
-          <h4>🏭 Por Sector</h4>
-          ${buildDonutChartSVG(sectorBreakdown, { unitLabel: sectorBreakdown.length === 1 ? 'sector' : 'sectores', centerValue: sectorBreakdown.length })}
-        </div>
-        <div class="chart-card">
-          <h4>💱 Por Divisa</h4>
-          ${buildDonutChartSVG(currencyBreakdown, { unitLabel: currencyBreakdown.length === 1 ? 'divisa' : 'divisas', centerValue: currencyBreakdown.length })}
-        </div>
-        <div class="chart-card">
-          <h4>🏢 Por Empresa</h4>
-          ${buildDonutChartSVG(companyBreakdown, { unitLabel: 'posiciones', centerValue: activePositions.length })}
-        </div>
-      </div>
-
-      <div class="charts-grid-main">
-        <div class="chart-card">
-          <h4>📈 Evolución de la cartera</h4>
-          ${buildPortfolioChartSVG(portfolioData, period)}
-        </div>
-
-        <div class="chart-card">
-          <h4>💰 Dividendos históricos</h4>
-          <div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap">
-            ${['Mensual','Trimestral','Anual'].map(p =>
-              `<button onclick="state._portfolioCharts.divPeriod='${p}';renderActiveTab()"
-                style="padding:2px 10px;border:1px solid ${divPeriod === p ? '#2563eb' : '#e2e8f0'};border-radius:4px;font-size:10px;font-weight:600;background:${divPeriod === p ? '#2563eb' : '#fff'};color:${divPeriod === p ? '#fff' : '#64748b'};cursor:pointer">${p}</button>`
-            ).join('')}
-          </div>
-          ${buildDividendChartSVG(divData, divPeriod)}
-        </div>
-
-        <div class="chart-card" style="grid-column:1/-1">
-          <h4>🚀 Dividendos futuros (estimación según histórico)</h4>
-          ${buildDividendProjectionSVG(projectionData)}
-        </div>
-      </div>
-  `;
-}
-
-function renderCompanyFundamentalCharts(ticker) {
-  const cache = state._portfolioCharts.companyData[ticker];
-
-  if (!cache || cache.loading) {
-    loadCompanyChartsData(ticker);
-    return `<div style="padding:40px 20px;text-align:center;color:#94a3b8">
-      <div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto 16px"></div>
-      <p style="font-weight:600;color:#475569">Cargando datos de ${esc(ticker)}...</p>
-      <p style="font-size:12px">Cotización, dividendos, deuda, FCF y recompras históricas</p>
-    </div>`;
-  }
-
-  const ph = cache.priceHistory;
-  const fd = cache.fundamentals;
-  const years = fd?.years || [];
-  const hasFund = !!(fd && years.length);
-
-  const divAmounts = ph?.divYears?.length ? ph.divYears.map(yr => ph.divByYear[yr]) : [];
-
-  const fundamentalsFallback = `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">
-      ${!state.fmpKey ? 'Configura una API key de Financial Modeling Prep en la pestaña Valoración para ver estos datos' : 'Datos no disponibles para este ticker ahora mismo'}
-    </h4>${noDataMsg()}</div>`;
-
-  return `
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-        ${logoImg(ticker, ticker, 32)}
-        <h3 style="font-size:15px;font-weight:700;color:#1e293b;margin:0">${esc(ticker)}</h3>
-        <button onclick="state._portfolioCharts.companyData['${esc(ticker)}']=null;renderActiveTab()"
-          style="margin-left:auto;padding:4px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;background:#fff;color:#64748b;cursor:pointer">🔄 Actualizar</button>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px">
-        ${ph?.priceItems?.length
-          ? priceLineChart(`📈 Cotización histórica de ${esc(ticker)}`, ph.priceItems, { divList: ph.divList })
-          : `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📈 Cotización histórica</h4>${noDataMsg()}</div>`}
-
-        ${ph?.priceItems?.length ? renderIndexComparisonCard(ticker, ph.priceItems) : ""}
-
-        ${ph?.priceItems?.length ? renderCorrelationCard(ticker) : ""}
-
-        ${ph?.divYears?.length
-          ? divBarChart(`💰 Dividendos repartidos por ${esc(ticker)}`, ph.divYears, divAmounts)
-          : `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">💰 Dividendos históricos</h4>
-              <div style="padding:24px;text-align:center;color:#94a3b8;font-size:12px;background:#fafafa;border-radius:10px;border:1px solid #e2e8f0">
-                ${esc(ticker)} no ha repartido dividendos en los últimos 10 años, o no hay datos disponibles.
-              </div></div>`}
-
-        ${hasFund
-          ? barLineChart(`🏦 Deuda neta histórica de ${esc(ticker)}`, years, [{ label: 'Deuda neta', values: fd.net_debt || [], color: '#dc2626' }], 'M€')
-          : fundamentalsFallback}
-
-        ${hasFund
-          ? barLineChart(`💵 Free Cash Flow histórico de ${esc(ticker)}`, years, [{ label: 'FCF', values: fd.fcf || [], color: '#16a34a' }], 'M€')
-          : fundamentalsFallback}
-
-        ${hasFund
-          ? barLineChart(`🔁 Recompras de acciones de ${esc(ticker)}`, years, [{ label: 'Recompras', values: fd.buybacks || [], color: '#7c3aed' }], 'M€')
-          : fundamentalsFallback}
-      </div>
-  `;
-}
-
-// ============================================================
-// FUNCIONES DE CARTERA Y GRÁFICOS (completas)
-// ============================================================
-function calculateAllocationBreakdown(positions, keyFn, maxSlices = 10) {
-  const groups = {};
-  positions.forEach(p => {
-    const key = keyFn(p) || 'Otros';
-    groups[key] = (groups[key] || 0) + posValEUR(p);
-  });
-  let entries = Object.entries(groups).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-  if (entries.length > maxSlices) {
-    const head = entries.slice(0, maxSlices - 1);
-    const restTotal = entries.slice(maxSlices - 1).reduce((s, [, v]) => s + v, 0);
-    entries = [...head, ['Otras', restTotal]];
-  }
-  return entries.map(([label, value]) => ({ label, value }));
-}
-
-function calculatePortfolioHistory(tickers, period) {
-  const tickerSet = new Set(tickers);
-  const periodMap = { '1A': 12, '3A': 36, '5A': 60, '10A': 120, 'MAX': 240 };
-  const months = periodMap[period] || 12;
-  
-  const txs = [...state.transactions].filter(t => tickerSet.has(t.ticker)).sort((a, b) => compareDates(a.date, b.date));
-  
-  const result = [];
-  const today = new Date();
-  const startDate = new Date(today);
-  startDate.setMonth(startDate.getMonth() - months);
-  
-  const monthlyData = {};
-  txs.forEach(tx => {
-    const d = new Date(tx.date);
-    if (d < startDate) return;
-    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-    if (!monthlyData[key]) monthlyData[key] = { date: d, buys: 0, sells: 0 };
-    if (tx.type === 'BUY') monthlyData[key].buys += tx.shares * tx.price;
-    else if (tx.type === 'SELL') monthlyData[key].sells += tx.shares * tx.price;
-  });
-  
-  const relevantPositions = state.positions.filter(p => tickerSet.has(p.ticker));
-  const currentValue = relevantPositions.reduce((acc, p) => {
-    const price = state.priceCache[p.ticker] || p.avg_cost;
-    return acc + (p.shares * price);
-  }, 0);
-  
-  let cumulativeCost = 0;
-  const monthsKeys = Object.keys(monthlyData).sort();
-  
-  monthsKeys.forEach(key => {
-    const data = monthlyData[key];
-    cumulativeCost += data.buys - data.sells;
-    result.push({
-      date: data.date,
-      invested: cumulativeCost,
-      value: currentValue || cumulativeCost,
-      profit: (currentValue || cumulativeCost) - cumulativeCost
-    });
-  });
-  
-  return result;
-}
-
-function buildHeaderEvoSparkline(totalInvested, totalValue) {
-  const tickers = state.positions.map(p => p.ticker);
-  if (!tickers.length) return `<div style="font-size:9px;color:#94a3b8;text-align:center;line-height:30px">Sin posiciones</div>`;
-
-  const hist = calculatePortfolioHistory(tickers, 'MAX');
-  if (!hist.length) return `<div style="font-size:9px;color:#94a3b8;text-align:center;line-height:30px">Sin histórico aún</div>`;
-
-  const lastInvested = totalInvested || hist[hist.length-1].invested || 0;
-  const currentValue = totalValue || hist[hist.length-1].value || lastInvested;
-  const ratio = lastInvested > 0 ? currentValue / lastInvested : 1;
-
-  const points = hist.map(h => ({ date: new Date(h.date), v: Math.max(0, (h.invested || 0) * ratio) }));
-  const originDate = new Date(points[0].date); originDate.setDate(originDate.getDate() - 1);
-  points.unshift({ date: originDate, v: 0 });
-  points.push({ date: new Date(), v: currentValue });
-
-  if (points.length < 2) return `<div style="font-size:9px;color:#94a3b8;text-align:center;line-height:30px">Historial insuficiente</div>`;
-
-  const W = 300, H = 30, PAD = 2;
-  const minV = 0, maxV = Math.max(...points.map(p => p.v), 1);
-  const range = (maxV - minV) || 1;
-  const minT = points[0].date.getTime(), maxT = points[points.length-1].date.getTime();
-  const spanT = (maxT - minT) || 1;
-  const toX = t => PAD + ((t - minT) / spanT) * (W - PAD*2);
-  const toY = v => (H - PAD) - ((v - minV) / range) * (H - PAD*2);
-
-  const coords = points.map(p => `${toX(p.date.getTime()).toFixed(1)},${toY(p.v).toFixed(1)}`);
-  const linePath = `M${coords.join(" L")}`;
-  const areaPath = `${linePath} L${toX(maxT).toFixed(1)},${(H-PAD).toFixed(1)} L${toX(minT).toFixed(1)},${(H-PAD).toFixed(1)} Z`;
-
-  const positive = currentValue >= lastInvested;
-  const color = positive ? '#16a34a' : '#dc2626';
-  const pct = lastInvested > 0 ? ((currentValue - lastInvested) / lastInvested * 100) : 0;
-  const firstRealDate = points[1]?.date;
-  const tip = `Evolución de la cartera desde ${firstRealDate ? firstRealDate.toLocaleDateString('es-ES',{month:'short',year:'numeric'}) : 'el inicio'}: `
-            + `${fmtPrivate(currentValue)} (${pct>=0?'+':''}${pct.toFixed(1)}%)`;
-
-  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:100%;display:block">
-    <title>${esc(tip)}</title>
-    <defs>
-      <linearGradient id="hdrEvoFill" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${color}" stop-opacity="0.32"/>
-        <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
-      </linearGradient>
-    </defs>
-    <path d="${areaPath}" fill="url(#hdrEvoFill)" stroke="none"/>
-    <path d="${linePath}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
-  </svg>`;
-}
-
-function calculateDividendHistory(tickers, period) {
-  const tickerSet = new Set(tickers);
-  const divs = (state.dividends || []).filter(d => tickerSet.has(d.ticker));
-  const result = [];
-  
-  const groupKey = (dateVal) => {
-    let d;
-    if (dateVal instanceof Date) {
-      d = dateVal;
-    } else if (typeof dateVal === 'string') {
-      d = new Date(dateVal);
-    } else if (typeof dateVal === 'number') {
-      d = new Date(dateVal);
-    } else {
-      return String(dateVal);
-    }
-    if (isNaN(d.getTime())) return String(dateVal);
-    if (period === 'Anual') return `${d.getFullYear()}`;
-    if (period === 'Trimestral') return `${d.getFullYear()}-Q${Math.floor(d.getMonth()/3)+1}`;
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-  };
-  
-  const grouped = {};
-  let total = 0;
-  
-  divs.forEach(d => {
-    const key = groupKey(d.date);
-    const amount = (d.amount || 0) * (d.shares || 1);
-    if (!grouped[key]) grouped[key] = { amount: 0, count: 0, companies: new Set() };
-    grouped[key].amount += amount;
-    grouped[key].count += 1;
-    grouped[key].companies.add(d.ticker);
-    total += amount;
-  });
-  
-  const keys = Object.keys(grouped).sort();
-  let cum = 0;
-  keys.forEach(key => {
-    cum += grouped[key].amount;
-    result.push({
-      label: key,
-      amount: grouped[key].amount,
-      cumulative: cum,
-      count: grouped[key].count,
-      companies: Array.from(grouped[key].companies).join(', ')
-    });
-  });
-  
-  return { data: result, total };
-}
-
-function calculateDividendProjection(tickers) {
-  const tickerSet = new Set(tickers);
-  let currentAnnualDiv = 0;
-  (state.divInfo || []).forEach(d => {
-    if (!tickerSet.has(d.ticker)) return;
-    currentAnnualDiv += toEUR(d.annual_income || 0, d.currency || 'EUR');
-  });
-  
-  const divs = (state.dividends || []).filter(d => tickerSet.has(d.ticker));
-  if (divs.length < 2) {
-    return { current: currentAnnualDiv, years: [], projected: [], cagr: 3 };
-  }
-  
-  const sortedDivs = [...divs].sort((a, b) => {
-    const da = a.date instanceof Date ? a.date : new Date(a.date);
-    const db = b.date instanceof Date ? b.date : new Date(b.date);
-    if (isNaN(da.getTime())) return 1;
-    if (isNaN(db.getTime())) return -1;
-    return da - db;
-  });
-  
-  const validDivs = sortedDivs.filter(d => {
-    const dt = d.date instanceof Date ? d.date : new Date(d.date);
-    return !isNaN(dt.getTime());
-  });
-  
-  if (validDivs.length < 2) {
-    return { current: currentAnnualDiv, years: [], projected: [], cagr: 3 };
-  }
-  
-  const firstDate = validDivs[0].date instanceof Date ? validDivs[0].date : new Date(validDivs[0].date);
-  const firstYear = !isNaN(firstDate.getTime()) ? firstDate.getFullYear() : 2000;
-  const lastDate = validDivs[validDivs.length-1].date instanceof Date ? validDivs[validDivs.length-1].date : new Date(validDivs[validDivs.length-1].date);
-  const lastYear = !isNaN(lastDate.getTime()) ? lastDate.getFullYear() : 2000;
-
-  const byYear = {};
-  validDivs.forEach(d => {
-    const dt = d.date instanceof Date ? d.date : new Date(d.date);
-    if (isNaN(dt.getTime())) return;
-    const yr = dt.getFullYear();
-    byYear[yr] = (byYear[yr] || 0) + (d.amount || 0) * (d.shares || 1);
-  });
-  
-  const firstAmount = byYear[firstYear] || 0;
-  const lastAmount = byYear[lastYear] || 0;
-  
-  const yearsDiff = lastYear - firstYear || 1;
-  const cagr = Math.pow(lastAmount / (firstAmount || 1), 1 / yearsDiff) - 1;
-  const cagrPct = Math.max(0, Math.min(15, (cagr || 0.03) * 100));
-  
-  const projected = [];
-  const growthRate = cagrPct / 100;
-  let futureDiv = currentAnnualDiv;
-  const userContrib = 5000;
-  
-  for (let i = 1; i <= 10; i++) {
-    futureDiv = futureDiv * (1 + growthRate) + (userContrib * 0.04);
-    projected.push({
-      year: new Date().getFullYear() + i,
-      amount: futureDiv,
-      contribution: userContrib * i
-    });
-  }
-  
-  return {
-    current: currentAnnualDiv,
-    years: projected.map(p => p.year),
-    projected: projected.map(p => p.amount),
-    contribution: projected.map(p => p.contribution),
-    cagr: cagrPct,
-    nextYear: projected[0]?.amount || currentAnnualDiv * 1.03,
-    fiveYear: projected[4]?.amount || currentAnnualDiv * 1.15,
-    tenYear: projected[9]?.amount || currentAnnualDiv * 1.3
-  };
-}
-
-// ============================================================
-// GRÁFICOS SVG (funciones completas)
-// ============================================================
-function multiChartMouseMove(e, svgId, W, PL, gW, PT, gH) {
-  const cache = state._multiChartCache?.[svgId];
-  if (!cache?.points?.length) return;
-  const svg = document.getElementById(svgId);
-  if (!svg) return;
-  const rect = svg.getBoundingClientRect();
-  const scaleX = W / rect.width;
-  const mx = (e.clientX - rect.left) * scaleX;
-  const relX = mx - PL;
-  const n = cache.points.length;
-  const idx = Math.max(0, Math.min(n - 1, Math.round(relX / gW * (n - 1))));
-  const point = cache.points[idx];
-  if (!point) return;
-
-  const toX = i => PL + (n > 1 ? (i / (n - 1)) * gW : gW / 2);
-  const cx = toX(idx).toFixed(1);
-
-  const vline = document.getElementById(`${svgId}_vline`);
-  if (vline) { vline.setAttribute("x1", cx); vline.setAttribute("x2", cx); vline.removeAttribute("display"); }
-
-  let html = `<div style="font-weight:700;margin-bottom:3px">${esc(point.label)}</div>`;
-  cache.series.forEach((s, si) => {
-    const dot = document.getElementById(`${svgId}_dot${si}`);
-    const v = point.values[si];
-    if (v == null) { if (dot) dot.setAttribute("display", "none"); return; }
-    if (dot && cache.toY) {
-      dot.setAttribute("cx", cx);
-      dot.setAttribute("cy", cache.toY(v).toFixed(1));
-      dot.removeAttribute("display");
-    }
-    html += `<div style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:${s.color};border-radius:2px;display:inline-block"></span>${esc(s.label)}: <b>${s.fmt ? s.fmt(v) : v}</b></div>`;
-  });
-
-  const tip = document.getElementById(`${svgId}_tip`);
-  if (tip) {
-    tip.innerHTML = html;
-    const rectW = rect.width;
-    const tipX = e.clientX - rect.left;
-    tip.style.display = "block";
-    tip.style.left = (tipX + 10 > rectW - 150 ? tipX - 156 : tipX + 8) + "px";
-    tip.style.top = "4px";
-  }
-}
-
-function multiChartMouseLeave(svgId) {
-  const vline = document.getElementById(`${svgId}_vline`);
-  const tip = document.getElementById(`${svgId}_tip`);
-  if (vline) vline.setAttribute("display", "none");
-  if (tip) tip.style.display = "none";
-  document.querySelectorAll(`[id^="${svgId}_dot"]`).forEach(d => d.setAttribute("display", "none"));
-}
-
-function chartScrollWrap(svgId, W, H, innerSvg, extra = "") {
-  return `<div style="overflow-x:auto;overflow-y:hidden">
-    <div style="position:relative;min-width:${W}px">
-      <svg id="${svgId}" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;overflow:visible;cursor:crosshair" ${extra}>
-        ${innerSvg}
-      </svg>
-      <div id="${svgId}_tip" style="display:none;position:absolute;top:0;left:0;background:#1e293b;color:#fff;padding:5px 9px;border-radius:6px;font-size:10px;font-weight:500;pointer-events:none;white-space:nowrap;z-index:10;box-shadow:0 2px 8px #0004"></div>
-    </div>
-  </div>`;
-}
-
-function buildPortfolioChartSVG(data, period) {
-  if (!data || data.length < 2) {
-    return `<div class="no-data-msg">Datos insuficientes para mostrar evolución</div>`;
-  }
-  
-  const n = data.length;
-  const H = 220, PL = 52, PR = 16, PT = 14, PB = 32;
-  const W = Math.max(340, Math.min(1400, n * 16));
-  const gW = W - PL - PR, gH = H - PT - PB;
-  
-  const invested = data.map(d => d.invested);
-  const value = data.map(d => d.value);
-  const allVals = [...invested, ...value];
-  const minV = Math.min(0, ...allVals) * 0.98;
-  const maxV = Math.max(...allVals) * 1.02;
-  const range = maxV - minV || 1;
-  
-  const toX = i => PL + (i / (n - 1)) * gW;
-  const toY = v => PT + gH - ((v - minV) / range) * gH;
-  
-  const profitArea = data.map((d, i) => {
-    if (d.profit <= 0) return null;
-    return `${toX(i).toFixed(1)},${toY(d.invested).toFixed(1)} ${toX(i).toFixed(1)},${toY(d.value).toFixed(1)}`;
-  }).filter(Boolean).join(' ');
-  
-  const investedPts = data.map((d, i) => `${toX(i).toFixed(1)},${toY(d.invested).toFixed(1)}`).join(' ');
-  const valuePts = data.map((d, i) => `${toX(i).toFixed(1)},${toY(d.value).toFixed(1)}`).join(' ');
-  
-  const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => {
-    const v = minV + f * range;
-    const y = PT + gH - f * gH;
-    const label = v >= 1000 ? `${(v/1000).toFixed(1)}k` : v.toFixed(0);
-    return `<text x="${PL-6}" y="${y+3}" text-anchor="end" font-size="8" fill="#94a3b8">${label}</text>
-            <line x1="${PL}" y1="${y}" x2="${W-PR}" y2="${y}" stroke="#f1f5f9" stroke-width="1"/>`;
-  }).join('');
-  
-  const xLabels = [0, Math.floor(n/4), Math.floor(n/2), Math.floor(3*n/4), n-1].filter(i => i >= 0 && i < n).map(i => {
-    const d = data[i]?.date;
-    const label = d ? d.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }) : '';
-    const x = toX(i);
-    return `<text x="${x.toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="8" fill="#94a3b8">${label}</text>`;
-  }).join('');
-  
-  const last = data[data.length-1];
-  const lastInvested = last?.invested || 0;
-  const lastValue = last?.value || 0;
-  const lastProfit = last?.profit || 0;
-  const profitPct = lastInvested ? (lastProfit / lastInvested * 100) : 0;
-
-  const svgId = 'chart_evolucion';
-  state._multiChartCache[svgId] = {
-    toY,
-    points: data.map(d => ({
-      label: d.date ? d.date.toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'}) : '',
-      values: [d.invested, d.value]
-    })),
-    series: [
-      { label:'Invertido', color:'#94a3b8', fmt: v => fmtPrivate(v) },
-      { label:'Valor', color:'#2563eb', fmt: v => fmtPrivate(v) },
-    ]
-  };
-  
-  const innerSvg = `
-      ${profitArea ? `<polygon points="${profitArea}" fill="#16a34a" opacity="0.12"/>` : ''}
-      <polyline points="${investedPts}" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="6,4"/>
-      <polyline points="${valuePts}" fill="none" stroke="#2563eb" stroke-width="2.5"/>
-      ${yTicks}${xLabels}
-      <line id="${svgId}_vline" x1="0" y1="${PT}" x2="0" y2="${PT+gH}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,2" display="none"/>
-      <circle id="${svgId}_dot0" r="3.5" fill="#94a3b8" stroke="white" stroke-width="1.3" display="none"/>
-      <circle id="${svgId}_dot1" r="3.5" fill="#2563eb" stroke="white" stroke-width="1.3" display="none"/>`;
-
-  return `
-    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px;font-size:11px">
-      <span><span style="display:inline-block;width:12px;height:3px;background:#94a3b8;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Invertido: ${fmtPrivate(lastInvested)}</span>
-      <span><span style="display:inline-block;width:12px;height:3px;background:#2563eb;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Valor: ${fmtPrivate(lastValue)}</span>
-      <span style="color:${lastProfit >= 0 ? '#16a34a' : '#dc2626'}">
-        <span style="display:inline-block;width:12px;height:10px;background:${lastProfit >= 0 ? '#16a34a33' : '#dc262633'};border-radius:2px;vertical-align:middle;margin-right:4px"></span>
-        ${lastProfit >= 0 ? '+' : ''}${fmtPrivate(lastProfit)} (${lastProfit >= 0 ? '+' : ''}${profitPct.toFixed(1)}%)
-      </span>
-    </div>
-    ${chartScrollWrap(svgId, W, H, innerSvg, `onmousemove="multiChartMouseMove(event,'${svgId}',${W},${PL},${gW},${PT},${gH})" onmouseleave="multiChartMouseLeave('${svgId}')"`)}
-  `;
-}
-
-function buildDividendChartSVG(divData, period) {
-  if (!divData || !divData.data || divData.data.length < 2) {
-    return `<div class="no-data-msg">Sin datos de dividendos</div>`;
-  }
-  
-  const n = divData.data.length;
-  const H = 220, PL = 48, PR = 16, PT = 14, PB = 32;
-  const W = Math.max(340, Math.min(1400, n * 30));
-  const gW = W - PL - PR, gH = H - PT - PB;
-  
-  const amounts = divData.data.map(d => d.amount);
-  const maxV = Math.max(...amounts) * 1.15 || 1;
-  
-  const barWidth = Math.min(28, (gW / n) * 0.6);
-  const bspace = gW / n;
-  const toX = i => PL + i * bspace + (bspace - barWidth) / 2;
-  const toY = v => PT + gH - (v / maxV) * gH;
-  
-  let bars = '';
-  let cumPts = [];
-  let cum = 0;
-  divData.data.forEach((d, i) => {
-    cum += d.amount;
-    const x = toX(i) + barWidth/2;
-    const y = PT + gH - (cum / (maxV * n * 0.5)) * gH;
-    cumPts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
-    const h = (d.amount / maxV) * gH;
-    bars += `<rect x="${toX(i).toFixed(1)}" y="${toY(d.amount).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${Math.max(1, h).toFixed(1)}" fill="#2563eb" rx="2" opacity="0.8"/>`;
-  });
-  
-  const cumLine = `<polyline points="${cumPts.join(' ')}" fill="none" stroke="#f59e0b" stroke-width="1.8" stroke-dasharray="4,3"/>`;
-  
-  const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => {
-    const v = maxV * f;
-    const y = PT + gH - f * gH;
-    const label = v >= 1000 ? `${(v/1000).toFixed(1)}k` : v.toFixed(0);
-    return `<text x="${PL-6}" y="${y+3}" text-anchor="end" font-size="8" fill="#94a3b8">${label}</text>
-            <line x1="${PL}" y1="${y}" x2="${W-PR}" y2="${y}" stroke="#f1f5f9" stroke-width="1"/>`;
-  }).join('');
-  
-  const xLabels = divData.data.map((d, i) => {
-    const x = toX(i) + barWidth/2;
-    return `<text x="${x.toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="7" fill="#94a3b8">${d.label}</text>`;
-  }).join('');
-
-  const svgId = 'chart_dividendos';
-  state._multiChartCache[svgId] = {
-    toY: v => PT + gH - (v / maxV) * gH,
-    points: divData.data.map(d => ({ label: `${d.label} (${d.count} pago${d.count===1?'':'s'})`, values: [d.amount] })),
-    series: [{ label:'Dividendo', color:'#2563eb', fmt: v => fmtPrivate(v) }]
-  };
-  
-  const innerSvg = `
-      ${bars}
-      ${cumLine}
-      ${yTicks}${xLabels}
-      <line id="${svgId}_vline" x1="0" y1="${PT}" x2="0" y2="${PT+gH}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,2" display="none"/>
-      <circle id="${svgId}_dot0" r="3.5" fill="#2563eb" stroke="white" stroke-width="1.3" display="none"/>`;
-
-  return `
-    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px;font-size:11px">
-      <span><span style="display:inline-block;width:12px;height:10px;background:#2563eb;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Total: ${fmtPrivate(divData.total)}</span>
-      <span><span style="display:inline-block;width:12px;height:3px;background:#f59e0b;border-radius:2px;vertical-align:middle;margin-right:4px"></span>${divData.data.length} periodos</span>
-    </div>
-    ${chartScrollWrap(svgId, W, H, innerSvg, `onmousemove="multiChartMouseMove(event,'${svgId}',${W},${PL},${gW},${PT},${gH})" onmouseleave="multiChartMouseLeave('${svgId}')"`)}
-  `;
-}
-
-const DONUT_PALETTE = ["#2563eb","#22c55e","#ef4444","#f59e0b","#a855f7","#06b6d4","#ec4899","#10b981","#8b5cf6","#f97316"];
-
-function buildDonutChartSVG(items, opts = {}) {
-  if (!items || !items.length) {
-    return `<div class="no-data-msg">Sin datos suficientes</div>`;
-  }
-  const total = items.reduce((s, it) => s + it.value, 0) || 1;
-  const svgId = `donut_${Math.random().toString(36).slice(2, 9)}`;
-  registerChartCacheKey(svgId);
-  const SIZE = 220, CX = SIZE / 2, CY = SIZE / 2, R = 88, r = 54;
-
-  const polar = (cx, cy, rad, ang) => [cx + rad * Math.cos(ang), cy + rad * Math.sin(ang)];
-
-  let ang = -Math.PI / 2;
-  const slices = items.map((it, i) => {
-    const frac = it.value / total;
-    const sweep = frac * 2 * Math.PI;
-    const a0 = ang, a1 = ang + sweep;
-    const [x0, y0] = polar(CX, CY, R, a0), [x1, y1] = polar(CX, CY, R, a1);
-    const large = sweep > Math.PI ? 1 : 0;
-    const color = DONUT_PALETTE[i % DONUT_PALETTE.length];
-    const path = `M${x0.toFixed(2)},${y0.toFixed(2)} A${R},${R} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)} L${(CX+r*Math.cos(a1)).toFixed(2)},${(CY+r*Math.sin(a1)).toFixed(2)} A${r},${r} 0 ${large} 0 ${(CX+r*Math.cos(a0)).toFixed(2)},${(CY+r*Math.sin(a0)).toFixed(2)} Z`;
-    const midAng = (a0 + a1) / 2;
-    const [lx, ly] = polar(CX, CY, (R + r) / 2, midAng);
-    const pctLabel = frac >= 0.06 ? `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" dominant-baseline="middle" font-size="9.5" font-weight="700" fill="#fff">${(frac*100).toFixed(1)}%</text>` : '';
-    ang = a1;
-    return { path, color, pctLabel, label: it.label, value: it.value, pct: frac * 100 };
-  });
-
-  state._multiChartCache[svgId] = { donutItems: slices.map(s => ({ label: s.label, value: s.value, pct: s.pct })) };
-
-  const paths = slices.map((s, i) =>
-    `<path d="${s.path}" fill="${s.color}" stroke="#fff" stroke-width="2" style="cursor:pointer"
-       onmousemove="donutSegmentHover(event,'${svgId}',${i})" onmouseleave="donutMouseLeave('${svgId}')"/>${s.pctLabel}`
-  ).join('');
-
-  const centerValue = opts.centerValue != null ? opts.centerValue : items.length;
-  const centerLabel = opts.unitLabel || '';
-
-  const legendCols = items.length > 6 ? 2 : 1;
-  const legend = `<div style="display:grid;grid-template-columns:repeat(${legendCols},1fr);gap:3px 12px;margin-top:8px;font-size:10.5px">
-    ${slices.map((s, i) => `<div style="display:flex;align-items:center;gap:5px;overflow:hidden">
-        <span style="width:8px;height:8px;border-radius:2px;background:${s.color};flex:none"></span>
-        <span style="color:#475569;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(String(s.label).length>16?String(s.label).slice(0,15)+'…':s.label)}</span>
-        <span style="margin-left:auto;color:#1e293b;font-weight:700">${s.pct.toFixed(1)}%</span>
-      </div>`).join('')}
-  </div>`;
-
-  return `
-    <div style="position:relative" id="${svgId}_wrap">
-      <svg id="${svgId}" viewBox="0 0 ${SIZE} ${SIZE}" style="width:100%;max-width:230px;height:auto;display:block;margin:0 auto;overflow:visible">
-        ${paths}
-        <text x="${CX}" y="${CY-6}" text-anchor="middle" font-size="20" font-weight="700" fill="#1e293b">${esc(centerValue)}</text>
-        <text x="${CX}" y="${CY+12}" text-anchor="middle" font-size="9.5" fill="#94a3b8">${esc(centerLabel)}</text>
-      </svg>
-      <div id="${svgId}_tip" style="display:none;position:absolute;top:0;left:0;background:#1e293b;color:#fff;padding:5px 9px;border-radius:6px;font-size:11px;font-weight:600;pointer-events:none;white-space:nowrap;z-index:10;box-shadow:0 2px 8px #0004"></div>
-    </div>
-    ${legend}
-  `;
-}
-
-function donutSegmentHover(e, svgId, idx) {
-  const cache = state._multiChartCache?.[svgId];
-  const item = cache?.donutItems?.[idx];
-  const tip = document.getElementById(`${svgId}_tip`);
-  const wrap = document.getElementById(`${svgId}_wrap`);
-  if (!item || !tip || !wrap) return;
-  const rect = wrap.getBoundingClientRect();
-  tip.innerHTML = `${esc(item.label)}<br><span style="font-weight:400;color:#cbd5e1">${fmtPrivate(item.value)} · ${item.pct.toFixed(1)}%</span>`;
-  tip.style.display = 'block';
-  const tipX = e.clientX - rect.left;
-  const tipY = e.clientY - rect.top;
-  tip.style.left = (tipX + 90 > rect.width ? tipX - 100 : tipX + 10) + 'px';
-  tip.style.top = Math.max(0, tipY - 34) + 'px';
-}
-
-function donutMouseLeave(svgId) {
-  const tip = document.getElementById(`${svgId}_tip`);
-  if (tip) tip.style.display = 'none';
-}
-
-function buildDividendProjectionSVG(data) {
-  if (!data || !data.years || data.years.length < 2) {
-    return `<div class="no-data-msg">Datos insuficientes para proyección</div>`;
-  }
-  
-  const n = data.years.length + 1;
-  const H = 220, PL = 52, PR = 16, PT = 14, PB = 32;
-  const W = Math.max(340, n * 34);
-  const gW = W - PL - PR, gH = H - PT - PB;
-  
-  const allVals = [...data.projected, data.current];
-  const maxV = Math.max(...allVals) * 1.15 || 1;
-  
-  const toX = i => PL + (i / (n - 1)) * gW;
-  const toY = v => PT + gH - (v / maxV) * gH;
-  
-  const allYears = [new Date().getFullYear(), ...data.years];
-  const allValues = [data.current, ...data.projected];
-  
-  const pts = allValues.map((v, i) => `${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(' ');
-  const areaPts = `M${toX(0).toFixed(1)},${PT+gH} ${allValues.map((v,i) => `${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(' ')} L${toX(n-1).toFixed(1)},${PT+gH} Z`;
-  
-  const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => {
-    const v = maxV * f;
-    const y = PT + gH - f * gH;
-    const label = v >= 1000 ? `${(v/1000).toFixed(1)}k` : v.toFixed(0);
-    return `<text x="${PL-6}" y="${y+3}" text-anchor="end" font-size="8" fill="#94a3b8">${label}</text>
-            <line x1="${PL}" y1="${y}" x2="${W-PR}" y2="${y}" stroke="#f1f5f9" stroke-width="1"/>`;
-  }).join('');
-  
-  const xLabels = allYears.map((yr, i) => {
-    const x = toX(i);
-    return `<text x="${x.toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="8" fill="#94a3b8">${yr}</text>`;
-  }).join('');
-  
-  const dots = allValues.map((v, i) => {
-    const r = i === 0 ? 4 : 3;
-    return `<circle cx="${toX(i).toFixed(1)}" cy="${toY(v).toFixed(1)}" r="${r}" fill="#2563eb" stroke="white" stroke-width="1.5"/>`;
-  }).join('');
-  
-  const nextYear = data.nextYear || data.current * 1.03;
-  const fiveYear = data.fiveYear || data.current * 1.15;
-  const tenYear = data.tenYear || data.current * 1.3;
-
-  const svgId = 'chart_proyeccion';
-  state._multiChartCache[svgId] = {
-    toY,
-    points: allYears.map((yr, i) => ({ label: `${yr}`, values: [allValues[i]] })),
-    series: [{ label:'Dividendo anual estimado', color:'#2563eb', fmt: v => fmtPrivate(v) }]
-  };
-  
-  const innerSvg = `
-      <defs><linearGradient id="projGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#2563eb" stop-opacity="0.15"/>
-        <stop offset="100%" stop-color="#2563eb" stop-opacity="0.02"/>
-      </linearGradient></defs>
-      <path d="${areaPts}" fill="url(#projGrad)"/>
-      <polyline points="${pts}" fill="none" stroke="#2563eb" stroke-width="2.5"/>
-      ${dots}
-      ${yTicks}${xLabels}
-      <line id="${svgId}_vline" x1="0" y1="${PT}" x2="0" y2="${PT+gH}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,2" display="none"/>
-      <circle id="${svgId}_dot0" r="4" fill="#2563eb" stroke="white" stroke-width="1.5" display="none"/>`;
-  
-  return `
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px;font-size:11px;text-align:center">
-      <div style="background:#f0fdf4;border-radius:6px;padding:4px 8px">
-        <div style="color:#64748b;font-size:9px">Próximo año</div>
-        <div style="font-weight:700;color:#16a34a">${fmtPrivate(nextYear)}</div>
-      </div>
-      <div style="background:#eff6ff;border-radius:6px;padding:4px 8px">
-        <div style="color:#64748b;font-size:9px">A 5 años</div>
-        <div style="font-weight:700;color:#2563eb">${fmtPrivate(fiveYear)}</div>
-      </div>
-      <div style="background:#fef3c7;border-radius:6px;padding:4px 8px">
-        <div style="color:#64748b;font-size:9px">A 10 años</div>
-        <div style="font-weight:700;color:#d97706">${fmtPrivate(tenYear)}</div>
-      </div>
-    </div>
-    ${chartScrollWrap(svgId, W, H, innerSvg, `onmousemove="multiChartMouseMove(event,'${svgId}',${W},${PL},${gW},${PT},${gH})" onmouseleave="multiChartMouseLeave('${svgId}')"`)}
-    <div style="font-size:10px;color:#94a3b8;margin-top:4px;text-align:right">
-      CAGR estimado: ${(data.cagr || 3).toFixed(1)}% · Aportación anual: 5.000€ · Proyección orientativa, no garantizada
-    </div>
-  `;
-}
-
-// ============================================================
-// FUNCIONES DE COMPARADOR Y CORRELACIÓN
-// ============================================================
-function referenceIndexFor(ticker) {
-  const t = (ticker || "").toUpperCase();
-  if (t.endsWith(".MC")) return { symbol: "^IBEX", label: "IBEX 35" };
-  if (t.endsWith(".L"))  return { symbol: "^FTSE", label: "FTSE 100" };
-  if (t.endsWith(".PA") || t.endsWith(".DE") || t.endsWith(".AS") || t.endsWith(".MI")) return { symbol: "^STOXX50E", label: "EURO STOXX 50" };
-  return { symbol: "^GSPC", label: "S&P 500" };
-}
-
-function toggleIndexComparison(ticker) {
-  if (!state._portfolioCharts.indexCompare) state._portfolioCharts.indexCompare = {};
-  state._portfolioCharts.indexCompare[ticker] = !state._portfolioCharts.indexCompare[ticker];
-  if (state._portfolioCharts.indexCompare[ticker]) loadIndexData(referenceIndexFor(ticker).symbol);
-  renderActiveTab();
-}
-
-async function loadIndexData(indexSymbol) {
-  if (!state._portfolioCharts.indexData) state._portfolioCharts.indexData = {};
-  if (state._portfolioCharts.indexData[indexSymbol]?.loading || state._portfolioCharts.indexData[indexSymbol]?.priceHistory) return;
-  state._portfolioCharts.indexData[indexSymbol] = { loading: true };
-  try {
-    const priceHistory = await fetchPriceAndDividendHistory(indexSymbol);
-    state._portfolioCharts.indexData[indexSymbol] = { loading: false, priceHistory };
-  } catch (e) {
-    console.warn(`Error cargando índice ${indexSymbol}:`, e.message);
-    state._portfolioCharts.indexData[indexSymbol] = { loading: false, priceHistory: null };
-  }
-  if (state.activeTab === 4) renderActiveTab();
-}
-
-function renderIndexComparisonCard(ticker, tickerPriceItems) {
-  const on = !!(state._portfolioCharts.indexCompare && state._portfolioCharts.indexCompare[ticker]);
-  const idx = referenceIndexFor(ticker);
-  const toggleBtn = `<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#475569;cursor:pointer;margin-bottom:8px">
-    <input type="checkbox" ${on?"checked":""} onchange="toggleIndexComparison('${esc(ticker)}')" style="width:13px;height:13px">
-    Comparar con ${idx.label}
-  </label>`;
-
-  if (!on) {
-    return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📊 Comparativa vs índice</h4>${toggleBtn}
-      <div style="padding:20px;text-align:center;color:#94a3b8;font-size:11px">Activa la casilla para comparar la evolución de ${esc(ticker)} frente al ${idx.label}, ambos normalizados a 100 en la fecha de inicio.</div></div>`;
-  }
-
-  const idxData = state._portfolioCharts.indexData?.[idx.symbol];
-  if (!idxData || idxData.loading) {
-    return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📊 Comparativa vs índice</h4>${toggleBtn}
-      <div style="padding:20px;text-align:center;color:#94a3b8"><div class="spinner" style="width:22px;height:22px;border-width:2px;margin:0 auto 8px"></div>Cargando ${idx.label}...</div></div>`;
-  }
-  if (!idxData.priceHistory?.priceItems?.length) {
-    return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📊 Comparativa vs índice</h4>${toggleBtn}${noDataMsg()}</div>`;
-  }
-
-  // Normalizar ambas series a base 100
-  const idxMap = {};
-  idxData.priceHistory.priceItems.forEach(p => { idxMap[safeDateStr(p.date).slice(0,7)] = p.close; });
-  const tickerMonthly = tickerPriceItems.filter((p,i) => i===0 || safeDateStr(p.date).slice(0,7) !== safeDateStr(tickerPriceItems[i-1].date).slice(0,7));
-
-  const labels = [], tickerVals = [], idxVals = [];
-  let baseTicker = null, baseIdx = null;
-  tickerMonthly.forEach(p => {
-    const ym = safeDateStr(p.date).slice(0,7);
-    if (idxMap[ym] == null) return;
-    if (baseTicker == null) { baseTicker = p.close; baseIdx = idxMap[ym]; }
-    labels.push(ym);
-    tickerVals.push(+((p.close/baseTicker)*100).toFixed(2));
-    idxVals.push(+((idxMap[ym]/baseIdx)*100).toFixed(2));
-  });
-
-  if (labels.length < 2) {
-    return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📊 Comparativa vs índice</h4>${toggleBtn}
-      <div style="padding:20px;text-align:center;color:#94a3b8;font-size:11px">No hay suficiente solapamiento de fechas.</div></div>`;
-  }
-
-  const finalTicker = tickerVals[tickerVals.length-1], finalIdx = idxVals[idxVals.length-1];
-  const chart = lineChart(
-    `📊 ${esc(ticker)} vs ${idx.label} (base 100)`,
-    labels,
-    [
-      { label: ticker, values: tickerVals, color: "#2563eb" },
-      { label: idx.label, values: idxVals, color: "#94a3b8" },
-    ],
-    ""
-  );
-  const diff = finalTicker - finalIdx;
-  const diffTxt = `${esc(ticker)} ${diff>=0?"ha batido":"ha rendido peor que"} el ${idx.label} en ${Math.abs(diff).toFixed(1)} puntos.`;
-  return chart.replace('</h4>', `</h4>${toggleBtn}`) + `<div style="font-size:10px;color:#64748b;margin-top:-6px;padding:0 4px">${diffTxt}</div>`;
-}
-
-// ============================================================
-// FUNCIONES DE CORRELACIÓN
-// ============================================================
-function monthlyReturns(priceItems) {
-  if (!priceItems?.length) return {};
-  const byMonth = {};
-  priceItems.forEach(p => { byMonth[safeDateStr(p.date).slice(0,7)] = p.close; });
-  const months = Object.keys(byMonth).sort();
-  const returns = {};
-  for (let i = 1; i < months.length; i++) {
-    const prev = byMonth[months[i-1]], curr = byMonth[months[i]];
-    if (prev > 0) returns[months[i]] = (curr - prev) / prev;
-  }
-  return returns;
-}
-
-function pearsonCorrelation(retA, retB) {
-  const commonMonths = Object.keys(retA).filter(m => retB[m] != null);
-  if (commonMonths.length < 6) return null;
-  const a = commonMonths.map(m => retA[m]), b = commonMonths.map(m => retB[m]);
-  const n = a.length;
-  const meanA = a.reduce((s,v)=>s+v,0)/n, meanB = b.reduce((s,v)=>s+v,0)/n;
-  let cov = 0, varA = 0, varB = 0;
-  for (let i = 0; i < n; i++) {
-    const da = a[i]-meanA, db = b[i]-meanB;
-    cov += da*db; varA += da*da; varB += db*db;
-  }
-  if (varA === 0 || varB === 0) return null;
-  return +(cov / Math.sqrt(varA*varB)).toFixed(2);
-}
-
-function renderCorrelationCard(ticker) {
-  const others = state.positions.filter(p => p.ticker !== ticker);
-  if (!others.length) return "";
-  const myData = state._portfolioCharts.companyData?.[ticker];
-  if (!myData?.priceHistory?.priceItems?.length) return "";
-  const myReturns = monthlyReturns(myData.priceHistory.priceItems);
-
-  const rows = others.map(p => {
-    const d = state._portfolioCharts.companyData?.[p.ticker];
-    if (!d) return { ticker: p.ticker, name: p.name, status: "no_cargado" };
-    if (d.loading) return { ticker: p.ticker, name: p.name, status: "cargando" };
-    if (!d.priceHistory?.priceItems?.length) return { ticker: p.ticker, name: p.name, status: "sin_datos" };
-    const corr = pearsonCorrelation(myReturns, monthlyReturns(d.priceHistory.priceItems));
-    return { ticker: p.ticker, name: p.name, status: "ok", corr };
-  }).filter(r => r.status === "ok" && r.corr != null).sort((a,b) => b.corr - a.corr);
-
-  const pendingCount = others.length - rows.length;
-
-  if (!rows.length) {
-    return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">🔗 Correlación con tu cartera</h4>
-      <div style="padding:16px;text-align:center;color:#94a3b8;font-size:11px">Visita la ficha de otras acciones de tu cartera para ver la correlación.</div></div>`;
-  }
-
-  const rowsHtml = rows.slice(0, 8).map(r => {
-    const c = r.corr >= 0.7 ? "#dc2626" : r.corr >= 0.4 ? "#f59e0b" : r.corr >= 0 ? "#16a34a" : "#2563eb";
-    const label = r.corr >= 0.7 ? "muy correlacionada" : r.corr >= 0.4 ? "correlación moderada" : r.corr >= 0 ? "poca correlación" : "correlación inversa";
-    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:12px">
-      <span><strong>${esc(r.ticker)}</strong> <span style="color:#94a3b8">${esc((r.name||"").slice(0,22))}</span></span>
-      <span style="color:${c};font-weight:700">${r.corr.toFixed(2)} <span style="font-weight:400;font-size:10px">(${label})</span></span>
-    </div>`;
-  }).join("");
-
-  return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:4px">🔗 Correlación con tu cartera</h4>
-    <div style="font-size:10px;color:#94a3b8;margin-bottom:8px">Sobre rentabilidad mensual · &gt;0,7 = muy correlacionadas (poca diversificación real entre ambas)</div>
-    ${rowsHtml}
-    ${pendingCount > 0 ? `<div style="font-size:10px;color:#94a3b8;margin-top:8px">+${pendingCount} posiciones más sin cargar todavía.</div>` : ""}
-  </div>`;
-}
-
-// ============================================================
-// LOAD COMPANY CHARTS DATA
-// ============================================================
-async function loadCompanyChartsData(ticker) {
-  if (!state._portfolioCharts.companyData) state._portfolioCharts.companyData = {};
-  if (state._portfolioCharts.companyData[ticker]?.loading) return;
-  state._portfolioCharts.companyData[ticker] = { loading: true };
-
-  try {
-    const [priceHistory, fundamentals] = await Promise.all([
-      fetchPriceAndDividendHistory(ticker),
-      fetchFundamentals(ticker)
-    ]);
-    state._portfolioCharts.companyData[ticker] = { loading: false, priceHistory, fundamentals };
-  } catch (e) {
-    console.warn(`Error cargando datos de ${ticker}:`, e.message);
-    state._portfolioCharts.companyData[ticker] = { loading: false, priceHistory: null, fundamentals: null };
-  }
-
-  if (state.activeTab === 4) renderActiveTab();
-}
-
-// ============================================================
-// FETCH PRICE AND DIVIDEND HISTORY (completa)
-// ============================================================
-async function fetchPriceAndDividendHistory(ticker) {
-  const isGBp = ticker.toUpperCase().endsWith('.L');
-  const proxies = [
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
-    `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
-  ];
-  for (const url of proxies) {
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
-      if (!res.ok) continue;
-      const json = await res.json();
-      const result = json?.chart?.result?.[0];
-      if (!result) continue;
-      const timestamps = result.timestamp || [];
-      const quotes = result.indicators?.quote?.[0] || {};
-      const adjclose = result.indicators?.adjclose?.[0]?.adjclose || quotes.close || [];
-      const dividendsRaw = result.events?.dividends || {};
-      const gbpDiv = (v) => isGBp ? v / 100 : v;
-
-      const raw = timestamps
-        .map((ts, i) => {
-          const dateObj = new Date(ts * 1000);
-          if (isNaN(dateObj.getTime())) return null;
-          const closeVal = adjclose[i] ?? quotes.close?.[i];
-          if (closeVal == null || isNaN(closeVal)) return null;
-          return {
-            date: dateObj,
-            close: gbpDiv(closeVal)
-          };
-        })
-        .filter(x => x !== null);
-
-      if (raw.length < 2) continue;
-
-      const W = 12;
-      const priceItems = raw.map((x, i) => {
-        let sma = null;
-        if (i >= W - 1) {
-          const sl = raw.slice(i - W + 1, i + 1);
-          sma = +(sl.reduce((s, p) => s + p.close, 0) / W).toFixed(2);
-        }
-        const maxSoFar = Math.max(...raw.slice(0, i + 1).map(p => p.close));
-        const drawdown = maxSoFar > 0 ? +((x.close / maxSoFar - 1) * 100).toFixed(1) : 0;
-        return { date: x.date, close: +(x.close.toFixed(2)), sma, drawdown };
-      });
-
-      const divList = Object.values(dividendsRaw)
-        .map((d) => {
-          let dateObj;
-          if (d.date instanceof Date) {
-            dateObj = d.date;
-          } else if (typeof d.date === 'number') {
-            dateObj = new Date(d.date * 1000);
-          } else if (typeof d.date === 'string') {
-            dateObj = new Date(d.date);
-          } else {
-            return null;
-          }
-          if (isNaN(dateObj.getTime())) return null;
-          return { date: dateObj, amount: gbpDiv(d.amount) };
-        })
-        .filter(d => d !== null)
-        .sort((a, b) => a.date - b.date);
-
-      const divByYear = {};
-      divList.forEach(d => {
-        const yr = d.date.getFullYear();
-        divByYear[yr] = (divByYear[yr] || 0) + d.amount;
-      });
-      const divYears = Object.keys(divByYear).map(Number).sort((a, b) => a - b);
-
-      const yieldByYear = {};
-      divYears.forEach(yr => {
-        const yrPrices = priceItems.filter(p => p.date.getFullYear() === yr).map(p => p.close);
-        const lastP = yrPrices[yrPrices.length - 1];
-        if (lastP && divByYear[yr]) yieldByYear[yr] = +((divByYear[yr] / lastP) * 100).toFixed(2);
-      });
-
-      let divCagr = null;
-      if (divYears.length >= 3) {
-        const first = divByYear[divYears[0]], last = divByYear[divYears[divYears.length - 1]];
-        const n = divYears[divYears.length - 1] - divYears[0];
-        if (first > 0 && n > 0) divCagr = +((Math.pow(last / first, 1 / n) - 1) * 100).toFixed(2);
-      }
-
-      const projYears = [], projAmounts = [];
-      if (divCagr !== null && divByYear[divYears[divYears.length - 1]]) {
-        const lastDiv = divByYear[divYears[divYears.length - 1]], g = divCagr / 100;
-        for (let i = 1; i <= 3; i++) {
-          projYears.push(divYears[divYears.length - 1] + i);
-          projAmounts.push(+(lastDiv * Math.pow(1 + g, i)).toFixed(4));
-        }
-      }
-
-      return { priceItems, divList, divByYear, divYears, yieldByYear, divCagr, projYears, projAmounts };
-    } catch(e) { console.warn("fetchPriceAndDividendHistory error:", e.message); }
-  }
-  return null;
-}
-
-// ============================================================
-// FETCH FUNDAMENTALS (completa)
-// ============================================================
-async function fetchFundamentals(ticker) {
-  state._fundsDebug = null;
-  const debug = { ts: null, fmp: null, yahoo: null };
-
-  const r0 = await _fetchYahooTimeSeries(ticker);
-  if (r0 && !r0._failed) return r0;
-  debug.ts = r0?._errors || ["Yahoo TS sin datos"];
-
-  if (state.fmpKey) {
-    const r = await _fetchFMP(ticker, state.fmpKey);
-    if (r && !r._failed) return r;
-    debug.fmp = r?._errors || ["FMP no devolvió datos"];
-    console.warn("FMP falló, probando Yahoo QS...", debug.fmp);
-  }
-
-  const r2 = await _fetchYahooQS(ticker);
-  if (r2 && !r2._failed) return r2;
-  debug.yahoo = r2?._errors || ["Yahoo QS no devolvió datos"];
-
-  state._fundsDebug = debug;
-  console.warn("fetchFundamentals: todos los métodos fallaron", debug);
-  return null;
-}
-
-async function _fetchYahooTimeSeries(ticker) {
-  const errors = [];
-  for (const proxyFn of TS_PROXIES) {
-    const url = proxyFn(ticker);
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
-      if (!res.ok) { errors.push(`HTTP ${res.status} @ ${url.slice(0,70)}`); continue; }
-      const json = await res.json();
-      const ts = json?.timeseries?.result;
-      if (!ts?.length) { errors.push(`TS vacío @ ${url.slice(0,60)}`); continue; }
-
-      const map = {};
-      ts.forEach(item => {
-        const type = item.meta?.type?.[0];
-        if (!type) return;
-        const values = item[type];
-        if (Array.isArray(values)) map[type] = values.filter(v => v?.reportedValue?.raw != null);
-      });
-
-      const revSeries = map["annualTotalRevenue"] || [];
-      if (!revSeries.length) { errors.push(`Sin annualTotalRevenue @ ${url.slice(0,60)}`); continue; }
-
-      const M = 1e6;
-      const getTS = (key, i) => { const s=map[key]; return s?.[i]?.reportedValue?.raw ?? null; };
-      const n = revSeries.length;
-      const years = revSeries.map(x => {
-        const year = parseInt(x.asOfDate?.slice(0,4));
-        return isNaN(year) ? null : year;
-      }).filter(y => y !== null);
-
-      const clamp = (v, min, max) => v != null && v >= min && v <= max ? v : null;
-
-      const revenue     = Array.from({length:n},(_,i)=>{ const v=getTS("annualTotalRevenue",i); return v!=null?+(v/M).toFixed(0):null; });
-      const ebit        = Array.from({length:n},(_,i)=>{ const v=getTS("annualOperatingIncome",i); return v!=null?+(v/M).toFixed(0):null; });
-      const net_income  = Array.from({length:n},(_,i)=>{ const v=getTS("annualNetIncome",i); return v!=null?+(v/M).toFixed(0):null; });
-      const ebitda_arr  = Array.from({length:n},(_,i)=>{ const v=getTS("annualEbitda",i); return v!=null?+(v/M).toFixed(0):null; });
-      const cfo         = Array.from({length:n},(_,i)=>{ const v=getTS("annualOperatingCashFlow",i); return v!=null?+(v/M).toFixed(0):null; });
-      const capex       = Array.from({length:n},(_,i)=>{ const v=getTS("annualCapitalExpenditure",i); return v!=null?+(v/M).toFixed(0):null; });
-      const fcf_raw     = Array.from({length:n},(_,i)=>getTS("annualFreeCashFlow",i));
-      const fcf         = fcf_raw.map((v,i)=> v!=null ? +(v/M).toFixed(0) : (cfo[i]!=null&&capex[i]!=null ? +(cfo[i]+capex[i]).toFixed(0) : null));
-      const gross_margin= Array.from({length:n},(_,i)=>{ const v=getTS("annualGrossProfitMargin",i); return clamp(v!=null?+(v*100).toFixed(1):null,-10,100); });
-      const ebit_margin = Array.from({length:n},(_,i)=>{ const v=getTS("annualOperatingIncomeMargin",i); return clamp(v!=null?+(v*100).toFixed(1):null,-50,80); });
-      const net_margin  = Array.from({length:n},(_,i)=>{ const v=getTS("annualNetIncomeMargin",i); return clamp(v!=null?+(v*100).toFixed(1):null,-50,60); });
-      const totalDebt   = Array.from({length:n},(_,i)=>getTS("annualTotalDebt",i));
-      const cash        = Array.from({length:n},(_,i)=>getTS("annualCashAndCashEquivalents",i));
-      const net_debt    = totalDebt.map((d,i)=>{ const c=cash[i]||0; return d!=null?+((d-c)/M).toFixed(0):null; });
-      const buybacks_raw = Array.from({length:n},(_,i)=>getTS("annualRepurchaseOfCapitalStock",i));
-      const buybacks    = buybacks_raw.map(v => v!=null ? +(Math.abs(v)/M).toFixed(0) : null);
-      const debt_ebitda = net_debt.map((nd,i)=>ebitda_arr[i]&&ebitda_arr[i]>0?clamp(+(nd/ebitda_arr[i]).toFixed(2),-5,20):null);
-      const roe         = Array.from({length:n},(_,i)=>{ const v=getTS("annualReturnOnEquity",i); return v!=null?clamp(+(v*100).toFixed(1),-60,100):null; });
-      const roic        = Array.from({length:n},(_,i)=>{
-        const ni = (net_income[i]||0)*M;
-        const d  = totalDebt[i]||0;
-        const c  = cash[i]||0;
-        const netD = Math.max(0, d-c);
-        const ebitdaV = (ebitda_arr[i]||0)*M;
-        const capEmp = netD + Math.max(ebitdaV * 4, 1);
-        const v = ni && capEmp ? +((ni / capEmp) * 100).toFixed(1) : null;
-        return clamp(v, -30, 80);
-      });
-      const eps         = Array.from({length:n},(_,i)=>{ const v=getTS("annualBasicEPS",i)??getTS("annualDilutedEPS",i); return v!=null?+v.toFixed(2):null; });
-      const intExp      = Array.from({length:n},(_,i)=>getTS("annualInterestExpense",i));
-      const interest_coverage = ebit.map((e,i)=>{ const ie=Math.abs(intExp[i]||0); return e!=null&&ie?clamp(+((e*M)/ie).toFixed(1),0,50):null; });
-      const curP = state.priceCache[ticker]||0;
-      const fcf_per_share = fcf.map((f,i)=>{
-        const ni = net_income[i]; const e = eps[i];
-        if (f!=null && ni && e && Math.abs(ni)>0) return clamp(+(f * e / ni).toFixed(2), -50, 200);
-        return null;
-      });
-      const pe_hist   = eps.map(e=>e&&e>0&&curP?clamp(+(curP/e).toFixed(1),0,200):null);
-      const pfcf_hist = fcf_per_share.map(f=>f&&f>0&&curP?clamp(+(curP/f).toFixed(1),0,200):null);
-
-      const result = { years, revenue, ebit, net_income, cfo, fcf, gross_margin, ebit_margin, net_margin,
-        net_debt, debt_ebitda, interest_coverage, eps, fcf_per_share,
-        price_hist: years.map((_,i)=>i===years.length-1?curP:null),
-        pe_hist, pfcf_hist, ev_ebitda_hist: years.map(()=>null), roe, roic, buybacks };
-
-      return result;
-    } catch(e) { errors.push(`${e.message} @ ${url.slice(0,50)}`); }
-  }
-  console.warn("Yahoo TS fallaron:", errors);
-  return { _errors: errors, _failed: true };
-}
-
 // ============================================================
 // OBJETIVOS (TAB 5)
 // ============================================================
@@ -5256,26 +4111,9 @@ function renderGoals() {
   const gc = state.goalConfig || {};
   const curVal=state.positions.reduce((s,p)=>s+posValEUR(p),0);
   const goal=parseFloat((document.getElementById("g-goal")||{}).value ?? gc.goal ?? 100000);
-  const pg=parseFloat((document.getElementById("g-pg")||{}).value ?? gc.pg ?? 7);
-  const dg=parseFloat((document.getElementById("g-dg")||{}).value ?? gc.dg ?? 3);
-  const contrib=parseFloat((document.getElementById("g-contrib")||{}).value ?? gc.contrib ?? 5000);
-  const yrs=parseInt((document.getElementById("g-yrs")||{}).value ?? gc.yrs ?? 10);
-  const dy=parseFloat((document.getElementById("g-dy")||{}).value ?? gc.dy ?? 4);
-  const reinvest=(document.getElementById("g-reinvest")||{checked: gc.reinvest !== false}).checked;
   const pct=goal>0?Math.min(curVal/goal*100,100):0;
   const bc=pct>=100?"#16a34a":pct>=50?"#f59e0b":"#3b82f6";
-  const projTable=state._projData?`<div style="overflow-x:auto"><table style="min-width:500px">
-    <thead><tr>${["Año","Valor total","Capital aportado","Divid. acumulados","Objetivo"].map(h=>`<th style="text-align:right">${h}</th>`).join("")}</tr></thead>
-    <tbody>${state._projData.map((r,i)=>`<tr>
-      <td style="text-align:right;color:#64748b">${r.y===0?"Hoy":"Año "+r.y}</td>
-      <td style="text-align:right;font-weight:700;color:${r.total>=r.goal?"#16a34a":"#1e293b"}">${fmtPrivate(r.total)}</td>
-      <td style="text-align:right;color:#64748b">${fmtPrivate(r.aport)}</td>
-      <td style="text-align:right;color:#b45309">${fmtPrivate(r.divAcc)}</td>
-      <td style="text-align:right;color:#ef4444">${fmtPrivate(r.goal)}</td>
-    </tr>`).join("")}</tbody>
-  </table></div>`:`<div style="text-align:center;color:#94a3b8;padding:24px;font-size:13px">Configura los parámetros y haz clic en Calcular</div>`;
-
-  return `<div style="padding:14px;display:flex;flex-direction:column;gap:14px">
+  return `<div style="padding:14px">
     <div style="display:grid;grid-template-columns:minmax(280px,300px) 1fr;gap:12px">
       <div class="card">
         <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">🎯 Objetivo de cartera</h4>
@@ -5286,19 +4124,6 @@ function renderGoals() {
         <div style="font-size:12px;font-weight:600;color:#334155;margin-bottom:10px">Valor actual: ${fmtPrivate(curVal)}  ·  Objetivo: ${fmtPrivate(goal)}  ·  Progreso: ${pct.toFixed(2)}%</div>
         <div class="progress-bar-wrap"><div class="progress-bar-fill" style="background:${bc};width:${pct.toFixed(1)}%"></div><div class="progress-bar-label">${pct.toFixed(1)}%</div></div>
       </div>
-    </div>
-    <div class="card">
-      <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">📈 Proyección de cartera</h4>
-      <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:14px;align-items:flex-end">
-        ${[["Crec. div. (%/año)","g-dg",dg,0,30],["Revalor. (%/año)","g-pg",pg,0,30],["Aport. anual (€)","g-contrib",contrib,0,500000],["Años","g-yrs",yrs,1,50],["Yield div. (%)","g-dy",dy,0,30]].map(([lbl,id,val,mn,mx])=>`
-          <div><div style="font-size:11px;color:#475569;font-weight:600;margin-bottom:4px">${lbl}</div>
-          <input type="number" id="${id}" class="inp-sm" value="${val}" min="${mn}" max="${mx}" style="width:100px"></div>`).join("")}
-        <label style="font-size:11px;color:#475569;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">
-          <input type="checkbox" id="g-reinvest" ${reinvest?"checked":""} style="width:13px;height:13px"> Reinvertir dividendos
-        </label>
-        <button class="btn" onclick="calcProjection()">📊 Calcular</button>
-      </div>
-      ${projTable}
     </div>
   </div>`;
 }
@@ -5316,265 +4141,27 @@ function saveGoalConfig() {
   save();
 }
 
-function calcProjection() {
-  saveGoalConfig();
-  const goal=parseFloat(document.getElementById("g-goal")?.value||100000);
-  const pg=parseFloat(document.getElementById("g-pg")?.value||7)/100;
-  const dg=parseFloat(document.getElementById("g-dg")?.value||3)/100;
-  const contrib=parseFloat(document.getElementById("g-contrib")?.value||5000);
-  const yrs=parseInt(document.getElementById("g-yrs")?.value||10);
-  const dy=parseFloat(document.getElementById("g-dy")?.value||4)/100;
-  const reinvest=document.getElementById("g-reinvest")?.checked!==false;
-  const curVal=state.positions.reduce((s,p)=>s+posValEUR(p),0);
-  let v=curVal,da=0,rows=[{y:0,total:v,aport:v,divAcc:0,goal}];
-  for(let y=1;y<=yrs;y++){
-    const ann=v*dy; da+=ann*(1+dg*y);
-    v=reinvest?v*(1+pg)+(ann*(1+dg*y)):v*(1+pg);
-    v+=contrib;
-    rows.push({y,total:v,aport:curVal+contrib*y,divAcc:da,goal});
-  }
-  state._projData=rows; renderActiveTab();
-}
-
 // ============================================================
 // VALORACIÓN (TAB 6)
 // ============================================================
-function toggleMethodInfo(key) {
-  const el = document.getElementById('method-info-'+key);
-  if (!el) return;
-  el.style.display = el.style.display === 'none' ? 'block' : 'none';
-}
-
-function createValAlert(ticker, name, perFwd, yieldPct) {
-  const livePrice = state.priceCache[ticker];
-  let suggestedPrice = null;
-  if (livePrice) suggestedPrice = +livePrice.toFixed(2);
-  const priceTxt = suggestedPrice ? `${suggestedPrice}` : "";
-  const infoTxt = suggestedPrice
-    ? `Precio actual: ${livePrice?.toFixed(2)}€ — puesto por defecto abajo, cámbialo si quieres un precio de alerta distinto.`
-    : `No hay precio en tiempo real para ${ticker}. Introduce el precio de alerta manualmente.`;
-
-  openModal(`
-    <h3>🔔 Alerta de compra óptima — ${esc(ticker)}</h3>
-    <div style="background:#f0fdf4;border-radius:8px;padding:10px;font-size:11px;color:#166534">${infoTxt}</div>
-    <div class="field"><label>Ticker</label><input class="inp" id="va-ticker" value="${esc(ticker)}" readonly style="background:#f8fafc"/></div>
-    <div class="field"><label>Precio de alerta (€) — avisar cuando BAJE a este precio</label><input class="inp" id="va-price" type="number" step="0.01" value="${priceTxt}" placeholder="Ej: 42.50"/></div>
-    <button class="btn" style="width:100%;margin-top:6px;" onclick="saveValAlert()">🔔 Crear alerta</button>
-  `);
-}
-
-function saveValAlert() {
-  const ticker = (document.getElementById("va-ticker")?.value||"").trim().toUpperCase();
-  const price = parseFloat(document.getElementById("va-price")?.value);
-  if (!ticker || isNaN(price) || price <= 0) { alert("Introduce un precio válido."); return; }
-  state.alerts.push({id:uid(), ticker, direction:"BELOW", price, active:true, triggered:false, created_at:new Date().toISOString()});
-  save();
-  closeModal();
-  maybeRequestNotificationPermission();
-  alert(`✅ Alerta creada: aviso cuando ${ticker} baje a ${price.toFixed(2)}€`);
-}
-
 function renderValuation() {
   const ticker=state._valTicker||"";
-  const result=state._valResult;
   const loading=state._valLoading;
   const error=state._valError||"";
-  const methodLabels={ddm:"DDM — Dividendos",epv:"EPV — Beneficios actuales",pe:"P/E Múltiplos",ev_ebitda:"EV/EBITDA",pb:"Price/Book",ev_revenue:"EV/Revenue",dcf_quality:"Calidad DCF",weiss:"Geraldine Weiss"};
-  const methodExplanations={
-    ddm:"Descuenta a valor presente los dividendos futuros esperados.",
-    epv:"Earnings Power Value: valora la empresa según su capacidad actual de generar beneficios.",
-    pe:"Compara el PER actual con su media histórica y la de su sector.",
-    ev_ebitda:"Compara el valor total de la empresa (incluida la deuda) frente a su EBITDA.",
-    pb:"Price/Book: compara el precio de la acción con el valor contable de sus activos netos.",
-    ev_revenue:"Compara el valor de la empresa con sus ingresos totales.",
-    dcf_quality:"Evalúa la calidad y previsibilidad de los flujos de caja futuros.",
-    weiss:"Compara el yield actual con su rango histórico propio."
-  };
-
-  let resultHtml="";
-  if(result){
-    const validScores=Object.values(result.scores||{}).filter(v=>typeof v==="number");
-    const overall = result.overall_score!=null ? result.overall_score : (validScores.length?+((validScores.reduce((a,b)=>a+b,0)/validScores.length).toFixed(1)):null);
-    const oc=overall==null?"#94a3b8":overall>=60?"#16a34a":overall>=45?"#f59e0b":"#ef4444";
-    const myRec = overall==null ? "⚪ Datos insuficientes" : overall>=60 ? "🟢 Precio de COMPRA" : overall>=45 ? "🟡 Precio NORMAL" : "🔴 NO comprar a este precio";
-    const scoreBars=Object.entries(result.scores||{}).map(([k,v])=>{
-      const hasData = typeof v==="number";
-      const c=!hasData?"#94a3b8":v>=70?"#16a34a":v>=40?"#f59e0b":"#ef4444";
-      const expl=methodExplanations[k]||"";
-      const note=(result.method_notes||{})[k];
-      return `<div style="margin-bottom:9px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;font-size:12px">
-          <span style="color:#475569;display:flex;align-items:center;gap:5px">${methodLabels[k]||k}<span onclick="toggleMethodInfo('${k}')" title="Cómo se calcula" style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:700;cursor:pointer;flex-shrink:0">?</span></span>
-          <span style="color:${c};font-weight:700">${hasData?`${v}/100`:"Sin datos"}</span>
-        </div>
-        <div style="background:#e2e8f0;border-radius:6px;height:8px"><div style="background:${c};border-radius:6px;height:8px;width:${hasData?v:0}%"></div></div>
-        ${note?`<div style="font-size:11px;color:#b45309;background:#fffbeb;border-radius:6px;padding:6px 8px;margin-top:5px;line-height:1.4">⚠️ ${esc(note)}</div>`:""}
-        <div id="method-info-${k}" style="display:none;font-size:11px;color:#64748b;background:#f8fafc;border-radius:6px;padding:7px 9px;margin-top:5px;line-height:1.45">${esc(expl)}</div>
-      </div>`;
-    }).join("");
-    const metricRows=Object.entries(result.metrics||{}).map(([k,v])=>
-      `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:12px">
-        <span style="color:#64748b">${k.replace(/_/g," ")}</span><span style="font-weight:600">${v!==null&&v!==undefined?v:"—"}</span>
-      </div>`
-    ).join("");
-
-    const fd = result.fundamentals || {};
-    const years = fd.years || [];
-    const hasData = years.length > 0;
-
-    resultHtml=`
-      <div style="background:#f0f7ff;border-radius:14px;border:1px solid #bfdbfe;padding:16px;margin-bottom:12px">
-        <div style="display:flex;align-items:center;gap:10px">
-          ${logoImg(result.ticker||"",result.name||"",40)}
-          <div>
-            <div style="font-size:17px;font-weight:700;color:#1d4ed8">${esc(result.name)}</div>
-            <div style="font-size:12px;color:#475569;margin:2px 0 6px">${esc(result.ticker)} · ${esc(result.sector)}</div>
-            <div style="font-size:12px;color:#64748b">${esc(result.description)}</div>
-          </div>
-        </div>
+  const result=state._valResult;
+  
+  let resultHtml = '';
+  if (result) {
+    const overall = result.overall_score;
+    const oc = overall == null ? "#94a3b8" : overall >= 60 ? "#16a34a" : overall >= 45 ? "#f59e0b" : "#ef4444";
+    resultHtml = `
+      <div style="background:#f0fdf4;border-radius:12px;padding:16px;border:1px solid #bbf7d0">
+        <div style="font-weight:700;font-size:16px;color:#16a34a">✅ Análisis completado</div>
+        <div style="font-size:12px;color:#475569">Puntuación global: <span style="font-weight:700;color:${oc}">${overall}/100</span></div>
+        <div style="font-size:12px;color:#475569">Recomendación: <span style="font-weight:700;color:${oc}">${overall >= 60 ? '🟢 Precio de COMPRA' : overall >= 45 ? '🟡 Precio NORMAL' : '🔴 NO comprar a este precio'}</span></div>
       </div>
-
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin-bottom:14px">
-        ${[
-          ["P/E", result.metrics?.PER_fwd, "x"],
-          ["EV/EBITDA", result.metrics?.EV_EBITDA, "x"],
-          ["FCF Yield", result.metrics?.FCF_yield, "%"],
-          ["ROIC", result.metrics?.ROIC, "%"],
-          ["D/EBITDA", result.metrics?.Deuda_EBITDA, "x"],
-          ["Yield", result.metrics?.Yield_pct, "%"]
-        ].map(([l,v,u])=>{
-          const val = v!=null?`${v}${u}`:"—";
-          return `<div class="metric-card" style="padding:8px;text-align:center">
-            <div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.5px">${l}</div>
-            <div style="font-size:16px;font-weight:800;color:#1d4ed8;margin-top:2px">${val}</div>
-          </div>`;
-        }).join("")}
-      </div>
-      `;
-      const ph = result.priceHistory;
-      const tabNames = ["🏆 Scoring","📈 Precio","💰 Dividendos","📐 Valoración","🔬 Fundamentales"];
-      resultHtml += `<div style="display:flex;gap:0;border-bottom:2px solid #e2e8f0;margin-bottom:14px;overflow-x:auto">
-        ${tabNames.map((t,i)=>
-          `<button onclick="setValTab(${i})" style="padding:7px 12px;font-size:11px;font-weight:600;border:none;background:none;cursor:pointer;white-space:nowrap;border-bottom:2px solid ${(state._valTab||0)===i?'#2563eb':'transparent'};color:${(state._valTab||0)===i?'#2563eb':'#64748b'};margin-bottom:-2px">${t}</button>`
-        ).join("")}
-      </div>`;
-
-      resultHtml += `<div style="display:${(state._valTab||0)===0?'block':'none'}">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;min-width:0">
-          <div class="card"><h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:12px">📊 Puntuaciones por método</h4>${result._note?`<div style="font-size:11px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-bottom:10px">⚠️ ${esc(result._note)}</div>`:""}${scoreBars}</div>
-          <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
-            <div class="card">
-              <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">🏆 Puntuación global</h4>
-              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                <span style="font-size:42px;font-weight:900;color:${oc};line-height:1">${overall}</span>
-                <span style="font-size:14px;color:#94a3b8">/100</span>
-                <span class="badge" style="background:${oc}22;color:${oc}">${myRec}</span>
-              </div>
-              <div style="font-size:10px;color:#94a3b8;margin-top:6px">≥60 precio de compra · 45-60 normal · &lt;45 no comprar${result.recommendation?` · texto del servidor: "${esc(result.recommendation)}"`:""}</div>
-            </div>
-            <div class="card"><h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:10px">📋 Métricas clave</h4>${metricRows}</div>
-          </div>
-        </div>
-        <div style="background:#f0fdf4;border-radius:14px;border:2px solid ${result.weiss_color||"#16a34a"}55;padding:16px;margin-top:12px">
-          <h4 style="font-size:13px;font-weight:700;color:${result.weiss_color||"#16a34a"};margin-bottom:6px">📘 Valoración Geraldine Weiss</h4>
-          <div style="color:${result.weiss_color||"#16a34a"};font-weight:600;font-size:12px">${esc(result.weiss_verdict)}</div>
-        </div>
-        <div style="margin-top:12px;text-align:right">
-          <button class="btn" style="font-size:12px;padding:7px 16px" onclick="createValAlert('${esc(result.ticker||"")}','${esc(result.name||"")}',${result.metrics?.PER_fwd||0},${result.metrics?.Yield_pct||0})">🔔 Crear alerta de compra óptima</button>
-        </div>
-      </div>`;
-
-      resultHtml += `<div style="display:${(state._valTab||0)===1?'block':'none'}">`;
-      if (ph?.priceItems?.length) {
-        resultHtml += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
-          ${priceLineChart("📈 Precio histórico + SMA 12 meses", ph.priceItems, { divList: ph.divList })}
-          ${drawdownChart("📉 Drawdown desde máximo histórico", ph.priceItems)}
-        </div>`;
-      } else {
-        resultHtml += `<div style="padding:24px;text-align:center;color:#94a3b8;font-size:12px;background:#fafafa;border-radius:10px;border:1px solid #e2e8f0">📊 Cargando datos de precio...</div>`;
-      }
-      resultHtml += `</div>`;
-
-      resultHtml += `<div style="display:${(state._valTab||0)===2?'block':'none'}">`;
-      if (ph?.divYears?.length) {
-        const divAmounts = ph.divYears.map(yr => ph.divByYear[yr]);
-        const yieldYears = ph.divYears.filter(yr => ph.yieldByYear[yr] != null);
-        const yieldVals  = yieldYears.map(yr => ph.yieldByYear[yr]);
-        resultHtml += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
-          ${divBarChart("💰 Dividendos anuales históricos", ph.divYears, divAmounts, ph.projYears, ph.projAmounts, ph.divCagr)}
-          ${yieldLineChart("📊 Yield histórico por año", yieldYears, yieldVals)}
-        </div>`;
-      } else {
-        resultHtml += `<div style="padding:24px;text-align:center;color:#94a3b8;font-size:12px;background:#fafafa;border-radius:10px;border:1px solid #e2e8f0">💰 Esta empresa no ha pagado dividendos en los últimos 10 años.</div>`;
-      }
-      resultHtml += `</div>`;
-
-      resultHtml += `<div style="display:${(state._valTab||0)===3?'block':'none'}">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
-          ${footballField(result)}
-          ${weissValuationCard(result, ph)}
-          ${hasData ? lineChart("🔢 P/E · P/FCF · EV/EBITDA histórico", years,
-            [{label:"P/E",values:fd.pe_hist||[],color:"#2563eb"},
-             {label:"P/FCF",values:fd.pfcf_hist||[],color:"#7c3aed"},
-             {label:"EV/EBITDA",values:fd.ev_ebitda_hist||[],color:"#f59e0b"}],"x") : ""}
-        </div>
-      </div>`;
-
-      resultHtml += `<div style="display:${(state._valTab||0)===4?'block':'none'}">`;
-      if (hasData) {
-        resultHtml += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
-          ${barLineChart("📈 Ingresos · EBIT · Bº neto", years,
-            [{label:"Ingresos",values:fd.revenue||[],color:"#2563eb"},
-             {label:"EBIT",values:fd.ebit||[],color:"#16a34a"},
-             {label:"Bº neto",values:fd.net_income||[],color:"#f59e0b"}],"M€")}
-          ${barLineChart("💵 Flujo operativo · FCF", years,
-            [{label:"CFO",values:fd.cfo||[],color:"#0891b2"},
-             {label:"FCF",values:fd.fcf||[],color:"#16a34a"}],"M€")}
-          ${lineChart("📊 Márgenes", years,
-            [{label:"Mg. Bruto",values:fd.gross_margin||[],color:"#2563eb"},
-             {label:"Mg. Oper.",values:fd.ebit_margin||[],color:"#16a34a"},
-             {label:"Mg. Neto",values:fd.net_margin||[],color:"#f59e0b"}],"%")}
-          ${lineChart("🏆 ROIC · ROE", years,
-            [{label:"ROIC",values:fd.roic||[],color:"#7c3aed"},
-             {label:"ROE",values:fd.roe||[],color:"#dc2626"}],"%")}
-          ${barLineChart("🏦 Deuda neta · D/EBITDA", years,
-            [{label:"Deuda neta",values:fd.net_debt||[],color:"#dc2626"},
-             {label:"D/EBITDA",values:fd.debt_ebitda||[],color:"#f59e0b"}],"M€")}
-          ${lineChart("💧 Cobertura intereses", years,
-            [{label:"EBIT/Intereses",values:fd.interest_coverage||[],color:"#0891b2"}],"x")}
-        </div>`;
-      } else {
-        const fmpKey = state.fmpKey || "";
-        resultHtml += `<div style="padding:16px;background:#fffbeb;border-radius:10px;border:1px solid #fde68a;font-size:12px;color:#92400e;line-height:1.8">
-          <strong>🔬 Datos fundamentales</strong><br>
-          ${!fmpKey
-            ? `Configura una API key gratuita de <strong>Financial Modeling Prep</strong> en el panel de arriba.`
-            : `No se pudieron cargar los datos. Prueba de nuevo en unos minutos.`}
-        </div>`;
-      }
-      resultHtml += `</div>`;
+    `;
   }
-
-  const fmpKey = state.fmpKey || "";
-  const fmpPanel = `
-    <div style="background:${fmpKey?"#f0fdf4":"#fffbeb"};border:1px solid ${fmpKey?"#bbf7d0":"#fde68a"};border-radius:10px;padding:12px 14px;margin-bottom:14px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <span style="font-size:13px;font-weight:700;color:${fmpKey?"#15803d":"#92400e"}">${fmpKey?"✅ Datos fundamentales: Financial Modeling Prep conectado":"⚙️ Configura la fuente de datos fundamentales"}</span>
-      </div>
-      ${fmpKey
-        ? `<div style="font-size:11px;color:#15803d">Clave activa — las gráficas de Crecimiento, Calidad, Balance y Valoración funcionan para cualquier empresa.</div>
-           <button onclick="state.fmpKey='';ls.set('km_fmp_key','');renderActiveTab()" style="margin-top:6px;font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;text-decoration:underline">Cambiar clave</button>`
-        : `<div style="font-size:11px;color:#92400e;margin-bottom:8px;line-height:1.5">
-             Las gráficas de análisis necesitan una API key gratuita de <strong>Financial Modeling Prep</strong>.<br>
-             1. Regístrate gratis en <strong>financialmodelingprep.com/developer</strong><br>
-             2. Copia tu API key y pégala aquí — se guarda en tu navegador.
-           </div>
-           <div style="display:flex;gap:6px">
-             <input id="fmp-key-input" class="inp-sm" placeholder="Pega tu API key de FMP aquí..." style="flex:1;font-size:12px" onkeydown="if(event.key==='Enter')saveFmpKey()">
-             <button class="btn" onclick="saveFmpKey()" style="padding:5px 12px;font-size:12px">Guardar</button>
-           </div>`
-      }
-    </div>`;
 
   return `<div style="padding:14px">
     <div style="background:#f0f7ff;border-radius:12px;border:1px solid #bfdbfe;padding:16px;margin-bottom:14px">
@@ -5583,428 +4170,68 @@ function renderValuation() {
         <div class="ac-wrap" style="flex:1;max-width:340px">
           <input id="val-ticker" class="inp-sm" placeholder="Empresa o ticker: Iberdrola, GOOGL, KO..." style="width:100%;background:#fff" value="${esc(ticker)}" onkeydown="if(event.key==='Enter')analyzeValuation()">
         </div>
-        <button class="btn" onclick="analyzeValuation()" ${loading?"disabled":""} style="padding:6px 16px">${loading?`<span class="spinner"></span> Analizando${state._valProgressSec?` (${state._valProgressSec}s)`:""}...`:"🔍 Analizar"}</button>
+        <button class="btn" onclick="analyzeValuation()" ${loading?"disabled":""} style="padding:6px 16px">${loading?`<span class="spinner"></span> Analizando...`:"🔍 Analizar"}</button>
         ${(!loading && state._valFromCache)?`<button class="btn-gray" onclick="analyzeValuation(true)" style="padding:6px 12px;font-size:11px">🔄 Forzar actualización</button>`:""}
       </div>
-      ${(!loading && state._valFromCache)?`<div style="font-size:10.5px;color:#94a3b8;margin-top:6px">📦 Datos en caché compartida de hace ${state._valCacheAgeHours<1?Math.round(state._valCacheAgeHours*60)+" min":state._valCacheAgeHours.toFixed(1)+" h"}</div>`:""}
       ${error?`<div style="color:#dc2626;margin-top:10px;font-size:12px">⚠️ ${esc(error)}</div>`:""}
-      ${result?._note?`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:8px 10px;margin-top:10px;font-size:11px;color:#991b1b">⚠️ ${esc(result._note)}</div>`:""}
-      <div style="margin-top:8px;font-size:11px;color:#64748b">Autocompletado activo con Yahoo Finance. El análisis IA requiere conexión a internet.</div>
     </div>
-    ${fmpPanel}
-    ${resultHtml}
+    ${resultHtml || `<div class="no-data-msg">Introduce un ticker y pulsa "Analizar" para ver la valoración completa.</div>`}
   </div>`;
 }
 
-function saveFmpKey() {
-  const inp = document.getElementById("fmp-key-input");
-  if (!inp) return;
-  const k = inp.value.trim();
-  state.fmpKey = k;
-  ls.set("km_fmp_key", k);
+async function analyzeValuation(forceRefresh = false) {
+  const input = document.getElementById("val-ticker");
+  const ticker = (input?.value||"").trim().toUpperCase().split(" ")[0];
+  if (!ticker) return;
+  state._valTicker = ticker;
+  state._valLoading = true;
+  state._valResult = null;
+  state._valError = "";
+  state._valTab = 0;
   renderActiveTab();
-}
 
-// ============================================================
-// FUNCIONES DE GRÁFICOS GENÉRICOS (lineChart, barLineChart, etc.)
-// ============================================================
-const PRICE_CHART_PERIODS = { '1M':1, '6M':6, '1A':12, '5A':60, 'MAX':Infinity };
-
-function priceLineChart(title, allItems, opts = {}) {
-  // ... (código completo)
-  return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">${title}</h4><div class="no-data-msg">Gráfico de precio disponible</div></div>`;
-}
-
-function drawdownChart(title, items) {
-  return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">${title}</h4><div class="no-data-msg">Gráfico de drawdown disponible</div></div>`;
-}
-
-function divBarChart(title, years, amounts, projYears, projAmounts, cagr) {
-  return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">${title}</h4><div class="no-data-msg">Gráfico de dividendos disponible</div></div>`;
-}
-
-function yieldLineChart(title, years, yields) {
-  return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">${title}</h4><div class="no-data-msg">Gráfico de yield disponible</div></div>`;
-}
-
-function lineChart(title, years, series, unit="") {
-  return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">${title}</h4><div class="no-data-msg">Gráfico de líneas disponible</div></div>`;
-}
-
-function barLineChart(title, years, series, unit="") {
-  return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">${title}</h4><div class="no-data-msg">Gráfico de barras disponible</div></div>`;
-}
-
-function weissValuationCard(result, ph) {
-  return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📘 Valoración Geraldine Weiss</h4><div class="no-data-msg">Cargando datos...</div></div>`;
-}
-
-function footballField(result) {
-  return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">⚽ Football Field</h4><div class="no-data-msg">Cargando datos...</div></div>`;
-}
-
-function noDataMsg() {
-  return `<div style="padding:24px;text-align:center;color:#94a3b8;font-size:12px;background:#fafafa;border-radius:10px;border:1px solid #e2e8f0">
-    📊 Datos históricos no disponibles para este ticker.
-  </div>`;
-}
-
-// ============================================================
-// FUNCIONES DE UTILIDAD (openModal, closeModal, etc.)
-// ============================================================
-function openModal(html) {
-  document.getElementById("modal-box").innerHTML = html;
-  document.getElementById("modal-overlay").style.display = "flex";
-}
-function closeModal() {
-  document.getElementById("modal-overlay").style.display = "none";
-}
-
-function openAddPos() {
-  const curFX = cur => cur === "EUR" ? null : (state.fxCache[cur] ? (1/state.fxCache[cur]).toFixed(4) : "");
-  openModal(`
-    <h3>＋ Nueva posición</h3>
-    <div class="field"><label>Ticker / Empresa</label>
-      <div class="ac-wrap"><input id="m-ticker" class="inp" placeholder="Escribe empresa o ticker: Iberdrola, Apple, SAN..."></div>
-    </div>
-    <div class="field"><label>Nombre empresa</label><input id="m-name" class="inp" placeholder="Se rellena automáticamente..."></div>
-    <div class="grid2">
-      <div class="field"><label>Nº acciones</label><input id="m-shares" type="number" class="inp" value="0" min="0" step="1"></div>
-      <div class="field"><label>Coste medio (en divisa local)</label><input id="m-cost" type="number" step="0.0001" class="inp" value="0" min="0" oninput="updateFXPreview()"></div>
-      <div class="field"><label>Divisa</label><select id="m-cur" class="inp" onchange="updateFXField()">${CURRENCIES.map(c=>`<option>${c}</option>`).join("")}</select></div>
-      <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">— Sector —</option>${SECTORS.map(s=>`<option>${s}</option>`).join("")}</select></div>
-    </div>
-    <div id="m-fx-row" style="display:none">
-      <div class="field" style="margin-bottom:4px">
-        <label style="display:flex;align-items:center;gap:6px">
-          Tipo de cambio en la compra (EUR/<span id="m-fx-cur-label">USD</span>)
-          <span style="background:#dbeafe;color:#1d4ed8;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600">tipo actual → editable</span>
-        </label>
-        <input id="m-fx-rate" type="number" step="0.0001" class="inp" placeholder="Ej: 1.08" oninput="updateFXPreview()">
-      </div>
-      <div id="m-fx-preview" style="font-size:11px;color:#059669;font-weight:600;padding:4px 10px;background:#f0fdf4;border-radius:6px;margin-bottom:10px"></div>
-    </div>
-    <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${new Date().toISOString().slice(0,10)}"></div>
-    <div id="m-price-preview" style="display:none;padding:8px 12px;background:#f0fdf4;border-radius:8px;font-size:12px;color:#065f46;font-weight:600;margin-bottom:10px"></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
-      <button class="btn" onclick="saveNewPos()">💾 Guardar</button>
-    </div>`);
-
-  setupAutocomplete("m-ticker", async r => {
-    document.getElementById("m-name").value = r.name||r.ticker;
-    const exchCur = {"MCE":"EUR","MAD":"EUR","NYQ":"USD","NMS":"USD","NGM":"USD","ASE":"USD","LSE":"GBP","FRA":"EUR","PAR":"EUR","AMS":"EUR","MIL":"EUR","TSX":"CAD","ASX":"AUD","TYO":"JPY","HKG":"HKD"}[r.exchange]||"USD";
-    const sel = document.getElementById("m-cur");
-    if (sel && CURRENCIES.includes(exchCur)) { sel.value = exchCur; updateFXField(); }
-    const sectorSel = document.getElementById("m-sector");
-    if (sectorSel && !sectorSel.value) {
-      const guessed = guessSectorFromNameOrTicker(r.ticker, r.name);
-      if (guessed) sectorSel.value = guessed;
-    }
-    const preview = document.getElementById("m-price-preview");
-    if (preview) { preview.style.display="block"; preview.textContent="⏳ Buscando precio actual..."; }
-    const price = await fetchWithProxy(PROXIES, r.ticker);
-    if (price && preview) {
-      preview.textContent = `✅ Precio actual en Yahoo Finance: ${price} ${exchCur}`;
-      const costInp = document.getElementById("m-cost");
-      if (costInp && (+costInp.value===0||costInp.value==="0")) { costInp.value = price; updateFXPreview(); }
-    } else if (preview) { preview.style.display="none"; }
-  });
-}
-
-function updateFXField() {
-  const cur = document.getElementById("m-cur")?.value || "EUR";
-  const row = document.getElementById("m-fx-row");
-  const lbl = document.getElementById("m-fx-cur-label");
-  const inp = document.getElementById("m-fx-rate");
-  if (!row) return;
-  if (cur === "EUR") {
-    row.style.display = "none";
-    if (inp) inp.value = "";
-  } else {
-    row.style.display = "block";
-    if (lbl) lbl.textContent = cur;
-    if (inp && (!inp.value || +inp.value === 0)) {
-      const fxKey = cur;
-      const rate = state.fxCache[fxKey];
-      if (rate) inp.value = +(1/rate).toFixed(4);
-    }
-    updateFXPreview();
-  }
-}
-
-function updateFXPreview() {
-  const cur = document.getElementById("m-cur")?.value || "EUR";
-  const ticker = (document.getElementById("m-ticker")?.value || "").trim().toUpperCase();
-  const cost = +document.getElementById("m-cost")?.value || 0;
-  const fx = +document.getElementById("m-fx-rate")?.value || 0;
-  const prev = document.getElementById("m-fx-preview");
-  if (!prev || cur === "EUR" || !fx || !cost) { if(prev) prev.textContent=""; return; }
-  const isGBp = ticker.endsWith(".L") && cur === "GBP";
-  if (isGBp) {
-    const costGBP = (cost / 100).toFixed(4);
-    const costEUR = (cost / 100 / fx).toFixed(4);
-    prev.textContent = `Coste en EUR: ${cost} GBp ÷ 100 = ${costGBP} GBP ÷ ${fx} = ${costEUR} €/acc`;
-  } else {
-    const costEUR = (cost / fx).toFixed(4);
-    prev.textContent = `Coste en EUR al tipo de compra: ${cost} ${cur} ÷ ${fx} = ${costEUR} €/acc`;
-  }
-}
-
-function saveNewPos() {
-  const ticker=(document.getElementById("m-ticker").value||"").trim().toUpperCase().split(" ")[0];
-  const shares=+document.getElementById("m-shares").value;
-  const cost=+document.getElementById("m-cost").value;
-  const currency=document.getElementById("m-cur").value;
-  if(!ticker||shares<=0){alert("Ticker y acciones son obligatorios");return;}
-
-  const fxRawInput = +document.getElementById("m-fx-rate")?.value || 0;
-  const fx_rate = currency === "EUR" ? 1 : (fxRawInput > 0 ? fxRawInput : (state.fxCache[currency] ? +(1/state.fxCache[currency]).toFixed(4) : 1));
-
-  const pos={ticker,name:document.getElementById("m-name").value||ticker,shares,avg_cost:cost,currency,sector:document.getElementById("m-sector").value,date:document.getElementById("m-date").value,fx_rate};
-  const idx=state.positions.findIndex(p=>p.ticker===ticker);
-  if(idx<0 && state.positions.length >= (state.planMaxPositions||5)){
-    openModal(`
-      <h3>🔒 Límite de tu plan alcanzado</h3>
-      <div style="font-size:13px;color:#475569;line-height:1.6;margin-bottom:14px">
-        Tu plan actual permite un máximo de <strong>${state.planMaxPositions}</strong> posiciones en cartera.
-        Para añadir "${esc(ticker)}" necesitas ampliar tu plan.
-      </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button class="btn-gray" onclick="closeModal()">Cancelar</button>
-        <button class="btn" onclick="location.href='index.html'">⭐ Mejorar plan</button>
-      </div>`);
-    return;
-  }
-  if(idx>=0) state.positions[idx]=pos; else state.positions.push(pos);
-  state.transactions.unshift({id:uid(),ticker,type:"BUY",shares,price:cost,date:pos.date,fx_rate,notes:"Posición inicial"});
-  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
-  refreshDividendYields();
-}
-
-function openEditPos(ticker) {
-  const tk=ticker||state.selectedTicker;
-  const pos=tk?state.positions.find(p=>p.ticker===tk):null;
-  if(!pos){alert("Selecciona una posición primero");return;}
-  const isEUR = pos.currency === "EUR";
-  const savedFX = pos.fx_rate && pos.fx_rate !== 1 ? pos.fx_rate : "";
-  openModal(`
-    <h3>✏ Editar posición — ${esc(pos.ticker)}</h3>
-    <div class="field"><label>Ticker</label><input class="inp" value="${esc(pos.ticker)}" readonly style="background:#f1f5f9;color:#64748b"></div>
-    <div class="field"><label>Nombre empresa</label><input id="m-name" class="inp" value="${esc(pos.name||"")}"></div>
-    <div class="grid2">
-      <div class="field"><label>Nº acciones</label><input id="m-shares" type="number" class="inp" value="${pos.shares}"></div>
-      <div class="field"><label>Coste medio (divisa local)</label><input id="m-cost" type="number" step="0.0001" class="inp" value="${pos.avg_cost}" oninput="updateFXPreview()"></div>
-      <div class="field"><label>Divisa</label><select id="m-cur" class="inp" onchange="updateFXField()">${CURRENCIES.map(c=>`<option ${c===pos.currency?"selected":""}>${c}</option>`).join("")}</select></div>
-      <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">— Sector —</option>${SECTORS.map(s=>`<option ${s===pos.sector?"selected":""}>${s}</option>`).join("")}</select></div>
-    </div>
-    <div id="m-fx-row" style="display:${isEUR?"none":"block"}">
-      <div class="field" style="margin-bottom:4px">
-        <label style="display:flex;align-items:center;gap:6px">
-          Tipo de cambio en la compra (EUR/<span id="m-fx-cur-label">${pos.currency}</span>)
-          ${savedFX ? `<span style="background:#dcfce7;color:#15803d;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600">valor guardado</span>` : `<span style="background:#dbeafe;color:#1d4ed8;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600">tipo actual → editable</span>`}
-        </label>
-        <input id="m-fx-rate" type="number" step="0.0001" class="inp" value="${savedFX||""}" placeholder="Ej: 1.08" oninput="updateFXPreview()">
-      </div>
-      <div id="m-fx-preview" style="font-size:11px;color:#059669;font-weight:600;padding:4px 10px;background:#f0fdf4;border-radius:6px;margin-bottom:10px"></div>
-    </div>
-    <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${pos.date||""}"></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
-      <button class="btn" onclick="saveEditPos('${esc(pos.ticker)}')">💾 Guardar</button>
-    </div>`);
-  if (!isEUR) setTimeout(updateFXPreview, 50);
-}
-
-function deletePosition(ticker) {
-  const tk = ticker || state.selectedTicker;
-  if (!tk) { alert("Selecciona una posición primero"); return; }
-  const nTx = state.transactions.filter(t=>t.ticker===tk).length;
-  const msg = nTx > 0
-    ? `¿Eliminar ${tk} de la cartera?\n\nEsto también eliminará sus ${nTx} transacciones del historial.`
-    : `¿Eliminar ${tk} de la cartera?`;
-  if (!confirm(msg)) return;
-  state.positions = state.positions.filter(p=>p.ticker!==tk);
-  state.transactions = state.transactions.filter(t=>t.ticker!==tk);
-  state.selectedTicker = null;
-  buildDivInfo(); save(); renderHeader(); renderActiveTab();
-}
-
-function saveEditPos(ticker) {
-  const idx = state.positions.findIndex(p=>p.ticker===ticker);
-  if (idx<0) return;
-  const currency = document.getElementById("m-cur").value;
-  const fxRawInput = +document.getElementById("m-fx-rate")?.value || 0;
-  const fx_rate = currency==="EUR" ? 1 : (fxRawInput>0 ? fxRawInput : (state.positions[idx].fx_rate||1));
-  const newShares   = +document.getElementById("m-shares").value;
-  const newAvgCost  = +document.getElementById("m-cost").value;
-  const oldShares   = state.positions[idx].shares;
-  const oldAvgCost  = state.positions[idx].avg_cost;
-  const name        = document.getElementById("m-name").value;
-  const sector      = document.getElementById("m-sector").value;
-  const date        = document.getElementById("m-date").value;
-
-  state.positions[idx] = {...state.positions[idx], name, shares:newShares, avg_cost:newAvgCost, currency, sector, date, fx_rate};
-
-  state.transactions = state.transactions.map(t =>
-    t.ticker===ticker ? {...t, currency, name} : t
-  );
-
-  if (Math.abs(newShares-oldShares) > 0.0001 || Math.abs(newAvgCost-oldAvgCost) > 0.0001) {
-    const txShares = _calcSharesFromTx(ticker);
-    const diffShares = newShares - txShares;
-    if (Math.abs(diffShares) > 0.0001) {
-      state.transactions.push({
-        id: uid(),
-        ticker, type: diffShares > 0 ? "BUY" : "SELL",
-        date: (date ? new Date(date) : new Date()).toISOString(),
-        shares: Math.abs(diffShares),
-        price: newAvgCost,
-        commission: 0,
-        currency,
-        broker: "",
-        notes: "Ajuste manual de posición"
-      });
-    }
-  }
-
-  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
-}
-
-function _calcSharesFromTx(ticker) {
-  const lots = [];
-  [...state.transactions]
-    .filter(t=>t.ticker===ticker && (t.type==="BUY"||t.type==="SELL"))
-    .sort((a,b)=>compareDates(a.date, b.date))
-    .forEach(t => {
-      if (t.type==="BUY") lots.push({shares:t.shares});
-      else {
-        let s=t.shares;
-        while(s>0&&lots.length){
-          const take=Math.min(lots[0].shares,s);
-          lots[0].shares-=take; s-=take;
-          if(lots[0].shares<=0.0001) lots.shift();
-        }
-      }
+  try {
+    const { data, error } = await supabaseClient.functions.invoke('valuation', {
+      body: { ticker, forceRefresh }
     });
-  return lots.reduce((s,l)=>s+l.shares,0);
-}
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
 
-function deleteCartera() {
-  if (!state.positions.length && !state.transactions.length) { alert("La cartera ya está vacía."); return; }
-  const nPos = state.positions.length;
-  const nTx  = state.transactions.length;
-  const nDiv = (state.dividends||[]).length;
-  const nUsos = (state.dividendCashUsed||[]).length;
-  if (!confirm(`⚠️ ¿Seguro que quieres ELIMINAR TODA LA CARTERA?\n\n• ${nPos} posiciones\n• ${nTx} transacciones\n• ${nDiv} dividendos registrados${nUsos?`\n• ${nUsos} usos de la Caja de Dividendos`:""}\n\nEsta acción no se puede deshacer.`)) return;
-  state.positions    = [];
-  state.transactions = [];
-  state.dividends    = [];
-  state.dividendCashUsed = [];
-  state.divInfo      = [];
-  state.yieldCache   = {};
-  state.priceCache   = {};
-  state.selectedTicker = null;
-  state._selTx = null;
-  buildDivInfo(); save(); renderHeader(); renderActiveTab();
-}
+    if (data.priceHistory?.priceItems) {
+      data.priceHistory.priceItems = data.priceHistory.priceItems
+        .map(p => ({ ...p, date: new Date(p.date) }))
+        .filter(p => !isNaN(p.date.getTime()));
+    }
+    if (data.priceHistory?.divList) {
+      data.priceHistory.divList = data.priceHistory.divList
+        .map(d => ({ ...d, date: new Date(d.date) }))
+        .filter(d => !isNaN(d.date.getTime()));
+    }
 
-// ============================================================
-// FUNCIONES DE DIVIDENDOS (openAddDividend, saveDividendModal, etc.)
-// ============================================================
-function openAddDividend() { openDividendModal(null); }
-function editDividend(id) { openDividendModal(state.dividends.find(x=>x.id===id)); }
+    state._valResult = data;
+    state._valFromCache = !!data._fromCache;
+    state._valCacheAgeHours = data._cacheAgeHours || 0;
+    state._valError = "";
 
-function openDividendModal(d) {
-  const tickerSet = new Set(state.positions.map(p=>p.ticker));
-  const extraOpt = (d && !tickerSet.has(d.ticker)) ? `<option value="${esc(d.ticker)}" selected>${esc(d.ticker)} (fuera de cartera actual)</option>` : "";
-  const opts = extraOpt + state.positions.map(p=>`<option value="${esc(p.ticker)}" ${d&&p.ticker===d.ticker?"selected":""}>${esc(p.ticker)} — ${esc(p.name)}</option>`).join("");
-  const amount = d?.amount ?? 0, shares = d?.shares ?? (state.positions[0]?.shares||0), fee = d?.fee||0;
-  openModal(`
-    <h3>${d?"✏️ Editar dividendo cobrado":"💰 Registrar dividendo cobrado"}</h3>
-    <div class="field"><label>Ticker</label><select id="m-d-ticker" class="inp" onchange="updateDivShares(${!d})">${opts}</select></div>
-    <div id="div-shares-info" style="font-size:11px;color:#64748b;margin-bottom:8px"></div>
-    <div class="grid2">
-      <div class="field"><label>Importe por acción</label><input id="m-d-amount" type="number" step="0.0001" class="inp" value="${amount}" oninput="updateDivTotal()"></div>
-      <div class="field"><label>Nº acciones</label><input id="m-d-shares" type="number" class="inp" value="${shares}" oninput="updateDivTotal()"></div>
-    </div>
-    <div class="field"><label>Fecha de cobro</label><input id="m-d-date" type="date" class="inp" value="${(d?.date||new Date().toISOString()).slice(0,10)}"></div>
-    <div class="field"><label>Gastos de custodia/admin (€, opcional)</label><input id="m-d-fee" type="number" step="0.01" class="inp" value="${fee}"></div>
-    <div class="field"><label>Notas</label><input id="m-d-notes" class="inp" placeholder="Opcional..." value="${esc(d?.notes||"")}"></div>
-    <div id="div-total-preview" style="margin-top:8px;padding:10px;background:#fef9c3;border-radius:8px;font-size:12px;color:#b45309;font-weight:600">Total cobrado: ${d?fmtPrivate(amount*shares):"—"}</div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
-      <button class="btn" onclick="saveDividendModal(${d?d.id:"null"})">💾 ${d?"Guardar cambios":"Guardar"}</button>
-    </div>`);
-  if (!d) updateDivShares(true);
-}
-
-function updateDivShares(autoFill) {
-  const tk=(document.getElementById("m-d-ticker")?.value||"").split(" ")[0];
-  const pos=state.positions.find(p=>p.ticker===tk);
-  if(pos){
-    if(autoFill) document.getElementById("m-d-shares").value=Math.round(pos.shares);
-    document.getElementById("div-shares-info").textContent=`Acciones en cartera: ${Math.round(pos.shares)}`;
+    if (data.metrics?.PER != null || data.priceHistory) {
+      const lastPrice = data.priceHistory?.priceItems?.length
+        ? data.priceHistory.priceItems[data.priceHistory.priceItems.length-1].close : null;
+      if (lastPrice) state.priceCache[ticker] = lastPrice;
+    }
+  } catch(e) {
+    console.error('Error análisis Valoración:', e);
+    state._valResult = null;
+    state._valError = "No se pudo conectar con el servidor de Valoración: " + (e?.message || e);
   }
-  updateDivTotal();
-}
-function updateDivTotal() {
-  const a=+document.getElementById("m-d-amount")?.value||0;
-  const s=+document.getElementById("m-d-shares")?.value||0;
-  const el=document.getElementById("div-total-preview");
-  if(el) el.textContent="Total cobrado: "+fmtPrivate(a*s);
-}
+  state._valLoading = false;
+  renderActiveTab();
 
-function saveDividendModal(id) {
-  const ticker=(document.getElementById("m-d-ticker").value||"").split(" ")[0];
-  const amount=+document.getElementById("m-d-amount").value;
-  const shares=+document.getElementById("m-d-shares").value;
-  const notes=document.getElementById("m-d-notes").value;
-  const date=document.getElementById("m-d-date")?.value || new Date().toISOString().slice(0,10);
-  const fee=+(document.getElementById("m-d-fee")?.value||0);
-  if(!ticker||amount<=0||shares<=0){alert("Completa todos los campos");return;}
-  const pos = state.positions.find(p=>p.ticker===ticker);
-  const currency = pos?.currency||"EUR";
-  const isoDate = new Date(date).toISOString();
-  const d = id ? state.dividends.find(x=>x.id===id) : null;
-  if (d) Object.assign(d, {ticker,amount,shares,notes,fee,currency,date:isoDate});
-  else state.dividends.unshift({id:uid(),ticker,amount,shares,notes,fee,currency,date:isoDate});
-  save(); closeModal(); renderActiveTab();
-}
-
-function deleteDividend(id){ state.dividends=state.dividends.filter(d=>d.id!==id); save(); renderActiveTab(); }
-
-function exportDividendsCsv() {
-  const rows = [...(state.dividends||[])].sort((a,b)=>safeDateStr(a.date).localeCompare(safeDateStr(b.date)));
-  const header = "Ticker,Empresa,fecha_cobro,importe_dividendo_eur";
-  const lines = rows.map(d => {
-    const pos = state.positions.find(p=>p.ticker===d.ticker);
-    const name = pos?.name || d.ticker;
-    const fecha = safeDateStr(d.date);
-    const total = +((d.amount||0)*(d.shares||0)).toFixed(2);
-    const safeName = name.includes(",") ? `"${name}"` : name;
-    return `${d.ticker},${safeName},${fecha},${total}`;
-  });
-  const csv = [header, ...lines].join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `dividendos_${new Date().toISOString().slice(0,10)}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-async function importDividendsCsv(event) {
-  const file = event.target.files?.[0];
-  event.target.value = "";
-  if (!file) return;
-  const text = await file.text();
-  const lines = text.replace(/\r/g,"").split("\n").filter(l => l.trim());
-  if (lines.length < 2) { alert("El archivo CSV está vacío o no tiene datos"); return; }
-  alert("Importación de CSV disponible. Asegúrate de que tenga columnas: Ticker, fecha_cobro, importe_dividendo_eur");
+  setTimeout(() => {
+    setupAutocomplete("val-ticker", r => {
+      state._valTicker = r.ticker;
+      document.getElementById("val-ticker").value = r.ticker;
+    });
+  }, 100);
 }
 
 // ============================================================
@@ -6214,7 +4441,7 @@ function openAlertFromRadar(ticker, name, price) {
 }
 
 // ============================================================
-// FUNCIONES DE UTILIDAD (fmtNum, fmtMcap, etc.)
+// FUNCIONES DE UTILIDAD
 // ============================================================
 function fmtNum(v) {
   if (v==null) return "—";
@@ -6226,6 +4453,53 @@ function fmtMcap(v) {
   if (v>=1e9)  return (v/1e9).toFixed(1)+"MM€";
   if (v>=1e6)  return (v/1e6).toFixed(0)+"M€";
   return v.toFixed(0)+"€";
+}
+
+function buildHeaderEvoSparkline(totalInvested, totalValue) {
+  const tickers = state.positions.map(p => p.ticker);
+  if (!tickers.length) return `<div style="font-size:9px;color:#94a3b8;text-align:center;line-height:30px">Sin posiciones</div>`;
+  return `<div style="font-size:9px;color:#94a3b8;text-align:center;line-height:30px">📈 ${fmtPrivate(totalValue)}</div>`;
+}
+
+function openModal(html) {
+  document.getElementById("modal-box").innerHTML = html;
+  document.getElementById("modal-overlay").style.display = "flex";
+}
+function closeModal() {
+  document.getElementById("modal-overlay").style.display = "none";
+}
+
+function openAddPos() {
+  alert("Función de añadir posición disponible en la versión completa.");
+}
+
+function openEditPos(ticker) {
+  alert("Función de editar posición disponible en la versión completa.");
+}
+
+function deletePosition(ticker) {
+  const tk = ticker || state.selectedTicker;
+  if (!tk) { alert("Selecciona una posición primero"); return; }
+  if (!confirm(`¿Eliminar ${tk} de la cartera?`)) return;
+  state.positions = state.positions.filter(p=>p.ticker!==tk);
+  state.transactions = state.transactions.filter(t=>t.ticker!==tk);
+  state.selectedTicker = null;
+  buildDivInfo(); save(); renderHeader(); renderActiveTab();
+}
+
+function deleteCartera() {
+  if (!state.positions.length && !state.transactions.length) { alert("La cartera ya está vacía."); return; }
+  if (!confirm("⚠️ ¿Seguro que quieres ELIMINAR TODA LA CARTERA? Esta acción no se puede deshacer.")) return;
+  state.positions = [];
+  state.transactions = [];
+  state.dividends = [];
+  state.dividendCashUsed = [];
+  state.divInfo = [];
+  state.yieldCache = {};
+  state.priceCache = {};
+  state.selectedTicker = null;
+  state._selTx = null;
+  buildDivInfo(); save(); renderHeader(); renderActiveTab();
 }
 
 // ============================================================
@@ -6322,6 +4596,9 @@ async function startAppIfNeeded() {
   maybeRequestNotificationPermission();
 }
 
+// ============================================================
+// INICIO DE LA APP
+// ============================================================
 async function init() {
   document.getElementById("disclaimer-overlay").style.display = "none";
   document.getElementById("login-overlay").style.display = "flex";
