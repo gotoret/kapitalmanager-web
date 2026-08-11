@@ -4156,7 +4156,7 @@ function _rebuildPositionFromTx(ticker, currency) {
   const totalShares = remaining.reduce((s,l) => s + l.shares, 0);
   const totalCost   = remaining.reduce((s,l) => s + l.shares * l.price, 0);
   const avgCost     = totalShares > 0 ? totalCost / totalShares : 0;
-  const firstDate   = remaining.length ? remaining[0].date?.slice(0,10) : new Date().toISOString().slice(0,10);
+  const firstDate   = remaining.length ? safeDateStr(remaining[0].date) : safeDateStr(new Date());
 
   const idx = state.positions.findIndex(p => p.ticker === ticker);
   if (totalShares > 0.0001) {
@@ -4405,6 +4405,8 @@ function renderCompanyFundamentalCharts(ticker) {
 
         ${ph?.priceItems?.length ? renderIndexComparisonCard(ticker, ph.priceItems) : ""}
 
+        ${ph?.priceItems?.length ? renderCorrelationCard(ticker) : ""}
+
         ${ph?.divYears?.length
           ? divBarChart(`💰 Dividendos repartidos por ${esc(ticker)}`, ph.divYears, divAmounts)
           : `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">💰 Dividendos históricos</h4>
@@ -4516,6 +4518,78 @@ function renderIndexComparisonCard(ticker, tickerPriceItems) {
     '</h4>',
     `</h4>${toggleBtn}`
   ) + `<div style="font-size:10px;color:#64748b;margin-top:-6px;padding:0 4px">${diffTxt}</div>`;
+}
+
+// ── Correlación entre activos (Pearson, sobre rentabilidades mensuales) ──
+// Se usa rentabilidad mes a mes en vez de precio en bruto: dos acciones que
+// simplemente suben con el mercado a largo plazo saldrían "correlacionadas"
+// aunque se muevan de forma bastante distinta mes a mes, que es lo que de
+// verdad importa para saber si estás diversificado o no.
+function monthlyReturns(priceItems) {
+  if (!priceItems?.length) return {};
+  const byMonth = {};
+  priceItems.forEach(p => { byMonth[safeDateStr(p.date).slice(0,7)] = p.close; });
+  const months = Object.keys(byMonth).sort();
+  const returns = {};
+  for (let i = 1; i < months.length; i++) {
+    const prev = byMonth[months[i-1]], curr = byMonth[months[i]];
+    if (prev > 0) returns[months[i]] = (curr - prev) / prev;
+  }
+  return returns;
+}
+
+function pearsonCorrelation(retA, retB) {
+  const commonMonths = Object.keys(retA).filter(m => retB[m] != null);
+  if (commonMonths.length < 6) return null; // menos de 6 meses en común: dato poco fiable
+  const a = commonMonths.map(m => retA[m]), b = commonMonths.map(m => retB[m]);
+  const n = a.length;
+  const meanA = a.reduce((s,v)=>s+v,0)/n, meanB = b.reduce((s,v)=>s+v,0)/n;
+  let cov = 0, varA = 0, varB = 0;
+  for (let i = 0; i < n; i++) {
+    const da = a[i]-meanA, db = b[i]-meanB;
+    cov += da*db; varA += da*da; varB += db*db;
+  }
+  if (varA === 0 || varB === 0) return null;
+  return +(cov / Math.sqrt(varA*varB)).toFixed(2);
+}
+
+function renderCorrelationCard(ticker) {
+  const others = state.positions.filter(p => p.ticker !== ticker);
+  if (!others.length) return "";
+  const myData = state._portfolioCharts.companyData?.[ticker];
+  if (!myData?.priceHistory?.priceItems?.length) return "";
+  const myReturns = monthlyReturns(myData.priceHistory.priceItems);
+
+  const rows = others.map(p => {
+    const d = state._portfolioCharts.companyData?.[p.ticker];
+    if (!d) return { ticker: p.ticker, name: p.name, status: "no_cargado" };
+    if (d.loading) return { ticker: p.ticker, name: p.name, status: "cargando" };
+    if (!d.priceHistory?.priceItems?.length) return { ticker: p.ticker, name: p.name, status: "sin_datos" };
+    const corr = pearsonCorrelation(myReturns, monthlyReturns(d.priceHistory.priceItems));
+    return { ticker: p.ticker, name: p.name, status: "ok", corr };
+  }).filter(r => r.status === "ok" && r.corr != null).sort((a,b) => b.corr - a.corr);
+
+  const pendingCount = others.length - rows.length;
+
+  if (!rows.length) {
+    return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">🔗 Correlación con tu cartera</h4>
+      <div style="padding:16px;text-align:center;color:#94a3b8;font-size:11px">Visita la ficha de otras acciones de tu cartera (esta misma pestaña) para poder comparar la correlación — se reutiliza el histórico que ya se va cargando, sin peticiones extra.</div></div>`;
+  }
+
+  const rowsHtml = rows.slice(0, 8).map(r => {
+    const c = r.corr >= 0.7 ? "#dc2626" : r.corr >= 0.4 ? "#f59e0b" : r.corr >= 0 ? "#16a34a" : "#2563eb";
+    const label = r.corr >= 0.7 ? "muy correlacionada" : r.corr >= 0.4 ? "correlación moderada" : r.corr >= 0 ? "poca correlación" : "correlación inversa";
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:12px">
+      <span><strong>${esc(r.ticker)}</strong> <span style="color:#94a3b8">${esc((r.name||"").slice(0,22))}</span></span>
+      <span style="color:${c};font-weight:700">${r.corr.toFixed(2)} <span style="font-weight:400;font-size:10px">(${label})</span></span>
+    </div>`;
+  }).join("");
+
+  return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:4px">🔗 Correlación con tu cartera</h4>
+    <div style="font-size:10px;color:#94a3b8;margin-bottom:8px">Sobre rentabilidad mensual · &gt;0,7 = muy correlacionadas (poca diversificación real entre ambas)</div>
+    ${rowsHtml}
+    ${pendingCount > 0 ? `<div style="font-size:10px;color:#94a3b8;margin-top:8px">+${pendingCount} posiciones más sin cargar todavía — visita sus fichas para incluirlas aquí.</div>` : ""}
+  </div>`;
 }
 
 async function loadCompanyChartsData(ticker) {
@@ -7013,7 +7087,7 @@ function renderRenta() {
             costeTotalEUR += costeEUR;
             const feeEUR = lu.fxRate ? (lu.fee/lu.fxRate) : toEUR(lu.fee, currency);
             comisionCompraEUR += feeEUR;
-            fechasCompra.push(lu.date?.slice(0,10));
+            fechasCompra.push(safeDateStr(lu.date));
           });
           costeTotalEUR = +costeTotalEUR.toFixed(2);
           comisionCompraEUR = +comisionCompraEUR.toFixed(2);
@@ -7326,7 +7400,7 @@ function exportRentaExcel(ejercicio) {
             const cl=u.costUnit*u.shares;
             costeEUR += u.fxRate?cl/u.fxRate:toEUR(cl,currency);
             comCEUR += u.fxRate?(u.fee/u.fxRate):toEUR(u.fee,currency);
-            fechas.push(u.date?.slice(0,10));
+            fechas.push(safeDateStr(u.date));
           });
           ventaRows.push({
             "Tipo":"Venta","Fecha compra":fechas.join(" + "),"Fecha venta":safeDateStr(t.date),
