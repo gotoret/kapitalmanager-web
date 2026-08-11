@@ -2940,6 +2940,108 @@ function renderActiveTab() {
 // ─────────────────────────────────────────────
 // TAB 0 — CARTERA
 // ─────────────────────────────────────────────
+// ── Rentabilidad Dietz Modificado (aproximación estándar de TWR) ──
+// Un TWR "de manual" necesitaría el valor de la cartera día a día desde el
+// principio, dato que no se guarda retroactivamente. Dietz Modificado es el
+// estándar de la industria para aproximarlo sin esos datos: pondera cada
+// aportación (compra) o retirada (venta) por el tiempo que ha estado
+// invertida dentro del periodo, en vez de tratarlas todas por igual como
+// hace el cálculo simple (valor_actual − invertido) / invertido.
+function calculateModifiedDietz(periodStartISO) {
+  const periodStart = new Date(periodStartISO);
+  const periodEnd = new Date();
+  const totalDays = (periodEnd - periodStart) / 86400000;
+  if (totalDays <= 0) return null;
+
+  let netCashFlow = 0, weightedCashFlow = 0;
+  (state.transactions || []).forEach(t => {
+    const d = t.date instanceof Date ? t.date : new Date(t.date);
+    if (d < periodStart || d > periodEnd) return;
+    const currency = state.positions.find(p => p.ticker === t.ticker)?.currency || "EUR";
+    const grossLocal = t.shares * t.price + (t.fee || 0) * (t.type === "BUY" ? 1 : -1);
+    const grossEUR = t.fxRate ? grossLocal / t.fxRate : toEUR(grossLocal, currency);
+    const cf = t.type === "BUY" ? grossEUR : -grossEUR; // compra = aportación, venta = retirada
+    const daysHeld = (periodEnd - d) / 86400000;
+    const weight = (totalDays - daysHeld) / totalDays;
+    netCashFlow += cf;
+    weightedCashFlow += cf * weight;
+  });
+
+  const EMV = state.positions.reduce((sum, p) => sum + posValEUR(p), 0);
+  // BMV (valor al inicio del periodo): se aproxima como el valor invertido
+  // en transacciones ANTERIORES al inicio del periodo, ya que no se guarda
+  // una foto histórica de la cartera en esa fecha exacta.
+  let BMV = 0;
+  (state.transactions || []).forEach(t => {
+    const d = t.date instanceof Date ? t.date : new Date(t.date);
+    if (d >= periodStart) return;
+    const currency = state.positions.find(p => p.ticker === t.ticker)?.currency || "EUR";
+    const grossLocal = t.shares * t.price;
+    const grossEUR = t.fxRate ? grossLocal / t.fxRate : toEUR(grossLocal, currency);
+    BMV += t.type === "BUY" ? grossEUR : -grossEUR;
+  });
+  BMV = Math.max(0, BMV);
+
+  const denom = BMV + weightedCashFlow;
+  if (Math.abs(denom) < 0.01) return null;
+  return +(((EMV - BMV - netCashFlow) / denom) * 100).toFixed(2);
+}
+
+function openTWRModal() {
+  if (!state.transactions?.length) {
+    openModal(`<h3>📊 Rentabilidad ponderada por tiempo</h3><div style="font-size:12px;color:#64748b;padding:16px 0;text-align:center">Todavía no hay transacciones registradas para calcularla.</div><div style="display:flex;justify-content:flex-end"><button class="btn-gray" onclick="closeModal()">Cerrar</button></div>`);
+    return;
+  }
+  const now = new Date();
+  const startOfYear = new Date(now.getFullYear(), 0, 1).toISOString();
+  const firstTxDate = state.transactions.reduce((min, t) => {
+    const d = t.date instanceof Date ? t.date : new Date(t.date);
+    return (!min || d < min) ? d : min;
+  }, null);
+  const ytd = calculateModifiedDietz(startOfYear);
+  const sinceInception = firstTxDate ? calculateModifiedDietz(firstTxDate.toISOString()) : null;
+  const simplePct = (() => {
+    const inv = state.positions.reduce((s,p)=>s+posInvEUR(p),0);
+    const cur = state.positions.reduce((s,p)=>s+posValEUR(p),0);
+    return inv ? ((cur-inv)/inv*100) : null;
+  })();
+
+  const fmtR = v => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+  const colorR = v => v == null ? "#94a3b8" : v >= 0 ? "#16a34a" : "#dc2626";
+
+  openModal(`
+    <h3>📊 Rentabilidad ponderada por tiempo (aprox.)</h3>
+    <div style="font-size:12px;color:#64748b;margin-bottom:16px;line-height:1.5">
+      Método <strong>Dietz Modificado</strong> — el estándar de la industria para aproximar el TWR
+      (Time-Weighted Return) sin necesitar el valor de tu cartera día a día. Pondera cada compra o
+      venta por el tiempo que lleva invertida, así que dos personas con la misma rentabilidad simple
+      pero que aportaron en momentos distintos obtendrían aquí números distintos — más fiel a cómo se
+      ha comportado realmente tu dinero.
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px;text-align:center">
+        <div style="font-size:10px;color:#2563eb;font-weight:700;text-transform:uppercase">En lo que va de año</div>
+        <div style="font-size:22px;font-weight:800;color:${colorR(ytd)}">${fmtR(ytd)}</div>
+      </div>
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px;text-align:center">
+        <div style="font-size:10px;color:#2563eb;font-weight:700;text-transform:uppercase">Desde el inicio</div>
+        <div style="font-size:22px;font-weight:800;color:${colorR(sinceInception)}">${fmtR(sinceInception)}</div>
+      </div>
+    </div>
+    <div style="background:#f8fafc;border-radius:10px;padding:10px 12px;font-size:11px;color:#64748b;display:flex;justify-content:space-between">
+      <span>Rentabilidad simple actual (para comparar)</span>
+      <span style="font-weight:700;color:${colorR(simplePct)}">${fmtR(simplePct)}</span>
+    </div>
+    <div style="font-size:10px;color:#94a3b8;margin-top:10px;line-height:1.4">
+      ⚠️ Aproximación, no un TWR exacto de manual: para eso haría falta guardar el valor de mercado de
+      toda la cartera en cada fecha de aportación, dato que no se registra retroactivamente.
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:16px">
+      <button class="btn-gray" onclick="closeModal()">Cerrar</button>
+    </div>
+  `);
+}
+
 function renderPortfolio() {
   const filter = (document.getElementById("port-filter")||{}).value||"";
   let rows = state.positions.filter(p=>
@@ -3057,6 +3159,7 @@ function renderPortfolio() {
   <button class="btn" style="font-size:15px;padding:5px 9px;line-height:1" onclick="openImportBroker()" title="Importar extracto de broker">📥</button>
   <button class="btn" style="font-size:15px;padding:5px 9px;line-height:1" onclick="exportCarteraExcel()" title="Exportar cartera a Excel">📊</button>
   <button class="btn" style="font-size:15px;padding:5px 9px;line-height:1" onclick="openSnapshotCartera(this)" title="Snapshot — Informe visual de cartera">📸</button>
+  <button class="btn" style="font-size:15px;padding:5px 9px;line-height:1" onclick="openTWRModal()" title="Rentabilidad ponderada por tiempo (Dietz Modificado)">📊</button>
           <div style="flex:1"></div>
           <input id="port-filter" class="inp-sm" placeholder="🔍 Filtrar..." style="width:150px;font-size:11px" value="${esc(filter)}" oninput="renderActiveTab()">
           <button class="btn-danger" style="margin-left:6px;font-size:11px;padding:5px 10px" onclick="deleteCartera()" title="Elimina todas las posiciones">🗑️ Vaciar</button>
