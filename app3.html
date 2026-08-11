@@ -609,6 +609,16 @@ function safeGetYear(dateVal) {
 }
 
 // Helper seguro para obtener fecha ISO
+// Compara dos fechas sea cual sea su formato (string, Date, timestamp) — a
+// diferencia de comparar con .localeCompare(), que solo funciona si ambas
+// son strings y rompe con "X.localeCompare is not a function" en cuanto
+// alguna es un objeto Date real.
+function compareDates(a, b) {
+  const da = a instanceof Date ? a.getTime() : new Date(a || 0).getTime();
+  const db = b instanceof Date ? b.getTime() : new Date(b || 0).getTime();
+  return (isNaN(da)?0:da) - (isNaN(db)?0:db);
+}
+
 function safeDateStr(dateVal) {
   if (!dateVal) return new Date().toISOString().slice(0, 10);
   let d;
@@ -881,7 +891,7 @@ function openDividendCashModal() {
   const cobrado = totalDividendosCobradosEUR();
   const usado = totalDividendCashUsedEUR();
   const disponible = cobrado - usado;
-  const usos = [...(state.dividendCashUsed || [])].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const usos = [...(state.dividendCashUsed || [])].sort((a, b) => compareDates(b.date, a.date));
 
   openModal(`
     <h3>💵 Efectivo acumulado de dividendos</h3>
@@ -1679,7 +1689,7 @@ function exportCarteraExcel() {
     });
 
     const txRows = [...(state.transactions||[])]
-      .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
+      .sort((a,b)=>compareDates(b.date, a.date))
       .map(t=>({
         "Fecha": (t.date||"").slice(0,10), "Ticker": t.ticker, "Tipo": t.type,
         "Acciones": t.shares, "Precio": t.price, "Comisión": t.commission||0,
@@ -1687,7 +1697,7 @@ function exportCarteraExcel() {
       }));
 
     const divCobrados = [...(state.dividends||[])]
-      .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
+      .sort((a,b)=>compareDates(b.date, a.date))
       .map(d=>({
         "Fecha": (d.date||"").slice(0,10), "Ticker": d.ticker,
         "Acciones": d.shares, "Importe/acción": d.amount,
@@ -2714,7 +2724,7 @@ function buildImportPreview(dataRows) {
 }
 
 function applyImportedTransactionsToPortfolio(transactions, replaceMode = false) {
-  const txs = [...transactions].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  const txs = [...transactions].sort((a, b) => compareDates(a.date, b.date));
 
   if (replaceMode) {
     state.positions = [];
@@ -4125,7 +4135,7 @@ function saveTxModal(id) {
 function _rebuildPositionFromTx(ticker, currency) {
   const txs = [...state.transactions]
     .filter(t => t.ticker === ticker && (t.type==="BUY"||t.type==="SELL"))
-    .sort((a,b) => (a.date||"").localeCompare(b.date||""));
+    .sort((a,b) => compareDates(a.date, b.date));
 
   const lots = [];
   txs.forEach(t => {
@@ -4650,7 +4660,7 @@ function calculatePortfolioHistory(tickers, period) {
   const periodMap = { '1A': 12, '3A': 36, '5A': 60, '10A': 120, 'MAX': 240 };
   const months = periodMap[period] || 12;
   
-  const txs = [...state.transactions].filter(t => tickerSet.has(t.ticker)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const txs = [...state.transactions].filter(t => tickerSet.has(t.ticker)).sort((a, b) => compareDates(a.date, b.date));
   
   const result = [];
   const today = new Date();
@@ -6663,7 +6673,7 @@ function _calcSharesFromTx(ticker) {
   const lots = [];
   [...state.transactions]
     .filter(t=>t.ticker===ticker && (t.type==="BUY"||t.type==="SELL"))
-    .sort((a,b)=>(a.date||"").localeCompare(b.date||""))
+    .sort((a,b)=>compareDates(a.date, b.date))
     .forEach(t => {
       if (t.type==="BUY") lots.push({shares:t.shares});
       else {
@@ -6951,7 +6961,7 @@ function renderRenta() {
   };
 
   const txByTicker = {};
-  [...state.transactions].sort((a,b)=>(a.date||"").localeCompare(b.date||"")).forEach(t => {
+  [...state.transactions].sort((a,b)=>compareDates(a.date, b.date)).forEach(t => {
     if (!txByTicker[t.ticker]) txByTicker[t.ticker] = [];
     txByTicker[t.ticker].push(t);
   });
@@ -7741,7 +7751,9 @@ async function runRadarSearch() {
 
   if (!allQuotes.length) {
     r._results = _radarFilterLocal();
-    r._error = "No hay datos disponibles. Mostrando tu cartera filtrada. Espera a que la app actualice los precios y vuelve a intentarlo.";
+    r._error = state.fmpKey
+      ? "No hay datos disponibles ahora mismo (proxies saturados). Mostrando tu cartera filtrada. Prueba de nuevo en unos minutos."
+      : "No hay datos disponibles ahora mismo. Mostrando tu cartera filtrada. Configura una clave gratuita de Financial Modeling Prep en la pestaña Valoración para que el Radar sea mucho más fiable.";
     r._loading = false; r._searched = true;
     renderActiveTab(); return;
   }
