@@ -540,16 +540,30 @@ async function doRegister() {
 
 async function doLoginGoogle() {
   try {
+    // Si NO hay sesión iniciada, forzamos la redirección a la web real
+    const currentUrl = window.location.href;
+    if (!currentUrl.includes('kapitalmanager.net')) {
+      // Si estás en localhost o en un error, redirige forzosamente a la web real
+      const { error } = await supabaseClient.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: 'https://kapitalmanager.net/app.html' }
+      });
+      if (error) {
+        console.error('doLoginGoogle: error de Supabase →', error);
+        alert('Error al iniciar sesión con Google: ' + formatSupabaseError(error));
+      }
+      return;
+    }
+
+    // Si ya estás en la web real, usa la redirección normal
     const { error } = await supabaseClient.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: 'https://kapitalmanager.net/app.html' }
+      options: { redirectTo: window.location.href.split('#')[0].split('?')[0] }
     });
     if (error) {
       console.error('doLoginGoogle: error de Supabase →', error);
       alert('Error al iniciar sesión con Google: ' + formatSupabaseError(error));
     }
-    // Si no hay error, el navegador redirige a Google — no hace falta hacer
-    // nada más aquí, el flujo continúa en onAuthStateChange al volver.
   } catch (e) {
     console.error('doLoginGoogle: excepción no controlada →', e);
     alert('Fallo de conexión al iniciar sesión con Google: ' + (e?.message || e));
