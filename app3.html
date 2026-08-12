@@ -542,7 +542,7 @@ async function doLoginGoogle() {
   try {
     const { error } = await supabaseClient.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.href.split('#')[0].split('?')[0] }
+      options: { redirectTo: 'https://kapitalmanager.net/app.html' }
     });
     if (error) {
       console.error('doLoginGoogle: error de Supabase →', error);
