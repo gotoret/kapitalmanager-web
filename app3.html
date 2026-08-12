@@ -546,7 +546,7 @@ async function doLoginGoogle() {
       // Si estás en localhost o en un error, redirige forzosamente a la web real
       const { error } = await supabaseClient.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: 'https://kapitalmanager.net/app.html' }
+        options: { redirectTo: 'https://kapitalmanager.net/app3.html' }
       });
       if (error) {
         console.error('doLoginGoogle: error de Supabase →', error);
