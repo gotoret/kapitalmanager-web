@@ -246,6 +246,46 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
   .metric-label { font-size: 9px; letter-spacing: 0.5px; margin-bottom: 2px; min-height: 2.3em; }
   .metric-value { font-size: 15px; }
 }
+
+/* ── Modo oscuro ──
+   Cubre los elementos estructurales (fondo, tarjetas, tablas, inputs,
+   modales, pestañas), que es donde vive la gran mayoría de la superficie
+   visual de la app. Como muchos textos y fondos puntuales están en estilos
+   en línea (no en clases), la última regla de este bloque actúa como red de
+   seguridad: oscurece automáticamente cualquier fondo blanco/gris claro en
+   línea que se haya escapado de las reglas anteriores, sin tener que tocar
+   cada uno de ellos a mano uno por uno. */
+body.dark-mode { background:#0f172a; color:#e2e8f0; }
+body.dark-mode #app { background:#0f172a; }
+body.dark-mode #header, body.dark-mode #tabs-bar { background:#1e293b; border-color:#334155; }
+body.dark-mode .tab-btn { color:#94a3b8; }
+body.dark-mode .tab-btn.active { color:#60a5fa; border-bottom-color:#60a5fa; }
+body.dark-mode .card, body.dark-mode .metric-card, body.dark-mode .modal { background:#1e293b; border-color:#334155; color:#e2e8f0; }
+body.dark-mode .metric-label { color:#94a3b8; }
+body.dark-mode table { color:#e2e8f0; }
+body.dark-mode th { background:#334155; color:#cbd5e1; border-color:#475569; }
+body.dark-mode th.sortable:hover { background:#3f4f66; }
+body.dark-mode td { border-color:#334155; }
+body.dark-mode tr:nth-child(even) td { background:#1e293b; }
+body.dark-mode tr:hover td { background:#25324580!important; }
+body.dark-mode .inp, body.dark-mode .inp-sm { background:#0f172a; border-color:#475569; color:#e2e8f0; }
+body.dark-mode .btn-gray { color:#93c5fd; border-color:#475569; }
+body.dark-mode .btn-gray:hover { background:#334155; color:#e2e8f0; }
+body.dark-mode .field label { color:#94a3b8; }
+body.dark-mode .overlay { background:rgba(0,0,0,0.65); }
+body.dark-mode ::-webkit-scrollbar-track { background:#1e293b; }
+body.dark-mode ::-webkit-scrollbar-thumb { background:#475569; }
+body.dark-mode [style*="background:#fff"],
+body.dark-mode [style*="background: #fff"],
+body.dark-mode [style*="background:#f8fafc"],
+body.dark-mode [style*="background:#f1f5f9"] { background:#1e293b!important; }
+body.dark-mode [style*="color:#1e293b"],
+body.dark-mode [style*="color:#0f172a"],
+body.dark-mode [style*="color:#334155"] { color:#e2e8f0!important; }
+body.dark-mode [style*="color:#64748b"],
+body.dark-mode [style*="color:#475569"] { color:#94a3b8!important; }
+body.dark-mode [style*="border:1px solid #e2e8f0"],
+body.dark-mode [style*="border: 1px solid #e2e8f0"] { border-color:#334155!important; }
 </style>
 </head>
 <body>
@@ -260,6 +300,8 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
       <span id="last-update-label" style="font-size:11px;color:#94a3b8">Sin actualizar | Próx: 60s</span>
       <button id="refresh-btn" class="btn" style="padding:5px 12px;font-size:12px" onclick="refreshPrices()">↻ Actualizar</button>
       <button class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="openPriceSourcesModal()" title="Configurar fuentes de precios">⚙️</button>
+      <button id="privacy-toggle-btn" class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="togglePrivacyMode()" title="Ocultar/mostrar importes"></button>
+      <button id="dark-mode-toggle-btn" class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="toggleDarkMode()" title="Modo oscuro"></button>
       <span id="user-email-label" style="font-size:11px;color:#475569;font-weight:600;margin-left:6px"></span>
       <span id="pos-alert-badge"></span>
       <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="location.href='index.html'">📦 Mi plan</button>
@@ -290,7 +332,16 @@ tr:hover td{background:#eff6ff!important;cursor:pointer;}
       <input type="password" id="login-pass" class="inp" placeholder="••••••••" autocomplete="current-password"/>
     </div>
     <button class="btn" style="width:100%;padding:11px;font-size:13px;margin-bottom:8px" onclick="doLogin()">Iniciar sesión</button>
-    <button class="btn-gray" style="width:100%;padding:11px;font-size:13px" onclick="doRegister()">Crear cuenta nueva</button>
+    <button class="btn-gray" style="width:100%;padding:11px;font-size:13px;margin-bottom:14px" onclick="doRegister()">Crear cuenta nueva</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <div style="flex:1;height:1px;background:#e2e8f0"></div>
+      <span style="font-size:11px;color:#94a3b8">o</span>
+      <div style="flex:1;height:1px;background:#e2e8f0"></div>
+    </div>
+    <button class="btn-gray" style="width:100%;padding:10px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:8px" onclick="doLoginGoogle()">
+      <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.9 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l6-6C33.6 5.5 29 3.5 24 3.5 12.7 3.5 3.5 12.7 3.5 24S12.7 44.5 24 44.5 44.5 35.3 44.5 24c0-1.2-.1-2.4-.3-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.6 15.4 18.9 12.5 24 12.5c3.1 0 5.8 1.1 8 3l6-6C33.6 5.5 29 3.5 24 3.5c-7.5 0-14 4.2-17.3 10.4z"/><path fill="#4CAF50" d="M24 44.5c5.2 0 9.8-1.7 13.4-4.6l-6.2-5.2c-2.1 1.4-4.7 2.2-7.2 2.2-5.3 0-9.7-3.1-11.3-7.5l-6.6 5.1C9.9 40.2 16.4 44.5 24 44.5z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.2 5.7l6.2 5.2C40.4 36 44.5 30.5 44.5 24c0-1.2-.1-2.4-.9-3.5z"/></svg>
+      Continuar con Google
+    </button>
   </div>
 </div>
 
@@ -484,6 +535,36 @@ async function doRegister() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = btnLabel; }
   }
+}
+
+async function doLoginGoogle() {
+  try {
+    const { error } = await supabaseClient.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.href.split('#')[0].split('?')[0] }
+    });
+    if (error) {
+      console.error('doLoginGoogle: error de Supabase →', error);
+      alert('Error al iniciar sesión con Google: ' + formatSupabaseError(error));
+    }
+    // Si no hay error, el navegador redirige a Google — no hace falta hacer
+    // nada más aquí, el flujo continúa en onAuthStateChange al volver.
+  } catch (e) {
+    console.error('doLoginGoogle: excepción no controlada →', e);
+    alert('Fallo de conexión al iniciar sesión con Google: ' + (e?.message || e));
+  }
+}
+
+// Detecta la sesión al volver del redirect de Google (u otros cambios de
+// sesión), ya que ese flujo no pasa por doLogin()/doRegister().
+if (typeof supabaseClient !== "undefined" && supabaseClient?.auth?.onAuthStateChange) {
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    if (event === "SIGNED_IN" && session?.user) {
+      state.authUser = session.user.email || null;
+      state.authUserId = session.user.id || null;
+      updateLoginStatus();
+    }
+  });
 }
 
 async function doLogin() {
@@ -801,6 +882,8 @@ let state = {
   authUserId: null,
   _appStarted: false,
   fmpKey: ls.get("km_fmp_key", ""),
+  privacyMode: ls.get("km_privacy_mode", false),
+  darkMode: ls.get("km_dark_mode", false),
   finnhubKey: ls.get("km_finnhub_key", ""),
   twelveDataKey: ls.get("km_twelvedata_key", ""),
   alphaVantageKey: ls.get("km_alphavantage_key", ""),
@@ -838,6 +921,7 @@ function normalizeAllDates() {
   state.transactions = (state.transactions || []).map(t => ({ ...t, date: toDate(t.date) }));
 }
 normalizeAllDates();
+if (document.body.classList) document.body.classList.toggle("dark-mode", !!state.darkMode);
 
 const save = () => {
   // Convertir fechas de dividendos a string ISO antes de guardar
@@ -990,7 +1074,10 @@ const posValEUR = (p) => {
 };
 
 const posInvEUR = (p) => posToEUR(p.shares * p.avg_cost, p);
-const fmtEUR = v => "€"+((v||0).toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2}));
+const fmtEUR = v => {
+  if (state.privacyMode) return "€ •••••";
+  return "€"+((v||0).toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2}));
+};
 const fmtPct = v => (v>=0?"+":"")+((v||0).toFixed(2))+"%";
 const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 const pnlColor = v => v>=0?"#16a34a":"#dc2626";
@@ -3402,7 +3489,7 @@ function renderAlerts() {
       <td>${cond}</td><td style="font-weight:600">${fmtEUR(a.price)}</td>
       <td style="color:${sc};font-weight:600">${st}</td>
       <td style="color:#64748b">${(a.created_at||"").slice(0,16)}</td>
-      <td><button class="btn-danger-sm" onclick="deleteAlert(${a.id})">✕</button></td>
+      <td><button class="btn-sm" onclick="openAddAlert(null,null,null,${a.id})" title="Editar" style="margin-right:4px">✏️</button><button class="btn-danger-sm" onclick="deleteAlert(${a.id})">✕</button></td>
     </tr>`;
   }).join("");
   return `<div style="padding:14px">
@@ -4041,7 +4128,7 @@ function deleteDividend(id){ state.dividends=state.dividends.filter(d=>d.id!==id
 function renderTransactions() {
   if (!state._txSort) state._txSort = "date";
   if (!state._txDir)  state._txDir  = "desc";
-  const txFilter = state._txFilter || "";
+  const txFilter = state._txFilter ?? ls.get("km_tx_filter", "");
 
   const COLS = [
     {key:"id",    label:"ID"},
@@ -4111,7 +4198,7 @@ function renderTransactions() {
     <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn" style="font-size:11px;padding:5px 12px" onclick="openAddTxManual()">＋ Nueva transacción</button>
       ${sel!=null?`<button class="btn" style="font-size:11px;padding:5px 12px;" onclick="openEditTransaction(${sel})">✏️ Editar seleccionada</button>`:""}
-      <input id="tx-filter" class="inp-sm" placeholder="🔍 Filtrar por ticker, broker o notas..." value="${esc(txFilter)}" style="width:220px" oninput="state._txFilter=this.value;renderActiveTab()">
+      <input id="tx-filter" class="inp-sm" placeholder="🔍 Filtrar por ticker, broker o notas..." value="${esc(txFilter)}" style="width:220px" oninput="state._txFilter=this.value;ls.set('km_tx_filter',this.value);renderActiveTab()">
       <span style="font-size:11px;color:#94a3b8">${txFilter?`${sorted.length} de ${state.transactions.length} transacciones`:`${state.transactions.length} transacciones`} · Click cabecera para ordenar</span>
     </div>
     <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:11px;color:#92400e;margin-bottom:10px">
@@ -6600,7 +6687,7 @@ function footballField(result) {
     {label:"P/FCF",      low:result.ranges?.pfcf_low,       high:result.ranges?.pfcf_high,       color:"#0891b2"},
     {label:"DCF",        low:result.ranges?.dcf_low,        high:result.ranges?.dcf_high,        color:"#dc2626"},
   ].filter(m=>m.low!=null&&m.high!=null);
-  if(!methods.length) return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">⚽ Football Field</h4>${noDataMsg()}</div>`;
+  if(!methods.length) return `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📏 Comparativa de rangos de valoración</h4>${noDataMsg()}</div>`;
   const allV=[...methods.flatMap(m=>[m.low,m.high]),price].filter(Boolean);
   const gMin=Math.min(...allV)*0.85, gMax=Math.max(...allV)*1.15, gR=gMax-gMin||1;
   const W=300, H=methods.length*28+40, PL=68, PR=16, PT=16, PB=20, gW=W-PL-PR;
@@ -6620,7 +6707,7 @@ function footballField(result) {
     return `<text x="${x.toFixed(1)}" y="${H-5}" text-anchor="middle" font-size="7.5" fill="#94a3b8">${v.toFixed(0)}</text>`;
   }).join("");
   return `<div class="card">
-    <h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">⚽ Football Field de valoración</h4>
+    <h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px">📏 Comparativa de rangos de valoración</h4>
     <div style="font-size:10px;color:#64748b;margin-bottom:8px">Rango justo por método vs precio actual (▼)</div>
     <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;overflow:visible">
       ${rows}${priceLine}${xTicks}
@@ -6884,40 +6971,56 @@ function deleteCartera() {
   buildDivInfo(); save(); renderHeader(); renderActiveTab();
 }
 
-function openAddAlert(defaultTicker, defaultName, defaultPrice) {
-  const isInPortfolio = state.positions.some(p => p.ticker === defaultTicker);
-  const portfolioOptions = state.positions.map(p=>`<option ${p.ticker===(defaultTicker||state.selectedTicker)?"selected":""}>${esc(p.ticker)} — ${esc(p.name)}</option>`).join("");
-  const extraOption = defaultTicker && !isInPortfolio
-    ? `<option value="${esc(defaultTicker)}" selected>${esc(defaultTicker)}${defaultName?" — "+esc(defaultName):""}</option>`
+function openAddAlert(defaultTicker, defaultName, defaultPrice, editId) {
+  const editing = editId ? state.alerts.find(a => a.id === editId) : null;
+  const tk = editing ? editing.ticker : defaultTicker;
+  const isInPortfolio = state.positions.some(p => p.ticker === tk);
+  const portfolioOptions = state.positions.map(p=>`<option ${p.ticker===(tk||state.selectedTicker)?"selected":""}>${esc(p.ticker)} — ${esc(p.name)}</option>`).join("");
+  const extraOption = tk && !isInPortfolio
+    ? `<option value="${esc(tk)}" selected>${esc(tk)}${defaultName?" — "+esc(defaultName):""}</option>`
     : "";
   openModal(`
-    <h3>🔔 Nueva alerta de precio</h3>
+    <h3>🔔 ${editing ? "Editar alerta" : "Nueva alerta"} de precio</h3>
     <div class="field"><label>Ticker</label>
-      <select id="m-a-ticker" class="inp">
+      <select id="m-a-ticker" class="inp" ${editing?"disabled":""}>
         ${extraOption}${portfolioOptions}
       </select>
     </div>
     <div class="field"><label>Condición</label>
-      <select id="m-a-dir" class="inp"><option value="ABOVE">↑ Sube por encima de</option><option value="BELOW">↓ Baja por debajo de</option></select>
+      <select id="m-a-dir" class="inp">
+        <option value="ABOVE" ${editing?.direction==="ABOVE"?"selected":""}>↑ Sube por encima de</option>
+        <option value="BELOW" ${editing?.direction==="BELOW"?"selected":""}>↓ Baja por debajo de</option>
+      </select>
     </div>
     <div class="field"><label>Precio objetivo (€)</label>
-      <input id="m-a-price" type="number" step="0.01" class="inp" value="${defaultPrice ? (+defaultPrice*0.9).toFixed(2) : 0}">
+      <input id="m-a-price" type="number" step="0.01" class="inp" value="${editing ? editing.price : (defaultPrice ? (+defaultPrice*0.9).toFixed(2) : 0)}">
     </div>
     <div style="font-size:11px;color:#64748b;margin-bottom:12px">
-      ${defaultPrice ? `Precio actual: <b>${(+defaultPrice).toFixed(2)}</b> — sugerido -10%` : ""}
+      ${defaultPrice && !editing ? `Precio actual: <b>${(+defaultPrice).toFixed(2)}</b> — sugerido -10%` : ""}
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
       <button class="btn-gray" onclick="closeModal()">Cancelar</button>
-      <button class="btn" onclick="saveAlertModal()">💾 Guardar</button>
+      <button class="btn" onclick="saveAlertModal(${editing ? editing.id : "null"})">💾 Guardar</button>
     </div>`);
 }
 
-function saveAlertModal() {
+function saveAlertModal(editId) {
   const ticker=(document.getElementById("m-a-ticker").value||"").split(" ")[0];
   const direction=document.getElementById("m-a-dir").value;
   const price=+document.getElementById("m-a-price").value;
   if(!ticker||price<=0){alert("Completa todos los campos");return;}
-  state.alerts.push({id:uid(),ticker,direction,price,active:true,triggered:false,created_at:new Date().toISOString()});
+  if (editId) {
+    const a = state.alerts.find(x => x.id === editId);
+    if (a) {
+      // Si cambia la condición o el precio, se reactiva (por si ya se había
+      // disparado con los valores anteriores) para que vuelva a vigilarse.
+      const changed = a.direction !== direction || a.price !== price;
+      Object.assign(a, { direction, price });
+      if (changed) { a.triggered = false; a.active = true; }
+    }
+  } else {
+    state.alerts.push({id:uid(),ticker,direction,price,active:true,triggered:false,created_at:new Date().toISOString()});
+  }
   save(); closeModal(); renderActiveTab(); renderHeader();
   maybeRequestNotificationPermission();
 }
@@ -7555,6 +7658,36 @@ function maybeShowOnboarding() {
 // ─────────────────────────────────────────────
 // LOGIN / ARRANQUE DE LA APP
 // ─────────────────────────────────────────────
+function togglePrivacyMode() {
+  state.privacyMode = !state.privacyMode;
+  ls.set("km_privacy_mode", state.privacyMode);
+  updatePrivacyButton();
+  renderHeader();
+  renderActiveTab();
+}
+
+function updatePrivacyButton() {
+  const btn = document.getElementById("privacy-toggle-btn");
+  if (!btn) return;
+  btn.textContent = state.privacyMode ? "🙈" : "👁️";
+  btn.title = state.privacyMode ? "Mostrar importes" : "Ocultar importes";
+}
+
+function toggleDarkMode() {
+  state.darkMode = !state.darkMode;
+  ls.set("km_dark_mode", state.darkMode);
+  applyDarkMode();
+}
+
+function applyDarkMode() {
+  document.body.classList.toggle("dark-mode", !!state.darkMode);
+  const btn = document.getElementById("dark-mode-toggle-btn");
+  if (btn) {
+    btn.textContent = state.darkMode ? "☀️" : "🌙";
+    btn.title = state.darkMode ? "Modo claro" : "Modo oscuro";
+  }
+}
+
 function updateLoginStatus() {
   const loginOverlay = document.getElementById("login-overlay");
   const emailLabel = document.getElementById("user-email-label");
@@ -7602,6 +7735,8 @@ async function startAppIfNeeded() {
   renderTabs();
   renderHeader();
   renderActiveTab();
+  updatePrivacyButton();
+  applyDarkMode();
 
   document.getElementById("tabs-bar").addEventListener("click", () => {
     setTimeout(() => {
@@ -7628,7 +7763,11 @@ const RADAR_REGIONS = ["Todos","España","Europa","EE.UU.","Reino Unido","Asia",
 const RADAR_CURRENCIES = ["Todas","EUR","USD","GBP","CAD","AUD","JPY"];
 
 if (!state.radar) state.radar = {
-  region: "Todos", sector: "Todos", currency: "Todas", exchange: "",
+  region: ls.get("km_radar_region", "Todos"),
+  sector: ls.get("km_radar_sector", "Todos"),
+  currency: ls.get("km_radar_currency", "Todas"),
+  hideOwned: ls.get("km_radar_hideOwned", true),
+  exchange: "",
   per_max: "", evEbitda_max: "", pb_max: "", ps_max: "", yield_min: "", payout_max: "",
   revGrowth_min: "", epsGrowth_min: "", divGrowth_min: "",
   margin_min: "", roe_min: "", roic_min: "", fcf_min: "",
@@ -7638,8 +7777,14 @@ if (!state.radar) state.radar = {
   _results: [], _loading: false, _searched: false, _error: ""
 };
 
+// Filtros que se recuerdan entre visitas (los que definen "qué mercado me
+// interesa en general"); el resto de filtros numéricos son más de
+// exploración puntual y se quedan solo para la sesión actual, como antes.
+const RADAR_PERSISTED_KEYS = { region: "km_radar_region", sector: "km_radar_sector", currency: "km_radar_currency", hideOwned: "km_radar_hideOwned" };
+
 function setRadarFilter(key, val) {
   state.radar[key] = val;
+  if (RADAR_PERSISTED_KEYS[key]) ls.set(RADAR_PERSISTED_KEYS[key], val);
 }
 
 const RADAR_TICKERS = {
