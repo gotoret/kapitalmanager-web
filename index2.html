@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Kapital Manager — Acceso</title>
+<style>
+  :root{--b:#2563eb;--g:#059669;--r:#dc2626;--s:#64748b;--bg:#f8fafc}
+  *{box-sizing:border-box} body{font-family:Segoe UI,Arial,sans-serif;background:var(--bg);margin:0;color:#0f172a}
+  .wrap{max-width:980px;margin:0 auto;padding:18px} .card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin-bottom:14px}
+  .row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px} .row2{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+  .btn{background:var(--b);color:#fff;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer} .btn-gray{background:#64748b}.btn-green{background:var(--g)}
+  .btn:disabled{opacity:.55;cursor:not-allowed} .tag{display:inline-block;background:#e0f2fe;color:#075985;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;margin-left:6px}
+  .tag-ok{background:#dcfce7;color:#166534} .tag-warn{background:#fef3c7;color:#92400e} .tag-free{background:#ede9fe;color:#6d28d9} .tag-beta{background:#fef3c7;color:#92400e}
+  .small{font-size:12px;color:var(--s)} .hr{height:1px;background:#e2e8f0;margin:12px 0}
+  input,select{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:14px}
+  .plans{display:grid;grid-template-columns:repeat(3,1fr);gap:12px} .plan{border:1px solid #e2e8f0;border-radius:14px;padding:14px;min-width:0} .plan h3{margin:0 0 6px 0}
+  @media (max-width:720px){
+    .plans{grid-template-columns:1fr}
+    .row{grid-template-columns:1fr}
+    .row2{grid-template-columns:1fr}
+  }
+  .price{font-size:28px;font-weight:800;color:#111827}
+  .price .strike{text-decoration:line-through;font-size:18px;color:#94a3b8;font-weight:400;margin-right:8px}
+  .price .free-badge{font-size:14px;background:#fef3c7;color:#92400e;padding:2px 10px;border-radius:999px;font-weight:700;margin-left:8px}
+  .muted{color:#64748b;font-size:13px} ul{margin:10px 0 0 18px}
+  .banner{background:#eff6ff;border:1px solid #bfdbfe;padding:12px 14px;border-radius:12px;margin-bottom:14px}
+  .hidden{display:none}
+  .center{text-align:center}
+  .beta-banner{background:#fef9c3;border:2px solid #f59e0b;border-radius:12px;padding:14px 18px;margin-top:14px;text-align:center}
+  .beta-banner strong{color:#92400e;font-size:14px}
+  .beta-banner .emoji{font-size:20px}
+  .badge-beta{background:#fef3c7;color:#92400e;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:700;display:inline-block;margin-left:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="banner" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <img src="logo.png" alt="Kapital Manager" style="height:28px;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block'"/>
+    <span style="display:none;background:#1d4ed8;color:#fff;font-weight:800;font-size:12px;padding:5px 9px;border-radius:6px;letter-spacing:0.5px">KM</span>
+    <b>Kapital Manager</b> <span id="planBadge" class="tag tag-free">Free</span>
+    <div id="statusText" class="small" style="width:100%;margin-top:2px">Acceso gratuito limitado durante 7 días.</div>
+  </div>
+
+  <div class="card" id="authCard">
+    <h2 style="margin-top:0">Acceso</h2>
+    <div class="row2">
+      <div><label>Correo</label><input id="email" type="email" placeholder="tu@email.com"></div>
+      <div><label>Contraseña</label><input id="pass" type="password" placeholder="mínimo 6 caracteres"></div>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn" onclick="register()">Crear cuenta</button>
+      <button class="btn-gray btn" onclick="login()">Iniciar sesión</button>
+      <button class="btn-green btn" onclick="logout()">Salir</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin:14px 0">
+      <div style="flex:1;height:1px;background:#e2e8f0"></div>
+      <span class="small">o</span>
+      <div style="flex:1;height:1px;background:#e2e8f0"></div>
+    </div>
+    <button class="btn-gray btn" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px" onclick="loginGoogle()">
+      <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.9 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l6-6C33.6 5.5 29 3.5 24 3.5 12.7 3.5 3.5 12.7 3.5 24S12.7 44.5 24 44.5 44.5 35.3 44.5 24c0-1.2-.1-2.4-.3-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.6 15.4 18.9 12.5 24 12.5c3.1 0 5.8 1.1 8 3l6-6C33.6 5.5 29 3.5 24 3.5c-7.5 0-14 4.2-17.3 10.4z"/><path fill="#4CAF50" d="M24 44.5c5.2 0 9.8-1.7 13.4-4.6l-6.2-5.2c-2.1 1.4-4.7 2.2-7.2 2.2-5.3 0-9.7-3.1-11.3-7.5l-6.6 5.1C9.9 40.2 16.4 44.5 24 44.5z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.2 5.7l6.2 5.2C40.4 36 44.5 30.5 44.5 24c0-1.2-.1-2.4-.9-3.5z"/></svg>
+      Continuar con Google
+    </button>
+    <div class="small" style="margin-top:8px">Al registrarte, obtienes acceso Beta gratuito a todos los planes hasta el lanzamiento oficial.</div>
+  </div>
+
+  <div class="card" id="enterAppCard" style="display:none">
+    <h2 style="margin-top:0">✅ Acceso activo</h2>
+    <div class="small" style="margin-bottom:12px">Tu cuenta tiene acceso a Kapital Manager.</div>
+    <button class="btn btn-green" style="width:100%;padding:12px" onclick="location.href='app.html'">Entrar a la aplicación →</button>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Planes</h2>
+    <div class="plans">
+      <div class="plan">
+        <h3>Free 7 días</h3>
+        <div class="price">0€</div>
+        <div class="muted">Limitado y temporal</div>
+        <ul>
+          <li>Cartera hasta 5 posiciones</li><li>Alertas</li><li>Dividendos</li><li>Transacciones</li>
+        </ul>
+        <p class="small">Acceso completo a estas funciones durante 1 semana.</p>
+      </div>
+      <div class="plan" style="border-color:#f59e0b;background:#fffbeb">
+        <h3>Pro <span class="badge-beta">🎉 BETA</span></h3>
+        <div class="price">
+          <span class="strike">5,99€/mes</span>
+          <span class="free-badge">🎉 GRATIS en Beta</span>
+        </div>
+        <div class="muted" style="text-decoration:line-through;color:#94a3b8">o 59,99€/año</div>
+        <ul>
+          <li>Todas las funciones</li><li>Hasta 15 acciones en cartera</li>
+        </ul>
+        <button class="btn" style="margin-top:12px;width:100%;background:#f59e0b;color:#fff" onclick="buy('pro_month')">📝 Solicitar acceso</button>
+        <button class="btn-gray btn" style="margin-top:8px;width:100%;opacity:0.4;cursor:not-allowed" disabled>Pago anual (no disponible)</button>
+      </div>
+      <div class="plan" style="border-color:#f59e0b;background:#fffbeb">
+        <h3>Premium <span class="badge-beta">🎉 BETA</span></h3>
+        <div class="price">
+          <span class="strike">14,99€/mes</span>
+          <span class="free-badge">🎉 GRATIS en Beta</span>
+        </div>
+        <div class="muted" style="text-decoration:line-through;color:#94a3b8">o 149,99€/año</div>
+        <ul>
+          <li>Todas las funciones</li><li>Sin límite de acciones en cartera</li>
+        </ul>
+        <button class="btn" style="margin-top:12px;width:100%;background:#f59e0b;color:#fff" onclick="buy('premium_month')">📝 Solicitar acceso</button>
+        <button class="btn-gray btn" style="margin-top:8px;width:100%;opacity:0.4;cursor:not-allowed" disabled>Pago anual (no disponible)</button>
+      </div>
+    </div>
+
+    <!-- BANNER BETA -->
+    <div class="beta-banner">
+      <div class="emoji">🎉</div>
+      <strong>La aplicación está actualmente en fase Beta.</strong><br>
+      <span style="color:#92400e;font-size:13px">Todos los planes Premium están desbloqueados gratuitamente hasta el lanzamiento oficial.<br>
+      <strong>Al registrarte, obtienes acceso automático a todos los planes.</strong></span>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL='https://qoezxfuxzrtzexzzplfz.supabase.co';
+const SUPABASE_ANON_KEY='sb_publishable_e99iPLwtmEpykURcsz63Xg_cEvzX5yR';
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ── Ventana de aviso propia (sustituye al alert() nativo del navegador) ──
+window.alert = function(msg){
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:99999;padding:20px';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:14px;padding:20px 24px;max-width:380px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.25)';
+  const logo = document.createElement('div');
+  logo.style.cssText = 'font-weight:800;color:#2563eb;font-size:13px;margin-bottom:10px';
+  logo.textContent = 'Kapital Manager';
+  const msgEl = document.createElement('div');
+  msgEl.style.cssText = 'font-size:14px;color:#0f172a;margin-bottom:18px;white-space:pre-wrap;line-height:1.5';
+  msgEl.textContent = msg;
+  const btn = document.createElement('button');
+  btn.textContent = 'Aceptar';
+  btn.className = 'btn';
+  btn.style.cssText = 'float:right;font-size:13px;padding:8px 18px';
+  btn.onclick = () => overlay.remove();
+  box.appendChild(logo); box.appendChild(msgEl); box.appendChild(btn);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+};
+const PRICES = {
+  pro_month: 'prod_UsTvWkzcOdQfmW',
+  pro_year: 'prod_UsTvGfomMazeDe',
+  premium_month: 'prod_UsTwOZp0nGVcIv',
+  premium_year: 'prod_UsTxNSNGBM2ZbX'
+};
+let user = null;
+let profile = { plan:'free', trial_start:null, trial_end:null, status:'free', max_positions: 5 };
+
+function setBadge(plan){
+  const b=document.getElementById('planBadge');
+  const map={free:['Free','tag-free'],trial:['Trial','tag-warn'],beta:['Beta 🎉','tag-beta'],pro:['Pro','tag-ok'],premium:['Premium','tag-ok']};
+  const [t,c]=map[plan]||map.free; b.className='tag '+c; b.textContent=t;
+}
+function setStatus(txt){ document.getElementById('statusText').textContent = txt; }
+function trialDaysLeft(){ if(!profile.trial_end) return 0; const d=(new Date(profile.trial_end)-Date.now())/86400000; return Math.max(0, Math.ceil(d)); }
+
+function hasAccess(){
+  const plan = profile.plan || 'free';
+  if(plan==='beta' || plan==='pro' || plan==='premium') return true;
+  if(plan==='free' && profile.trial_end && trialDaysLeft()>0) return true;
+  return false;
+}
+
+function refreshUI(){
+  const plan = profile.plan || 'free';
+  setBadge(plan==='free' && profile.trial_end ? 'trial' : plan);
+  if(plan==='beta') {
+    setStatus('🎉 Plan Beta activo — acceso a todas las funciones hasta el lanzamiento oficial.');
+  } else if(plan==='free' && profile.trial_end){
+    const left = trialDaysLeft();
+    setStatus(left>0 ? `Acceso gratuito limitado. Te quedan ${left} día(s). Máximo 5 posiciones.` : 'Tu prueba gratuita terminó. Solicita acceso Beta para seguir usando la app.');
+  } else if(plan==='pro') {
+    setStatus('Plan Pro activo: acceso a todo, Máximo 15 posiciones.');
+  } else if(plan==='premium') {
+    setStatus('Plan Premium activo: todo incluido.');
+  } else {
+    setStatus('Acceso gratuito limitado durante 7 días.');
+  }
+
+  const enterCard = document.getElementById('enterAppCard');
+  const authCard = document.getElementById('authCard');
+  if (user && hasAccess()) {
+    enterCard.style.display = 'block';
+    authCard.style.display = 'none';
+  } else {
+    enterCard.style.display = 'none';
+    authCard.style.display = 'block';
+  }
+}
+
+async function loadProfile(){
+  if(!user) return;
+  try {
+    const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', user.id).maybeSingle();
+    if (error) {
+      console.error('loadProfile: error leyendo el perfil →', error);
+      alert('No se pudo cargar tu perfil: ' + error.message);
+      return;
+    }
+    if(data){ profile = { ...profile, ...data }; }
+    else {
+      // NUEVO USUARIO: Asignar plan BETA automáticamente
+      const now = new Date();
+      // Beta sin fecha de expiración (o una fecha muy lejana)
+      const betaEnd = new Date(now.getTime() + 365*86400000).toISOString();
+      profile = { plan:'beta', status:'active', trial_start: now.toISOString(), trial_end:betaEnd, max_positions: 9999 };
+      const { error: upErr } = await supabaseClient.from('profiles').upsert({ id:user.id, email:user.email, ...profile, max_positions: 9999 });
+      if (upErr) {
+        console.error('loadProfile: error creando el perfil →', upErr);
+        alert('Se creó tu cuenta pero no se pudo inicializar tu perfil: ' + upErr.message);
+      }
+    }
+  } catch (e) {
+    console.error('loadProfile: excepción no controlada →', e);
+    alert('Fallo de conexión al cargar tu perfil: ' + (e?.message || e));
+  }
+  refreshUI();
+}
+// ── Traducción de mensajes de error habituales de Supabase (llegan siempre en inglés) ──
+function translateAuthError(msg){
+  const m = String(msg || '');
+  const map = [
+    [/password should be at least (\d+) characters/i, (a) => `La contraseña debe tener al menos ${a[1]} caracteres`],
+    [/invalid login credentials/i, 'Correo o contraseña incorrectos'],
+    [/user already registered/i, 'Ya existe una cuenta con ese correo'],
+    [/email not confirmed/i, 'Debes confirmar tu correo electrónico antes de iniciar sesión'],
+    [/invalid email/i, 'El correo electrónico no es válido'],
+    [/load failed|network error|failed to fetch|networkerror when attempting to fetch/i, 'No se pudo conectar con el servidor. Comprueba tu conexión a internet (o desactiva VPN / bloqueadores de contenido en Safari) e inténtalo de nuevo. Si sigue fallando, puede que el servicio esté temporalmente caído.'],
+    [/rate limit/i, 'Demasiados intentos. Espera un momento y vuelve a intentarlo'],
+  ];
+  for (const [re, replacement] of map) {
+    const match = m.match(re);
+    if (match) return typeof replacement === 'function' ? replacement(match) : replacement;
+  }
+  return m; // si no reconocemos el mensaje, mostramos el original tal cual
+}
+
+// Cuando el mensaje de Supabase no aporta nada útil (vacío, "{}", etc.) añadimos
+// el detalle técnico crudo (status/código/objeto) para poder diagnosticar sin consola.
+function formatSupabaseError(error) {
+  if (!error) return 'Error desconocido';
+  const translated = translateAuthError(error.message);
+  const extra = [];
+  if (error.status) extra.push(`HTTP ${error.status}`);
+  if (error.code) extra.push(`código: ${error.code}`);
+  let out = translated + (extra.length ? ` (${extra.join(', ')})` : '');
+  if (!translated || translated.trim().length < 3 || translated.trim() === '{}') {
+    try { out += '\n\nDetalle técnico: ' + JSON.stringify(error); } catch(e) { out += '\n\nDetalle técnico no disponible'; }
+  }
+  return out;
+}
+
+// Un 504/503/AuthRetryableFetchError normalmente es un fallo transitorio de la
+// puerta de enlace de Supabase (p.ej. la instancia "Nano" tardando en responder),
+// no un error de la app. Supabase marca estos como seguros para reintentar.
+function isRetryableAuthError(error) {
+  if (!error) return false;
+  if (error.name === 'AuthRetryableFetchError') return true;
+  if ([502, 503, 504].includes(error.status)) return true;
+  if (/timeout|gateway/i.test(error.message || '')) return true;
+  return false;
+}
+
+async function withAuthRetry(fn, { retries = 2, delayMs = 1500, onRetry } = {}) {
+  let result;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    result = await fn();
+    if (!result.error || !isRetryableAuthError(result.error)) return result;
+    if (attempt < retries) {
+      onRetry?.(attempt + 1, retries);
+      await new Promise(r => setTimeout(r, delayMs * (attempt + 1)));
+    }
+  }
+  return result;
+}
+
+async function loginGoogle(){
+  try {
+    const { error } = await supabaseClient.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.href.split('#')[0].split('?')[0] }
+    });
+    if (error) {
+      console.error('loginGoogle: error de Supabase →', error);
+      alert('Error al iniciar sesión con Google: ' + formatSupabaseError(error));
+    }
+    // Si no hay error, el navegador redirige a Google — el resto del flujo
+    // (crear perfil si es nuevo usuario, entrar a la app) continúa más abajo
+    // en el listener onAuthStateChange al volver.
+  } catch (e) {
+    console.error('loginGoogle: excepción no controlada →', e);
+    alert('Fallo de conexión al iniciar sesión con Google: ' + (e?.message || e));
+  }
+}
+
+// Al volver del redirect de Google, Supabase dispara este evento con la
+// sesión ya creada. Reutiliza exactamente la misma loadProfile() que usa el
+// login con correo/contraseña, así que un usuario nuevo por Google recibe su
+// perfil Beta automáticamente sin tener que duplicar esa lógica.
+supabaseClient.auth.onAuthStateChange(async (event, session) => {
+  if (event === 'SIGNED_IN' && session?.user) {
+    user = session.user;
+    await loadProfile();
+    if (hasAccess()) location.href = 'app.html';
+  }
+});
+
+async function register(){
+  const email = document.getElementById('email').value.trim().toLowerCase();
+  const password = document.getElementById('pass').value;
+  if(!email || !password) return alert('Introduce correo y contraseña');
+  if(password.length < 6) return alert('La contraseña debe tener al menos 6 caracteres');
+
+  const btn = document.querySelector('button[onclick="register()"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creando cuenta...'; }
+
+  try {
+    const { data, error } = await withAuthRetry(
+      () => supabaseClient.auth.signUp({ email, password }),
+      { onRetry: (n, total) => { if (btn) btn.textContent = `Reintentando (${n}/${total})...`; } }
+    );
+
+    if (error) {
+      console.error('register: error de Supabase →', error);
+      return alert('Error al crear la cuenta: ' + formatSupabaseError(error));
+    }
+
+    // Supabase, por seguridad (anti-enumeración), NO devuelve error si el correo ya
+    // está registrado: devuelve un "usuario" con identities:[] y sin sesión.
+    if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      return alert('Ya existe una cuenta con ese correo.\n\nSi es tuya, prueba a "Iniciar sesión". Si no confirmaste el correo al registrarte, revisa tu bandeja de entrada.');
+    }
+
+    if (!data?.session) {
+      // El proyecto tiene activada la confirmación por email: el usuario se ha creado
+      // pero todavía no hay sesión activa, así que NO se puede crear su perfil todavía
+      // (fallaría por Row Level Security). Hay que esperar a que confirme el correo.
+      alert('✅ Cuenta creada.\n\nTe hemos enviado un correo a ' + email + ' para confirmar tu cuenta. Ábrelo y confirma antes de iniciar sesión.');
+      return;
+    }
+
+    // El proyecto no requiere confirmación por email: ya hay sesión activa, seguimos.
+    user = data.user;
+    await loadProfile();
+    alert('🎉 Cuenta creada con acceso Beta gratuito a todos los planes.');
+    refreshUI();
+  } catch (e) {
+    console.error('register: excepción no controlada →', e);
+    alert('Fallo de conexión al crear la cuenta: ' + (e?.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Crear cuenta'; }
+  }
+}
+async function login(){
+  const email = document.getElementById('email').value.trim().toLowerCase();
+  const password = document.getElementById('pass').value;
+
+  const btn = document.querySelector('button[onclick="login()"]');
+  const btnLabel = btn?.textContent;
+  if (btn) btn.disabled = true;
+
+  try {
+    const { data, error } = await withAuthRetry(
+      () => supabaseClient.auth.signInWithPassword({ email, password }),
+      { onRetry: (n, total) => { if (btn) btn.textContent = `Reintentando (${n}/${total})...`; } }
+    );
+    if(error) { console.error('login: error de Supabase →', error); return alert('Error al iniciar sesión: ' + formatSupabaseError(error)); }
+    user = data.user;
+    await loadProfile();
+    if (hasAccess()) location.href = 'app.html';
+  } catch (e) {
+    console.error('login: excepción no controlada →', e);
+    alert('Fallo de conexión al iniciar sesión: ' + (e?.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btnLabel; }
+  }
+}
+async function logout(){ await supabaseClient.auth.signOut(); user=null; profile={ plan:'free', trial_start:null, trial_end:null, status:'free' }; refreshUI(); }
+
+async function buy(planKey){
+  if(!user) return alert('Inicia sesión primero');
+  const planMap = {
+    'pro_month': 'pro',
+    'pro_year': 'pro',
+    'premium_month': 'premium',
+    'premium_year': 'premium'
+  };
+  const plan = planMap[planKey] || 'pro';
+  
+  // En Beta, simplemente asignamos el plan al perfil
+  // sin necesidad de Stripe (pero controlado por nosotros)
+  const confirmMsg = `¿Solicitar acceso al plan ${plan.charAt(0).toUpperCase() + plan.slice(1)}?\n\nDurante la Beta, el acceso es gratuito.`;
+  if (!confirm(confirmMsg)) return;
+  
+  try {
+    profile.plan = plan;
+    profile.status = 'active';
+    profile.max_positions = plan === 'premium' ? 9999 : 15;
+    const { error } = await supabaseClient.from('profiles').upsert({ 
+      id:user.id, 
+      email:user.email, 
+      plan: profile.plan,
+      status: profile.status,
+      trial_start: profile.trial_start,
+      trial_end: profile.trial_end,
+      max_positions: profile.max_positions
+    });
+    if (error) {
+      console.error('Error actualizando perfil:', error);
+      alert('No se pudo activar el plan: ' + error.message);
+      return;
+    }
+    alert(`✅ Plan ${plan.charAt(0).toUpperCase() + plan.slice(1)} activado correctamente.`);
+    refreshUI();
+  } catch (e) {
+    console.error('buy: excepción no controlada →', e);
+    alert('Error al activar el plan: ' + (e?.message || e));
+  }
+}
+
+supabaseClient.auth.getUser().then(async ({data})=>{
+  if(data?.user){
+    user=data.user;
+    await loadProfile();
+  }
+  refreshUI();
+});
+</script>
+</body>
+</html>
