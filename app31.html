@@ -349,7 +349,7 @@ body.dark-mode [style*="border:1px dashed #cbd5e1"] { border-color:#334155!impor
       <button id="refresh-btn" class="btn" style="padding:5px 12px;font-size:12px" onclick="refreshPrices()">↻ Actualizar</button>
       <button class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="openPriceSourcesModal()" title="Configurar fuentes de precios">⚙️</button>
       <button id="privacy-toggle-btn" class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="togglePrivacyMode()" title="Ocultar/mostrar importes"></button>
-      <button id="dark-mode-toggle-btn" class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="toggleDarkMode()" title="Modo oscuro"></button>
+      <button id="dark-mode-toggle-btn" class="btn-gray" style="padding:5px 10px;font-size:12px;display:none" onclick="toggleDarkMode()" title="Modo oscuro"></button>
       <span id="user-email-label" style="font-size:11px;color:#475569;font-weight:600;margin-left:6px"></span>
       <span id="pos-alert-badge"></span>
       <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="location.href='index.html'">📦 Mi plan</button>
@@ -4033,7 +4033,7 @@ function renderDivDashboard(totalAnnExpected) {
 
   const bigLabel = sel === "Anual" ? "Dividendos anuales" : `Dividendos ${sel}`;
 
-  const tabLabels = ["📊 Total por año", "🏢 Total por empresa", "📈 Crecimiento anual"];
+  const tabLabels = ["📊 Total por año", "🏢 Total por empresa", "📈 Crecimiento anual", "📅 Calendario"];
   const chartTabs = tabLabels.map((label, idx) => `
     <button class="div-chart-tab ${state._divChartTab === idx ? 'active' : ''}"
            onclick="setDivChartTab(${idx})">
@@ -4077,7 +4077,8 @@ function renderDivDashboard(totalAnnExpected) {
         <div style="font-size:10px;color:#94a3b8;margin-top:6px;text-align:center">${growths.length>10?'⇅ Desliza dentro del gráfico para ver el resto':''}</div>
       </div>
       ${chart3Note}
-    </div>`
+    </div>`,
+    renderDividendCalendar()
   ];
 
   const activeChart = chartContent[state._divChartTab] || chartContent[0];
@@ -4839,7 +4840,83 @@ function renderCompanyFundamentalCharts(ticker) {
   `;
 }
 
-// ── Comparador vs índice de referencia (IBEX 35 / S&P 500 / FTSE 100) ──
+// ── Calendario de dividendos ──
+// Se agrupa por mes en vez de una cuadrícula de días (7 columnas de celdas
+// diminutas no se lee bien en móvil); para cada posición se proyectan los
+// próximos pagos a partir de su próxima fecha ex-dividendo conocida y su
+// frecuencia (mensual/trimestral/semestral/anual), hasta 12 meses vista.
+function renderDividendCalendar() {
+  if (!state.divInfo?.length) return `<div class="no-data-msg">Sin posiciones con dividendo</div>`;
+
+  const MONTHS_AHEAD = 12;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const horizon = new Date(today); horizon.setMonth(horizon.getMonth() + MONTHS_AHEAD);
+  const monthsStep = { "Mensual": 1, "Trimestral": 3, "Semestral": 6, "Anual": 12 };
+
+  const events = [];
+  state.divInfo.forEach(d => {
+    if (d._estimated || !d.ex_date || !d.div_rate) return;
+    const step = monthsStep[d.freq] || 12;
+    const perPayment = d.div_rate * d.shares; // en divisa local de la posición
+    let dt = new Date(d.ex_date);
+    // Avanzar hasta la primera ocurrencia dentro del horizonte (por si la
+    // fecha conocida ya quedó en el pasado)
+    let guard = 0;
+    while (dt < today && guard < 24) { dt.setMonth(dt.getMonth() + step); guard++; }
+    while (dt <= horizon && guard < 48) {
+      events.push({ date: new Date(dt), ticker: d.ticker, name: d.name, amountEUR: toEUR(perPayment, d.currency) });
+      dt.setMonth(dt.getMonth() + step);
+      guard++;
+    }
+  });
+  events.sort((a,b) => a.date - b.date);
+
+  if (!events.length) {
+    return `<div class="no-data-msg">Todavía no hay suficiente información de frecuencia/fecha para proyectar el calendario. Se completa a medida que se actualizan los precios.</div>`;
+  }
+
+  const monthNames = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  const byMonth = {};
+  events.forEach(e => {
+    const key = `${e.date.getFullYear()}-${String(e.date.getMonth()).padStart(2,"0")}`;
+    (byMonth[key] ||= []).push(e);
+  });
+
+  const monthBlocks = Object.keys(byMonth).sort().map(key => {
+    const [yr, mo] = key.split("-").map(Number);
+    const monthEvents = byMonth[key];
+    const monthTotal = monthEvents.reduce((s,e) => s + e.amountEUR, 0);
+    const isCurrentMonth = yr === today.getFullYear() && mo === today.getMonth();
+    const rows = monthEvents.map(e => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:12px">
+        <span style="display:flex;align-items:center;gap:8px">
+          <span style="background:#dbeafe;color:#1d4ed8;border-radius:6px;padding:2px 7px;font-size:10px;font-weight:700;min-width:26px;text-align:center">${e.date.getDate()}</span>
+          <strong>${esc(e.ticker)}</strong> <span style="color:#94a3b8">${esc((e.name||"").slice(0,20))}</span>
+        </span>
+        <span style="font-weight:700;color:#16a34a">${fmtEUR(e.amountEUR)}</span>
+      </div>`).join("");
+    return `<div class="card" style="margin-bottom:10px;${isCurrentMonth?"border-color:#3b82f6;border-width:2px":""}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <h4 style="font-size:12px;font-weight:700;color:${isCurrentMonth?"#1d4ed8":"#334155"};text-transform:capitalize;margin:0">${isCurrentMonth?"📍 ":""}${monthNames[mo]} ${yr}</h4>
+        <span style="font-size:12px;font-weight:800;color:#16a34a">${fmtEUR(monthTotal)}</span>
+      </div>
+      ${rows}
+    </div>`;
+  }).join("");
+
+  const totalProjected = events.reduce((s,e) => s + e.amountEUR, 0);
+
+  return `<div>
+    <div style="font-size:10px;color:#94a3b8;margin-bottom:12px">Proyección a ${MONTHS_AHEAD} meses vista según la frecuencia de pago conocida de cada posición — importes estimados, pueden variar si la empresa cambia el dividendo.</div>
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:12px;color:#166534;font-weight:600">Total proyectado (${MONTHS_AHEAD} meses)</span>
+      <span style="font-size:18px;font-weight:800;color:#16a34a">${fmtEUR(totalProjected)}</span>
+    </div>
+    ${monthBlocks}
+  </div>`;
+}
+
+
 function referenceIndexFor(ticker) {
   const t = (ticker || "").toUpperCase();
   if (t.endsWith(".MC")) return { symbol: "^IBEX", label: "IBEX 35" };
@@ -7900,6 +7977,12 @@ function toggleDarkMode() {
 }
 
 function applyDarkMode() {
+  // Modo oscuro deshabilitado temporalmente (botón oculto) hasta revisarlo
+  // a fondo — se fuerza a apagado para que nadie se quede atrapado sin forma
+  // de desactivarlo. El resto del código queda intacto para retomarlo luego.
+  document.body.classList.remove("dark-mode");
+  return;
+  // eslint-disable-next-line no-unreachable
   document.body.classList.toggle("dark-mode", !!state.darkMode);
   const btn = document.getElementById("dark-mode-toggle-btn");
   if (btn) {
