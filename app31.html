@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <link rel="icon" type="image/x-icon" href="favicon.ico"/>
-<title>Kapital Manager v0.94</title>
+<title>Kapital Manager v0.95</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -260,7 +260,17 @@ body.dark-mode #app { background:#0f172a; }
 body.dark-mode #header, body.dark-mode #tabs-bar { background:#1e293b; border-color:#334155; }
 body.dark-mode .tab-btn { color:#94a3b8; }
 body.dark-mode .tab-btn.active { color:#60a5fa; border-bottom-color:#60a5fa; }
-body.dark-mode .card, body.dark-mode .metric-card, body.dark-mode .modal { background:#1e293b; border-color:#334155; color:#e2e8f0; }
+body.dark-mode .card, body.dark-mode .metric-card, body.dark-mode .modal, body.dark-mode .chart-card, body.dark-mode .ac-list { background:#1e293b; border-color:#334155; color:#e2e8f0; }
+body.dark-mode .chart-card h4 { color:#93c5fd; }
+body.dark-mode .chart-card .chart-sub, body.dark-mode .chart-legend { color:#94a3b8; }
+body.dark-mode .toolbar { background:#15202f; border-color:#334155; }
+body.dark-mode .no-data-msg { background:#0f172a; color:#94a3b8; }
+body.dark-mode .div-chart-scroll, body.dark-mode svg { background:transparent; }
+body.dark-mode .div-chart-container, body.dark-mode .div-chart-card { background:#0f172a; border-color:#334155; }
+body.dark-mode .div-chart-tabs { border-color:#334155; }
+body.dark-mode .div-chart-tab { color:#94a3b8; }
+body.dark-mode .price-sim { background:#452c05; color:#fcd34d; }
+body.dark-mode .div-chart-tab:hover { background:#334155; color:#93c5fd; }
 body.dark-mode .metric-label { color:#94a3b8; }
 body.dark-mode table { color:#e2e8f0; }
 body.dark-mode th { background:#334155; color:#cbd5e1; border-color:#475569; }
@@ -322,7 +332,8 @@ body.dark-mode [style*="color:#64748b"],
 body.dark-mode [style*="color:#475569"] { color:#94a3b8!important; }
 body.dark-mode [style*="border:1px solid #e2e8f0"],
 body.dark-mode [style*="border: 1px solid #e2e8f0"],
-body.dark-mode [style*="border:1px solid #cbd5e1"] { border-color:#334155!important; }
+body.dark-mode [style*="border:1px solid #cbd5e1"],
+body.dark-mode [style*="border:1px dashed #cbd5e1"] { border-color:#334155!important; }
 </style>
 </head>
 <body>
@@ -331,7 +342,7 @@ body.dark-mode [style*="border:1px solid #cbd5e1"] { border-color:#334155!import
     <div id="header-top">
       <img src="logo.png" alt="Kapital Manager" style="height:30px;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block'"/>
       <span style="display:none;background:#1e3a5f;color:#fff;font-weight:800;font-size:13px;padding:5px 9px;border-radius:6px;letter-spacing:0.5px">KM</span>
-      <span style="font-size:11px;color:#94a3b8">v0.94</span>
+      <span style="font-size:11px;color:#94a3b8">v0.95</span>
       <span id="price-mode-tag" class="price-tag price-sim">⏳ Cargando precios...</span>
       <div style="flex:1"></div>
       <span id="last-update-label" style="font-size:11px;color:#94a3b8">Sin actualizar | Próx: 60s</span>
@@ -3082,7 +3093,7 @@ function calculateModifiedDietz(periodStartISO) {
     const d = t.date instanceof Date ? t.date : new Date(t.date);
     if (d < periodStart || d > periodEnd) return;
     const currency = state.positions.find(p => p.ticker === t.ticker)?.currency || "EUR";
-    const grossLocal = t.shares * t.price + (t.fee || 0) * (t.type === "BUY" ? 1 : -1);
+    const grossLocal = t.shares * t.price + (t.commission || 0) * (t.type === "BUY" ? 1 : -1);
     const grossEUR = t.fxRate ? grossLocal / t.fxRate : toEUR(grossLocal, currency);
     const cf = t.type === "BUY" ? grossEUR : -grossEUR; // compra = aportación, venta = retirada
     const daysHeld = (periodEnd - d) / 86400000;
@@ -3164,6 +3175,153 @@ function openTWRModal() {
       <button class="btn-gray" onclick="closeModal()">Cerrar</button>
     </div>
   `);
+}
+
+// ── Dashboard de Salud de la Cartera ──
+// A diferencia de la correlación (útil aunque falten datos), estos
+// indicadores solo tienen sentido si cubren la cartera casi entera, así que
+// aquí SÍ se cargan de forma activa todos los históricos que falten, en vez
+// de esperar a que el usuario vaya visitando fichas una a una.
+async function loadPortfolioHealthData() {
+  if (state._healthLoading) return;
+  state._healthLoading = true;
+  state._healthProgress = { done: 0, total: 0 };
+  renderActiveTab();
+
+  const tickers = state.positions.map(p => p.ticker).filter(Boolean);
+  const missing = tickers.filter(t => !state._portfolioCharts.companyData?.[t]?.priceHistory);
+  state._healthProgress.total = missing.length + 1; // +1 por el índice S&P 500
+
+  const CONCURRENCY = 3;
+  for (let i = 0; i < missing.length; i += CONCURRENCY) {
+    const batch = missing.slice(i, i + CONCURRENCY);
+    await Promise.allSettled(batch.map(t => loadCompanyChartsData(t)));
+    state._healthProgress.done += batch.length;
+    renderActiveTab();
+  }
+  if (!state._portfolioCharts.indexData?.["^GSPC"]?.priceHistory) {
+    await loadIndexData("^GSPC");
+  }
+  state._healthProgress.done = state._healthProgress.total;
+  state._healthLoading = false;
+  renderActiveTab();
+}
+
+function renderPortfolioHealthCard() {
+  const tickers = state.positions.map(p => p.ticker).filter(Boolean);
+  if (!tickers.length) return "";
+
+  // ── Diversificación (HHI): siempre calculable, no depende de históricos ──
+  const totalVal = state.positions.reduce((s,p) => s + posValEUR(p), 0);
+  const weights = state.positions.map(p => totalVal > 0 ? posValEUR(p) / totalVal : 0);
+  const hhi = weights.reduce((s,w) => s + w*w, 0);
+  const effectivePositions = hhi > 0 ? +(1/hhi).toFixed(1) : 0;
+  const diversifLabel = hhi > 0.15 ? { txt: "Concentrada", color: "#dc2626" } : hhi > 0.08 ? { txt: "Moderada", color: "#f59e0b" } : { txt: "Bien diversificada", color: "#16a34a" };
+
+  const cachedCount = tickers.filter(t => state._portfolioCharts.companyData?.[t]?.priceHistory).length;
+  const coveragePct = Math.round((cachedCount / tickers.length) * 100);
+
+  let riskMetricsHtml;
+  if (state._healthLoading) {
+    const p = state._healthProgress || { done: 0, total: 1 };
+    riskMetricsHtml = `<div style="padding:16px;text-align:center;color:#94a3b8">
+      <div class="spinner" style="width:22px;height:22px;border-width:2px;margin:0 auto 8px"></div>
+      Cargando históricos de precio... ${p.done}/${p.total}
+    </div>`;
+  } else if (cachedCount < tickers.length) {
+    riskMetricsHtml = `<div style="padding:12px;text-align:center">
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">Sharpe, Beta y Max Drawdown necesitan el histórico de precio de toda la cartera (ahora mismo tienes ${cachedCount}/${tickers.length} = ${coveragePct}%).</div>
+      <button class="btn" style="font-size:12px;padding:7px 16px" onclick="loadPortfolioHealthData()">📥 Cargar datos completos</button>
+    </div>`;
+  } else {
+    // ── Rentabilidad mensual ponderada de la cartera (usando el peso actual
+    // de cada posición como aproximación, ya que no se guarda el peso
+    // histórico exacto en cada fecha pasada) ──
+    const perTickerReturns = {};
+    state.positions.forEach(p => {
+      const ph = state._portfolioCharts.companyData?.[p.ticker]?.priceHistory;
+      if (ph?.priceItems?.length) perTickerReturns[p.ticker] = monthlyReturns(ph.priceItems);
+    });
+    const allMonths = [...new Set(Object.values(perTickerReturns).flatMap(r => Object.keys(r)))].sort();
+    const portfolioMonthly = {};
+    allMonths.forEach(m => {
+      let sumW = 0, sumWR = 0;
+      state.positions.forEach((p,i) => {
+        const r = perTickerReturns[p.ticker]?.[m];
+        if (r != null) { sumW += weights[i]; sumWR += weights[i]*r; }
+      });
+      if (sumW > 0) portfolioMonthly[m] = sumWR / sumW; // renormalizado sobre los pesos disponibles ese mes
+    });
+    const monthKeys = Object.keys(portfolioMonthly).sort();
+    const returns = monthKeys.map(m => portfolioMonthly[m]);
+    const n = returns.length;
+
+    let sharpeHtml = `<div style="font-size:20px;font-weight:800;color:#94a3b8">—</div>`;
+    let ddHtml = `<div style="font-size:20px;font-weight:800;color:#94a3b8">—</div>`;
+    let betaHtml = `<div style="font-size:20px;font-weight:800;color:#94a3b8">—</div>`;
+
+    if (n >= 6) {
+      const mean = returns.reduce((s,v)=>s+v,0)/n;
+      const variance = returns.reduce((s,v)=>s+(v-mean)**2,0)/n;
+      const std = Math.sqrt(variance);
+      const annualReturn = Math.pow(1+mean,12)-1;
+      const annualVol = std*Math.sqrt(12);
+      const RISK_FREE = 0.02; // aproximación fija (deuda pública a corto plazo); no se actualiza en tiempo real
+      const sharpe = annualVol > 0 ? +((annualReturn - RISK_FREE)/annualVol).toFixed(2) : null;
+      if (sharpe != null) {
+        const sc = sharpe >= 1 ? "#16a34a" : sharpe >= 0 ? "#f59e0b" : "#dc2626";
+        sharpeHtml = `<div style="font-size:20px;font-weight:800;color:${sc}">${sharpe.toFixed(2)}</div>`;
+      }
+
+      // Max Drawdown de la cartera: se encadenan los rendimientos mensuales
+      // ponderados en un índice de valor y se mide la mayor caída desde
+      // cualquier máximo previo.
+      let value = 100, peak = 100, maxDD = 0;
+      monthKeys.forEach(m => {
+        value *= (1 + portfolioMonthly[m]);
+        peak = Math.max(peak, value);
+        maxDD = Math.min(maxDD, (value-peak)/peak);
+      });
+      ddHtml = `<div style="font-size:20px;font-weight:800;color:#dc2626">${(maxDD*100).toFixed(1)}%</div>`;
+
+      // Beta vs S&P 500
+      const idxPh = state._portfolioCharts.indexData?.["^GSPC"]?.priceHistory;
+      if (idxPh?.priceItems?.length) {
+        const idxReturns = monthlyReturns(idxPh.priceItems);
+        const common = monthKeys.filter(m => idxReturns[m] != null);
+        if (common.length >= 6) {
+          const px = common.map(m => portfolioMonthly[m]), py = common.map(m => idxReturns[m]);
+          const mx = px.reduce((s,v)=>s+v,0)/px.length, my = py.reduce((s,v)=>s+v,0)/py.length;
+          let cov=0, varY=0;
+          for (let i=0;i<px.length;i++){ cov += (px[i]-mx)*(py[i]-my); varY += (py[i]-my)**2; }
+          const beta = varY > 0 ? +(cov/varY).toFixed(2) : null;
+          if (beta != null) {
+            const bc = beta > 1.2 ? "#dc2626" : beta < 0.8 ? "#16a34a" : "#f59e0b";
+            betaHtml = `<div style="font-size:20px;font-weight:800;color:${bc}">${beta.toFixed(2)}</div>`;
+          }
+        }
+      }
+    }
+
+    riskMetricsHtml = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:14px">
+      <div><div style="font-size:10px;color:#64748b;font-weight:600">SHARPE (APROX.)</div>${sharpeHtml}</div>
+      <div><div style="font-size:10px;color:#64748b;font-weight:600">BETA VS S&P 500</div>${betaHtml}</div>
+      <div><div style="font-size:10px;color:#64748b;font-weight:600">MAX DRAWDOWN</div>${ddHtml}</div>
+    </div>`;
+  }
+
+  return `<div class="card" style="margin-bottom:14px">
+    <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:4px">🩺 Salud de la Cartera</h4>
+    <div style="font-size:10px;color:#94a3b8;margin-bottom:12px">Indicadores aproximados a partir de rentabilidad mensual — no sustituyen un análisis de riesgo profesional.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:14px">
+      <div>
+        <div style="font-size:10px;color:#64748b;font-weight:600">DIVERSIFICACIÓN</div>
+        <div style="font-size:20px;font-weight:800;color:${diversifLabel.color}">${diversifLabel.txt}</div>
+        <div style="font-size:10px;color:#94a3b8">≈ ${effectivePositions} posiciones "efectivas" de ${tickers.length}</div>
+      </div>
+    </div>
+    <div style="border-top:1px solid #e2e8f0;padding-top:12px">${riskMetricsHtml}</div>
+  </div>`;
 }
 
 function renderPortfolio() {
@@ -4199,6 +4357,30 @@ function renderTransactions() {
     return dir*String(va).localeCompare(String(vb));
   });
 
+  // ── Monitor de comisiones: total pagado este año y en total, y su
+  // impacto en la rentabilidad (comisiones ÷ invertido) ──
+  const commissionsCard = (() => {
+    const currentYear = new Date().getFullYear();
+    let totalAll = 0, totalYear = 0;
+    state.transactions.forEach(t => {
+      const c = toEUR(t.commission || 0, t.currency || "EUR");
+      totalAll += c;
+      const d = t.date instanceof Date ? t.date : new Date(t.date);
+      if (d.getFullYear() === currentYear) totalYear += c;
+    });
+    const totalInv = state.positions.reduce((s,p) => s + posInvEUR(p), 0);
+    const impactPct = totalInv > 0 ? (totalAll / totalInv * 100) : 0;
+    if (totalAll < 0.01) return "";
+    return `<div class="card" style="margin-bottom:12px">
+      <h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">💸 Comisiones pagadas</h4>
+      <div style="display:flex;gap:20px;flex-wrap:wrap">
+        <div><div style="font-size:10px;color:#64748b;font-weight:600">EN ${currentYear}</div><div style="font-size:17px;font-weight:800;color:#b45309">${fmtEUR(totalYear)}</div></div>
+        <div><div style="font-size:10px;color:#64748b;font-weight:600">TOTAL HISTÓRICO</div><div style="font-size:17px;font-weight:800;color:#b45309">${fmtEUR(totalAll)}</div></div>
+        <div><div style="font-size:10px;color:#64748b;font-weight:600">IMPACTO S/ INVERTIDO</div><div style="font-size:17px;font-weight:800;color:#b45309">${impactPct.toFixed(2)}%</div></div>
+      </div>
+    </div>`;
+  })();
+
   const thStyle = (k) => {
     const active = state._txSort === k;
     return `style="cursor:${k?"pointer":"default"};user-select:none;white-space:nowrap;background:${active?"#dbeafe":"#f8fafc"};color:${active?"#1d4ed8":"#475569"}"`;
@@ -4232,6 +4414,7 @@ function renderTransactions() {
   }).join("");
 
   return `<div style="padding:14px">
+    ${commissionsCard}
     <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn" style="font-size:11px;padding:5px 12px" onclick="openAddTxManual()">＋ Nueva transacción</button>
       ${sel!=null?`<button class="btn" style="font-size:11px;padding:5px 12px;" onclick="openEditTransaction(${sel})">✏️ Editar seleccionada</button>`:""}
@@ -4500,7 +4683,7 @@ function renderCharts() {
     return `<div style="padding:14px">${renderChartsSelector(tickers)}${renderCompanyFundamentalCharts(selected)}</div>`;
   }
 
-  return `<div style="padding:14px">${renderChartsSelector(tickers)}${renderPortfolioChartsBody(tickers)}</div>`;
+  return `<div style="padding:14px">${renderChartsSelector(tickers)}${renderPortfolioHealthCard()}${renderPortfolioChartsBody(tickers)}</div>`;
 }
 
 function onChartsSelectorChange(field, value) {
@@ -7819,6 +8002,31 @@ if (!state.radar) state.radar = {
 // exploración puntual y se quedan solo para la sesión actual, como antes.
 const RADAR_PERSISTED_KEYS = { region: "km_radar_region", sector: "km_radar_sector", currency: "km_radar_currency", hideOwned: "km_radar_hideOwned" };
 
+function saveRadarPreset() {
+  const name = prompt("Nombre para esta combinación de filtros (ej. 'Dividendo alto y estable'):");
+  if (!name?.trim()) return;
+  const { _results, _loading, _searched, _error, ...filters } = state.radar;
+  const presets = ls.get("km_radar_presets", []);
+  presets.push({ name: name.trim(), filters });
+  ls.set("km_radar_presets", presets);
+  renderActiveTab();
+}
+
+function loadRadarPreset(i) {
+  const presets = ls.get("km_radar_presets", []);
+  const preset = presets[i];
+  if (!preset) return;
+  state.radar = { ...state.radar, ...preset.filters, _results: [], _loading: false, _searched: false, _error: "" };
+  renderActiveTab();
+}
+
+function deleteRadarPreset(i) {
+  const presets = ls.get("km_radar_presets", []);
+  presets.splice(i, 1);
+  ls.set("km_radar_presets", presets);
+  renderActiveTab();
+}
+
 function setRadarFilter(key, val) {
   state.radar[key] = val;
   if (RADAR_PERSISTED_KEYS[key]) ls.set(RADAR_PERSISTED_KEYS[key], val);
@@ -8065,6 +8273,15 @@ async function runRadarSearch() {
           if (!ts?.length) { console.warn(`[radar enrich] ${q.symbol} proxy#${pi}: respuesta OK pero sin timeseries.result`); continue; }
 
           const val = {};
+          // growthPct: crecimiento entre el primer y el último valor
+          // disponible del histórico anual (no solo el último dato, que ya
+          // se usa arriba para el resto de métricas).
+          const growthPct = (arr) => {
+            const valid = (arr || []).map(x => x?.reportedValue?.raw).filter(v => v != null);
+            if (valid.length < 2 || valid[0] === 0) return null;
+            const years = valid.length - 1;
+            return +(((Math.pow(valid[valid.length - 1] / valid[0], 1 / years) - 1)) * 100).toFixed(1);
+          };
           ts.forEach(item => {
             const type = item.meta?.type?.[0];
             if (!type) return;
@@ -8074,7 +8291,16 @@ async function runRadarSearch() {
               const v = arr[i]?.reportedValue?.raw;
               if (v != null) { val[type] = v; break; }
             }
+            if (type === "annualTotalRevenue") q.revGrowth = growthPct(arr);
+            if (type === "annualBasicEPS") q.epsGrowth = growthPct(arr);
           });
+
+          if (val.annualCurrentAssets != null && val.annualCurrentLiabilities > 0) {
+            q.currentRatio = +(val.annualCurrentAssets / val.annualCurrentLiabilities).toFixed(2);
+          }
+          if (val.annualEBIT != null && val.annualInterestExpense) {
+            q.interestCoverage = +(val.annualEBIT / Math.abs(val.annualInterestExpense)).toFixed(1);
+          }
 
           if (val.annualNetIncomeMargin   != null) q.profitMargins  = +(val.annualNetIncomeMargin * 100).toFixed(1);
           if (val.annualGrossProfitMargin != null) q.grossMargin    = +(val.annualGrossProfitMargin * 100).toFixed(1);
@@ -8143,9 +8369,13 @@ async function runRadarSearch() {
     if (r.currency && r.currency!=="Todas" && q.currency !== r.currency) return false;
     if (r.per_max    && q.trailingPE      != null && q.trailingPE > +r.per_max) return false;
     if (r.pb_max     && q.priceToBook     != null && q.priceToBook > +r.pb_max) return false;
-    if (r.margin_min && q.profitMargins   != null && q.profitMargins*100 < +r.margin_min) return false;
-    if (r.roe_min    && q.returnOnEquity  != null && q.returnOnEquity*100 < +r.roe_min) return false;
-    if (r.debtEbitda_max && q.debtToEquity != null && q.debtToEquity/100 > +r.debtEbitda_max) return false;
+    if (r.margin_min && q.profitMargins   != null && q.profitMargins < +r.margin_min) return false;
+    if (r.roe_min    && q.returnOnEquity  != null && q.returnOnEquity < +r.roe_min) return false;
+    if (r.debtEbitda_max && q.debtToEquity != null && q.debtToEquity > +r.debtEbitda_max) return false;
+    if (r.revGrowth_min  && q.revGrowth        != null && q.revGrowth < +r.revGrowth_min) return false;
+    if (r.epsGrowth_min  && q.epsGrowth        != null && q.epsGrowth < +r.epsGrowth_min) return false;
+    if (r.coverage_min   && q.interestCoverage != null && q.interestCoverage < +r.coverage_min) return false;
+    if (r.currentRatio_min && q.currentRatio   != null && q.currentRatio < +r.currentRatio_min) return false;
     const yld = (q.trailingAnnualDividendYield||0)*100;
     if (r.yield_min    && yld < +r.yield_min) return false;
     if (r.divYield_min && yld < +r.divYield_min) return false;
@@ -8330,7 +8560,10 @@ function renderRadar() {
       ${group("📈","Crecimiento","#0891b2",
         inp("revGrowth_min","5","Crec. ingresos mín","%") +
         inp("epsGrowth_min","5","Crec. BPA mín","%") +
-        inp("divGrowth_min","3","Crec. dividendo mín","%")
+        `<div style="display:flex;flex-direction:column;gap:3px">
+          <label style="font-size:10px;color:#94a3b8;font-weight:600">Crec. dividendo mín</label>
+          <div style="width:80px;padding:5px 7px;border:1px dashed #cbd5e1;border-radius:6px;font-size:10px;color:#94a3b8" title="No disponible con las fuentes de datos gratuitas actuales">No disp.</div>
+        </div>`
       )}
 
       ${group("💸","Dividendo","#dc2626",
@@ -8354,12 +8587,29 @@ function renderRadar() {
         style="padding:10px 16px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;cursor:pointer">
         ✕ Limpiar filtros
       </button>
+      <button onclick="saveRadarPreset()"
+        style="padding:10px 16px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;cursor:pointer">
+        💾 Guardar filtros
+      </button>
       <label style="font-size:11px;color:#475569;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">
         <input type="checkbox" ${r.hideOwned!==false?"checked":""} onchange="setRadarFilter('hideOwned',this.checked)" style="width:13px;height:13px">
         Ocultar las que ya tengo en cartera
       </label>
       ${r._searched&&!r._loading?`<span style="font-size:11px;color:#94a3b8">${r._results.length} resultado${r._results.length!==1?"s":""}</span>`:""}
     </div>
+
+    ${(() => {
+      const presets = ls.get("km_radar_presets", []);
+      if (!presets.length) return "";
+      return `<div style="display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        <span style="font-size:10px;color:#94a3b8;font-weight:600">GUARDADOS:</span>
+        ${presets.map((p, i) => `
+          <span style="display:flex;align-items:center;gap:4px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:16px;padding:3px 4px 3px 12px;font-size:11px">
+            <button onclick="loadRadarPreset(${i})" style="background:none;border:none;color:#1d4ed8;font-weight:600;cursor:pointer;padding:0">${esc(p.name)}</button>
+            <button onclick="deleteRadarPreset(${i})" title="Eliminar" style="background:none;border:none;color:#94a3b8;cursor:pointer;font-size:12px;padding:2px 4px">✕</button>
+          </span>`).join("")}
+      </div>`;
+    })()}
 
     ${r._loading||r._searched?`<div style="margin-top:14px;background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:12px">${resultsHtml}</div>`:""}
   </div>`;
