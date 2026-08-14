@@ -4842,26 +4842,27 @@ function renderCompanyFundamentalCharts(ticker) {
 }
 
 // ── Calendario de dividendos ──
-// Se agrupa por mes en vez de una cuadrícula de días (7 columnas de celdas
-// diminutas no se lee bien en móvil); para cada posición se proyectan los
-// próximos pagos a partir de su próxima fecha ex-dividendo conocida y su
-// frecuencia (mensual/trimestral/semestral/anual), hasta 12 meses vista.
-function renderDividendCalendar() {
-  if (!state.divInfo?.length) return `<div class="no-data-msg">Sin posiciones con dividendo</div>`;
-
+// Cuadrícula por mes: cada tarjeta muestra el número de pagos y el total
+// esperado ese mes; al pulsar se abre el detalle en un modal. Se proyectan
+// los próximos pagos de cada posición a partir de su próxima fecha
+// ex-dividendo conocida y su frecuencia (mensual/trimestral/semestral/anual).
+function _buildDividendCalendarEvents() {
   const MONTHS_AHEAD = 12;
   const today = new Date(); today.setHours(0,0,0,0);
   const horizon = new Date(today); horizon.setMonth(horizon.getMonth() + MONTHS_AHEAD);
-  const monthsStep = { "Mensual": 1, "Trimestral": 3, "Semestral": 6, "Anual": 12 };
+  const paymentsPerYear = { "Mensual": 12, "Trimestral": 4, "Semestral": 2, "Anual": 1 };
 
   const events = [];
-  state.divInfo.forEach(d => {
+  (state.divInfo || []).forEach(d => {
     if (d._estimated || !d.ex_date || !d.div_rate) return;
-    const step = monthsStep[d.freq] || 12;
-    const perPayment = d.div_rate * d.shares; // en divisa local de la posición
+    const freq = d.freq && paymentsPerYear[d.freq] ? d.freq : "Anual";
+    const nPayments = paymentsPerYear[freq];
+    const step = 12 / nPayments; // meses entre pagos
+    // div_rate es el dividendo ANUAL por acción — hay que dividirlo entre el
+    // número de pagos al año para obtener el importe de CADA pago, si no
+    // cada ocurrencia se contaría por el importe anual completo.
+    const perPayment = (d.div_rate * d.shares) / nPayments;
     let dt = new Date(d.ex_date);
-    // Avanzar hasta la primera ocurrencia dentro del horizonte (por si la
-    // fecha conocida ya quedó en el pasado)
     let guard = 0;
     while (dt < today && guard < 24) { dt.setMonth(dt.getMonth() + step); guard++; }
     while (dt <= horizon && guard < 48) {
@@ -4870,51 +4871,74 @@ function renderDividendCalendar() {
       guard++;
     }
   });
-  events.sort((a,b) => a.date - b.date);
+  return events.sort((a,b) => a.date - b.date);
+}
 
+function renderDividendCalendar() {
+  if (!state.divInfo?.length) return `<div class="no-data-msg">Sin posiciones con dividendo</div>`;
+  const events = _buildDividendCalendarEvents();
   if (!events.length) {
     return `<div class="no-data-msg">Todavía no hay suficiente información de frecuencia/fecha para proyectar el calendario. Se completa a medida que se actualizan los precios.</div>`;
   }
 
-  const monthNames = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  const monthNames = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const byMonth = {};
   events.forEach(e => {
     const key = `${e.date.getFullYear()}-${String(e.date.getMonth()).padStart(2,"0")}`;
     (byMonth[key] ||= []).push(e);
   });
+  const today = new Date();
+  const currentKey = `${today.getFullYear()}-${String(today.getMonth()).padStart(2,"0")}`;
 
-  const monthBlocks = Object.keys(byMonth).sort().map(key => {
+  const monthCards = Object.keys(byMonth).sort().map(key => {
     const [yr, mo] = key.split("-").map(Number);
     const monthEvents = byMonth[key];
     const monthTotal = monthEvents.reduce((s,e) => s + e.amountEUR, 0);
-    const isCurrentMonth = yr === today.getFullYear() && mo === today.getMonth();
-    const rows = monthEvents.map(e => `
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:12px">
-        <span style="display:flex;align-items:center;gap:8px">
-          <span style="background:#dbeafe;color:#1d4ed8;border-radius:6px;padding:2px 7px;font-size:10px;font-weight:700;min-width:26px;text-align:center">${e.date.getDate()}</span>
-          <strong>${esc(e.ticker)}</strong> <span style="color:#94a3b8">${esc((e.name||"").slice(0,20))}</span>
-        </span>
-        <span style="font-weight:700;color:#16a34a">${fmtEUR(e.amountEUR)}</span>
-      </div>`).join("");
-    return `<div class="card" style="margin-bottom:10px;${isCurrentMonth?"border-color:#3b82f6;border-width:2px":""}">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-        <h4 style="font-size:12px;font-weight:700;color:${isCurrentMonth?"#1d4ed8":"#334155"};text-transform:capitalize;margin:0">${isCurrentMonth?"📍 ":""}${monthNames[mo]} ${yr}</h4>
-        <span style="font-size:12px;font-weight:800;color:#16a34a">${fmtEUR(monthTotal)}</span>
-      </div>
-      ${rows}
+    const isCurrentMonth = key === currentKey;
+    return `<div onclick="openDivCalendarMonth('${key}')" style="cursor:pointer;background:${isCurrentMonth?"#eff6ff":"#fff"};border:1px solid ${isCurrentMonth?"#93c5fd":"#e2e8f0"};border-radius:10px;padding:10px 8px;text-align:center;transition:box-shadow .15s" onmouseover="this.style.boxShadow='0 2px 8px #0001'" onmouseout="this.style.boxShadow='none'">
+      <div style="font-size:11px;font-weight:700;color:${isCurrentMonth?"#1d4ed8":"#334155"};text-transform:uppercase">${monthNames[mo]} ${String(yr).slice(2)}</div>
+      <div style="font-size:15px;font-weight:800;color:#16a34a;margin:4px 0">${fmtEUR(monthTotal)}</div>
+      <div style="font-size:10px;color:#94a3b8">${monthEvents.length} pago${monthEvents.length!==1?"s":""}</div>
     </div>`;
   }).join("");
 
   const totalProjected = events.reduce((s,e) => s + e.amountEUR, 0);
 
   return `<div>
-    <div style="font-size:10px;color:#94a3b8;margin-bottom:12px">Proyección a ${MONTHS_AHEAD} meses vista según la frecuencia de pago conocida de cada posición — importes estimados, pueden variar si la empresa cambia el dividendo.</div>
+    <div style="font-size:10px;color:#94a3b8;margin-bottom:12px">Proyección a 12 meses vista según la frecuencia de pago conocida de cada posición — importes estimados, pueden variar si la empresa cambia el dividendo. Toca un mes para ver el detalle.</div>
     <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
-      <span style="font-size:12px;color:#166534;font-weight:600">Total proyectado (${MONTHS_AHEAD} meses)</span>
+      <span style="font-size:12px;color:#166534;font-weight:600">Total proyectado (12 meses)</span>
       <span style="font-size:18px;font-weight:800;color:#16a34a">${fmtEUR(totalProjected)}</span>
     </div>
-    ${monthBlocks}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px">${monthCards}</div>
   </div>`;
+}
+
+function openDivCalendarMonth(key) {
+  const events = _buildDividendCalendarEvents().filter(e =>
+    `${e.date.getFullYear()}-${String(e.date.getMonth()).padStart(2,"0")}` === key
+  );
+  const monthNames = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  const [yr, mo] = key.split("-").map(Number);
+  const total = events.reduce((s,e) => s + e.amountEUR, 0);
+  const rows = events.map(e => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:13px">
+      <span style="display:flex;align-items:center;gap:8px">
+        <span style="background:#dbeafe;color:#1d4ed8;border-radius:6px;padding:2px 7px;font-size:10px;font-weight:700;min-width:26px;text-align:center">${e.date.getDate()}</span>
+        <strong>${esc(e.ticker)}</strong> <span style="color:#94a3b8">${esc((e.name||"").slice(0,26))}</span>
+      </span>
+      <span style="font-weight:700;color:#16a34a">${fmtEUR(e.amountEUR)}</span>
+    </div>`).join("");
+  openModal(`
+    <h3 style="text-transform:capitalize">📅 ${monthNames[mo]} ${yr}</h3>
+    <div style="display:flex;justify-content:space-between;align-items:center;background:#f0fdf4;border-radius:8px;padding:8px 12px;margin-bottom:10px">
+      <span style="font-size:12px;color:#166534;font-weight:600">${events.length} pago${events.length!==1?"s":""}</span>
+      <span style="font-size:16px;font-weight:800;color:#16a34a">${fmtEUR(total)}</span>
+    </div>
+    ${rows || `<div class="no-data-msg">Sin pagos este mes</div>`}
+    <div style="display:flex;justify-content:flex-end;margin-top:16px">
+      <button class="btn-gray" onclick="closeModal()">Cerrar</button>
+    </div>`);
 }
 
 
