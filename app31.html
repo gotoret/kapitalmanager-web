@@ -1451,7 +1451,59 @@ function updateDivTicker() {
   wrap.style.display = "block";
 }
 
+// Fuente preferente: FMP da la frecuencia de pago de forma directa (no hay
+// que inferirla contando cuántos pagos hubo en el último año, que es menos
+// fiable) y el importe exacto de cada pago por separado.
+async function fetchDividendDataFMP(ticker) {
+  if (!state.fmpKey) return null;
+  try {
+    const res = await fetch(`https://financialmodelingprep.com/stable/dividends?symbol=${encodeURIComponent(ticker)}&apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const arr = await res.json();
+    if (!Array.isArray(arr) || !arr.length) return { yield: 0, rate: 0, exDate: null, freq: "—" };
+
+    const sorted = [...arr].sort((a,b) => new Date(b.date) - new Date(a.date));
+    const freqMap = { "Monthly": "Mensual", "Quarterly": "Trimestral", "Semi-Annual": "Semestral", "Annual": "Anual" };
+    const freqRaw = sorted[0]?.frequency;
+    const freq = freqMap[freqRaw] || "Anual";
+    const nPagos = { "Mensual": 12, "Trimestral": 4, "Semestral": 2, "Anual": 1 }[freq];
+
+    // Suma de los últimos N pagos (según la frecuencia) para el importe
+    // anual — más fiel que multiplicar el último pago por N si el dividendo
+    // ha ido cambiando entre pagos.
+    const recent = sorted.slice(0, nPagos);
+    const annualDividend = recent.reduce((s,d) => s + (d.dividend ?? d.adjDividend ?? 0), 0);
+
+    return {
+      yield: null, // se calcula aparte con el precio actual, como ya hacía el método anterior
+      rate: +annualDividend.toFixed(4),
+      exDate: sorted[0]?.date || null,
+      freq
+    };
+  } catch (e) {
+    console.warn(`fetchDividendDataFMP(${ticker}) falló:`, e?.message || e);
+    return null;
+  }
+}
+
 async function fetchDividendData(ticker, proxyStartIdx) {
+  const fmpResult = await fetchDividendDataFMP(ticker);
+  if (fmpResult && fmpResult.rate > 0) {
+    const price = state.priceCache[ticker];
+    let rate = fmpResult.rate;
+    if (price > 0) {
+      const impliedYield = rate / price;
+      // Si el yield implícito es absurdo (posible desajuste peniques/libras
+      // u otra unidad, como ya nos pasó una vez con un ticker .L), se
+      // corrige por el factor de 100 en vez de asumir a ciegas que la fuente
+      // nueva siempre viene en la unidad correcta.
+      if (impliedYield > 0.5) rate = rate / 100;
+      else if (impliedYield < 0.0005) rate = rate * 100;
+    }
+    fmpResult.rate = +rate.toFixed(4);
+    fmpResult.yield = price ? +(rate/price).toFixed(4) : null;
+    return fmpResult;
+  }
   const n = YIELD_PROXIES.length;
   const start = proxyStartIdx || 0;
   for (let i = 0; i < n; i++) {
@@ -3674,6 +3726,120 @@ function selectTicker(tk) {
 // ─────────────────────────────────────────────
 // TAB 1 — ALERTAS
 // ─────────────────────────────────────────────
+// ── Noticias y eventos corporativos (Finnhub) ──
+// Carga bajo demanda (no automática en cada visita a la pestaña) para no
+// gastar la cuota gratuita de la API sin necesidad; se cachea en memoria
+// durante la sesión con un botón para refrescar cuando se quiera.
+async function loadNewsAndEvents() {
+  if (!state.finnhubKey) return;
+  if (state._newsLoading) return;
+  state._newsLoading = true;
+  state._newsProgress = { done: 0, total: state.positions.length };
+  renderActiveTab();
+
+  const news = {};
+  const CONCURRENCY = 3;
+  const tickers = state.positions.map(p => p.ticker).filter(Boolean);
+  const today = new Date();
+  const from = new Date(today); from.setDate(from.getDate() - 14);
+  const fmt = d => d.toISOString().slice(0,10);
+
+  for (let i = 0; i < tickers.length; i += CONCURRENCY) {
+    const batch = tickers.slice(i, i + CONCURRENCY);
+    await Promise.allSettled(batch.map(async t => {
+      try {
+        const res = await fetch(`https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(t)}&from=${fmt(from)}&to=${fmt(today)}&token=${state.finnhubKey}`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) return;
+        const arr = await res.json();
+        if (Array.isArray(arr) && arr.length) news[t] = arr.slice(0, 2);
+      } catch (e) { console.warn(`loadNewsAndEvents(${t}) falló:`, e?.message || e); }
+    }));
+    state._newsProgress.done += batch.length;
+    renderActiveTab();
+  }
+
+  // Calendario de resultados: un único fetch para todo el rango, filtrado
+  // después por los tickers que están en cartera.
+  let earnings = [];
+  try {
+    const to = new Date(today); to.setDate(to.getDate() + 45);
+    const res = await fetch(`https://finnhub.io/api/v1/calendar/earnings?from=${fmt(today)}&to=${fmt(to)}&token=${state.finnhubKey}`, { signal: AbortSignal.timeout(10000) });
+    if (res.ok) {
+      const data = await res.json();
+      const tickerSet = new Set(tickers);
+      earnings = (data?.earningsCalendar || []).filter(e => tickerSet.has(e.symbol));
+    }
+  } catch (e) { console.warn("loadNewsAndEvents: calendario de resultados falló:", e?.message || e); }
+
+  state._newsCache = { news, earnings, loadedAt: new Date() };
+  state._newsLoading = false;
+  renderActiveTab();
+}
+
+function renderNewsEventsPanel() {
+  if (!state.finnhubKey) {
+    return `<div class="card" style="margin-bottom:14px">
+      <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:6px">📰 Noticias y eventos corporativos</h4>
+      <div style="font-size:11px;color:#94a3b8">Configura una clave gratuita de Finnhub en Ajustes para ver noticias recientes y próximas fechas de resultados de tu cartera.</div>
+    </div>`;
+  }
+
+  if (state._newsLoading) {
+    const p = state._newsProgress || { done: 0, total: 1 };
+    return `<div class="card" style="margin-bottom:14px">
+      <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📰 Noticias y eventos corporativos</h4>
+      <div style="padding:12px;text-align:center;color:#94a3b8">
+        <div class="spinner" style="width:20px;height:20px;border-width:2px;margin:0 auto 8px"></div>
+        Cargando noticias... ${p.done}/${p.total}
+      </div>
+    </div>`;
+  }
+
+  if (!state._newsCache) {
+    return `<div class="card" style="margin-bottom:14px">
+      <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📰 Noticias y eventos corporativos</h4>
+      <button class="btn" style="font-size:12px;padding:7px 16px" onclick="loadNewsAndEvents()">📥 Cargar noticias y próximos resultados</button>
+    </div>`;
+  }
+
+  const { news, earnings, loadedAt } = state._newsCache;
+  const newsTickers = Object.keys(news);
+  const newsHtml = newsTickers.length ? newsTickers.map(t => {
+    const items = news[t].map(n => `
+      <div style="padding:6px 0;border-bottom:1px solid #f1f5f9">
+        <a href="${esc(n.url)}" target="_blank" rel="noopener" style="font-size:12px;font-weight:600;color:#1e293b;text-decoration:none">${esc(n.headline)}</a>
+        <div style="font-size:10px;color:#94a3b8;margin-top:2px">${esc(n.source||"")} · ${new Date(n.datetime*1000).toLocaleDateString("es-ES")}</div>
+      </div>`).join("");
+    return `<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#1d4ed8;margin-bottom:2px">${esc(t)}</div>${items}</div>`;
+  }).join("") : `<div style="font-size:11px;color:#94a3b8;padding:8px 0">Sin noticias recientes (últimos 14 días) para tu cartera.</div>`;
+
+  const earningsHtml = earnings.length ? earnings
+    .sort((a,b) => a.date.localeCompare(b.date))
+    .map(e => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:12px">
+        <span><strong>${esc(e.symbol)}</strong> <span style="color:#94a3b8">${e.hour==="bmo"?"antes de apertura":e.hour==="amc"?"tras el cierre":""}</span></span>
+        <span style="font-weight:600;color:#7c3aed">${new Date(e.date).toLocaleDateString("es-ES",{day:"2-digit",month:"short"})}</span>
+      </div>`).join("") : `<div style="font-size:11px;color:#94a3b8;padding:8px 0">Sin resultados programados en los próximos 45 días para tu cartera.</div>`;
+
+  return `<div class="card" style="margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin:0">📰 Noticias y eventos corporativos</h4>
+      <button class="btn-gray" style="font-size:10px;padding:4px 10px" onclick="loadNewsAndEvents()">🔄 Actualizar</button>
+    </div>
+    <div style="font-size:10px;color:#94a3b8;margin-bottom:10px">Actualizado ${loadedAt.toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit"})}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
+      <div>
+        <div style="font-size:11px;font-weight:700;color:#334155;text-transform:uppercase;margin-bottom:6px">Últimas noticias</div>
+        ${newsHtml}
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:700;color:#334155;text-transform:uppercase;margin-bottom:6px">📅 Próximos resultados</div>
+        ${earningsHtml}
+      </div>
+    </div>
+  </div>`;
+}
+
 function renderAlerts() {
   const rows = state.alerts.map(a=>{
     const cond=a.direction==="ABOVE"?"↑ Sube a":"↓ Baja a";
@@ -3689,6 +3855,7 @@ function renderAlerts() {
     </tr>`;
   }).join("");
   return `<div style="padding:14px">
+    ${renderNewsEventsPanel()}
     <div style="margin-bottom:12px"><button class="btn" onclick="openAddAlert()">＋ Nueva alerta</button></div>
     <table><thead><tr>${["ID","Ticker","Condición","Precio objetivo","Estado","Creada",""].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
     <tbody>${rows||`<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:28px">Sin alertas configuradas</td></tr>`}</tbody></table>
