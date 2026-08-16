@@ -5260,7 +5260,55 @@ function renderCompanyFundamentalCharts(ticker) {
 
 /* NUEVO: decide si el calendario muestra la proyección a 12 meses
    o el histórico real de un año concreto ya cerrado/en curso */
-function getDivCalendarEvents() {
+/* Esta es la función original que falta en tu archivo.
+   Pégala DENTRO del mismo <script>, por ejemplo justo encima
+   de "function getDivCalendarEvents() {" */
+
+function buildDividendCalendarEvents() {
+  const MONTHSAHEAD = 12;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const horizon = new Date(today);
+  horizon.setMonth(horizon.getMonth() + MONTHSAHEAD);
+
+  const paymentsPerYear = { Mensual: 12, Trimestral: 4, Semestral: 2, Anual: 1 };
+  const events = [];
+
+  state.divInfo.forEach(d => {
+    if (d.estimated || !d.exdate || !d.divrate) return;
+
+    const freq = paymentsPerYear[d.freq] ? d.freq : 'Anual';
+    const nPayments = paymentsPerYear[freq];
+    const step = 12 / nPayments; // meses entre pagos
+
+    // divrate es el dividendo ANUAL por acción: hay que dividirlo entre
+    // el número de pagos al año para obtener el importe de CADA pago,
+    // si no, cada ocurrencia se contaría por el importe anual completo.
+    const perPayment = (d.divrate * d.shares) / nPayments;
+
+    let dt = new Date(d.exdate);
+    let guard = 0;
+    while (dt < today && guard < 24) {
+      dt.setMonth(dt.getMonth() + step);
+      guard++;
+    }
+
+    guard = 0;
+    while (dt <= horizon && guard < 48) {
+      events.push({
+        date: new Date(dt),
+        ticker: d.ticker,
+        name: d.name,
+        amountEUR: toEUR(perPayment, d.currency)
+      });
+      dt.setMonth(dt.getMonth() + step);
+      guard++;
+    }
+  });
+
+  return events.sort((a, b) => a.date - b.date);
+}
+    function getDivCalendarEvents() {
   const sel = state.divCalendarYearSel || 'proj';
   if (sel === 'proj') return buildDividendCalendarEvents();
 
