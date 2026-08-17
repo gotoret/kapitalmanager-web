@@ -54,7 +54,7 @@ export function safeDateStr(dateVal) {
 
 // Normaliza todas las fechas de dividendos y transacciones a objetos Date reales
 export function normalizeAllDates() {
-    const toDate = (v) => {
+    const toDate = (v) => { // <--- CAMBIA safeDateStr POR toDate
         if (v instanceof Date) return isNaN(v.getTime()) ? new Date() : v;
         if (typeof v === 'string' || typeof v === 'number') {
             const d = new Date(v);
