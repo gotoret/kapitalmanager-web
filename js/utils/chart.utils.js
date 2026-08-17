@@ -3,7 +3,7 @@
  */
 
 import { state, safeDateStr } from '../config/state.js';
-import { TICKER_DOMAIN, PIE_COLORS, DONUT_PALETTE } from '../config/constants.js';
+import { TICKER_DOMAIN, PIE_COLORS } from '../config/constants.js';
 import { esc, fmtEUR } from './helpers.js';
 
 // ── Logo de empresa ──
