@@ -2,7 +2,7 @@
  * Estado global y funciones de persistencia
  */
 
-import { ls } from '../utils/helpers.js';
+import { state, safeDateStr } from '../config/state.js';
 
 let _uid = Date.now();
 export const uid = () => ++_uid;
