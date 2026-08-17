@@ -1160,7 +1160,7 @@ export {
     renderIndexComparisonCard,
     renderCorrelationCard,
     toggleIndexComparison,
-    loadIndexData,
+    // loadIndexData,
     // loadCompanyChartsData,
     calculateAllocationBreakdown,
     calculatePortfolioHistory,
