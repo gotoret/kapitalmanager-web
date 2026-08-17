@@ -1161,7 +1161,7 @@ export {
     renderCorrelationCard,
     toggleIndexComparison,
     loadIndexData,
-    loadCompanyChartsData,
+    // loadCompanyChartsData,
     calculateAllocationBreakdown,
     calculatePortfolioHistory,
     calculateDividendHistory,
