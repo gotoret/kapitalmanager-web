@@ -4700,6 +4700,35 @@ function renderCompanyFundamentalCharts(ticker) {
      - selectDivCalendarYear
    ============================================================ */
 
+/* Proyecta los próximos pagos (12 meses vista) a partir de la próxima fecha
+   ex-dividendo conocida de cada posición y su frecuencia de pago. */
+function buildDividendCalendarEvents() {
+  const MONTHS_AHEAD = 12;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const horizon = new Date(today); horizon.setMonth(horizon.getMonth() + MONTHS_AHEAD);
+  const paymentsPerYear = { "Mensual": 12, "Trimestral": 4, "Semestral": 2, "Anual": 1 };
+
+  const events = [];
+  (state.divInfo || []).forEach(d => {
+    if (d._estimated || !d.ex_date || !d.div_rate) return;
+    const freq = d.freq && paymentsPerYear[d.freq] ? d.freq : "Anual";
+    const nPayments = paymentsPerYear[freq];
+    const step = 12 / nPayments;
+    // div_rate es el dividendo ANUAL por acción — se divide entre el número
+    // de pagos al año para obtener el importe de CADA pago.
+    const perPayment = (d.div_rate * d.shares) / nPayments;
+    let dt = new Date(d.ex_date);
+    let guard = 0;
+    while (dt < today && guard < 24) { dt.setMonth(dt.getMonth() + step); guard++; }
+    while (dt <= horizon && guard < 48) {
+      events.push({ date: new Date(dt), ticker: d.ticker, name: d.name, amountEUR: toEUR(perPayment, d.currency) });
+      dt.setMonth(dt.getMonth() + step);
+      guard++;
+    }
+  });
+  return events.sort((a,b) => a.date - b.date);
+}
+
 /* NUEVO: decide si el calendario muestra la proyección a 12 meses
    o el histórico real de un año concreto ya cerrado/en curso */
 function getDivCalendarEvents() {
