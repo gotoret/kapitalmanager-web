@@ -3526,12 +3526,12 @@ function renderAlerts() {
       <td>${cond}</td><td style="font-weight:600">${fmtEUR(a.price)}</td>
       <td style="color:${sc};font-weight:600">${st}</td>
       <td style="color:#64748b">${(a.created_at||"").slice(0,16)}</td>
-      <td><button class="btn-sm" onclick="openAddAlert(null,null,null,${a.id})" title="Editar" style="margin-right:4px">✏️</button><button class="btn-danger-sm" onclick="deleteAlert(${a.id})">✕</button></td>
+      <td><button class="btn-sm" data-action="edit-alert" data-args='{"id":${a.id}}' title="Editar" style="margin-right:4px">✏️</button><button class="btn-danger-sm" data-action="delete-alert" data-args='{"id":${a.id}}'>✕</button></td>
     </tr>`;
   }).join("");
   return `<div style="padding:14px">
     ${renderNewsEventsPanel()}
-    <div style="margin-bottom:12px"><button class="btn" onclick="openAddAlert()">＋ Nueva alerta</button></div>
+    <div style="margin-bottom:12px"><button class="btn" data-action="new-alert">＋ Nueva alerta</button></div>
     <table><thead><tr>${["ID","Ticker","Condición","Precio objetivo","Estado","Creada",""].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
     <tbody>${rows||`<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:28px">Sin alertas configuradas</td></tr>`}</tbody></table>
   </div>`;
@@ -7965,7 +7965,42 @@ function updateLoginStatus() {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// FASE 2 — DELEGACIÓN DE EVENTOS (prueba de concepto, solo pestaña Alertas)
+// ═══════════════════════════════════════════════════════════════════════
+// En vez de onclick="funcion(args)" en cada botón (que se pierde y se
+// recrea con cada innerHTML), se usa data-action + data-args, y un ÚNICO
+// listener en #content que sobrevive a los repintados porque escucha en el
+// contenedor padre, no en cada botón individual. El resto de la app sigue
+// usando onclick="..." exactamente igual que antes — esto solo afecta a
+// Alertas, para poder probarlo aislado antes de migrar más pestañas.
+const CONTENT_ACTIONS = {
+  "new-alert":    () => openAddAlert(),
+  "edit-alert":   (args) => openAddAlert(null, null, null, args.id),
+  "delete-alert": (args) => deleteAlert(args.id),
+};
+
+function setupContentEventDelegation() {
+  const content = document.getElementById("content");
+  if (!content || content._delegationBound) return; // evita engancharlo dos veces
+  content._delegationBound = true;
+  content.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-action]");
+    if (!el || !content.contains(el)) return;
+    const action = el.dataset.action;
+    const handler = CONTENT_ACTIONS[action];
+    if (!handler) { console.warn(`data-action desconocida: "${action}"`); return; }
+    let args = {};
+    if (el.dataset.args) {
+      try { args = JSON.parse(el.dataset.args); }
+      catch (err) { console.warn(`data-args inválido en data-action="${action}":`, el.dataset.args); }
+    }
+    handler(args);
+  });
+}
+
 async function startAppIfNeeded() {
+  setupContentEventDelegation();
   if (state._appStarted) {
     buildDivInfo();
     renderTabs();
