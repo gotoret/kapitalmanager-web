@@ -3725,23 +3725,173 @@ function setDivChartTab(idx) {
   renderActiveTab();
 }
 
+function buildDividendProgressChart() {
+  const dividends = state.dividends || [];
+  if (dividends.length < 2) return "";
+
+  // Ordenar por fecha y calcular acumulado
+  const sorted = [...dividends]
+    .map(d => {
+      let dt;
+      if (d.date instanceof Date) dt = d.date;
+      else if (typeof d.date === 'string') dt = new Date(d.date);
+      else if (typeof d.date === 'number') dt = new Date(d.date);
+      else return null;
+      if (isNaN(dt.getTime())) return null;
+      return { date: dt, amountEUR: toEUR((d.amount || 0) * (d.shares || 0), d.currency || 'EUR') };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.date - b.date);
+
+  let cum = 0;
+  const points = sorted.map(p => { cum += p.amountEUR; return { t: p.date.getTime(), v: cum, label: p.date }; });
+  if (points.length < 2) return "";
+
+  const W = 900, H = 220, PL = 52, PR = 20, PT = 16, PB = 32;
+  const gW = W - PL - PR, gH = H - PT - PB;
+  const minT = points[0].t, maxT = points[points.length-1].t;
+  const spanT = (maxT - minT) || 1;
+  const maxV = Math.max(...points.map(p => p.v), 1);
+  const minV = 0;
+
+  const toX = t => PL + ((t - minT) / spanT) * gW;
+  const toY = v => PT + gH - ((v - minV) / (maxV - minV)) * gH;
+
+  // Área suave bajo la curva
+  const areaPath = `M${toX(points[0].t).toFixed(1)},${toY(points[0].v).toFixed(1)} ` +
+    points.slice(1).map(p => `L${toX(p.t).toFixed(1)},${toY(p.v).toFixed(1)}`).join(" ") +
+    ` L${toX(maxT).toFixed(1)},${PT+gH} L${toX(minT).toFixed(1)},${PT+gH} Z`;
+
+  // Línea principal
+  const linePath = `M${toX(points[0].t).toFixed(1)},${toY(points[0].v).toFixed(1)} ` +
+    points.slice(1).map(p => `L${toX(p.t).toFixed(1)},${toY(p.v).toFixed(1)}`).join(" ");
+
+  // Puntos clave (uno cada ~12 para no saturar)
+  const step = Math.max(1, Math.floor(points.length / 24));
+  const dots = points.filter((_, i) => i % step === 0 || i === points.length - 1).map(p => {
+    const cx = toX(p.t).toFixed(1);
+    const cy = toY(p.v).toFixed(1);
+    const tip = `Acumulado: ${fmtEUR(p.v)} · ${p.label.toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'})}`;
+    return `<circle cx="${cx}" cy="${cy}" r="4" fill="#16a34a" stroke="#fff" stroke-width="1.5" style="cursor:pointer"
+      onmousemove="divChartTip(event,'div-chart-wrap','${esc(tip)}')" onmouseleave="divChartTipHide()"/>`;
+  }).join("");
+
+  // Eje X: 6 etiquetas distribuidas
+  const xLabels = [];
+  const labelCount = 6;
+  for (let i = 0; i < labelCount; i++) {
+    const idx = Math.round((i / (labelCount - 1)) * (points.length - 1));
+    const p = points[idx];
+    const x = toX(p.t);
+    xLabels.push(`<text x="${x.toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="9" fill="#94a3b8">${p.label.toLocaleDateString('es-ES',{month:'short',year:'2-digit'})}</text>`);
+  }
+
+  // Eje Y: 5 ticks
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => {
+    const v = minV + f * (maxV - minV);
+    const y = PT + gH - f * gH;
+    return `<text x="${PL-6}" y="${y+3}" text-anchor="end" font-size="8" fill="#94a3b8">${fmtEUR(v)}</text>
+            <line x1="${PL}" y1="${y}" x2="${W-PR}" y2="${y}" stroke="#f1f5f9" stroke-width="1"/>`;
+  }).join("");
+
+  const svgId = 'div_progress_chart';
+  // Tooltip interactivo sobre la línea (línea vertical fantasma)
+  const interactiveLine = `<line id="${svgId}_vline" x1="0" y1="${PT}" x2="0" y2="${PT+gH}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,2" display="none"/>
+    <circle id="${svgId}_dot" r="5" fill="#16a34a" stroke="#fff" stroke-width="2" display="none"/>`;
+
+  return `
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:12px;margin-top:4px">
+      <div style="font-size:12px;font-weight:700;color:#166534;margin-bottom:8px">🌱 Progresión acumulada desde el inicio</div>
+      <div style="position:relative">
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block;overflow:visible;cursor:crosshair"
+          onmousemove="divProgressMouseMove(event,${W},${PL},${gW},${PT},${gH},${minT},${spanT},${minV},${maxV - minV},'${svgId}')"
+          onmouseleave="divProgressMouseLeave('${svgId}')">
+          <defs>
+            <linearGradient id="divProgGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#16a34a" stop-opacity="0.20"/>
+              <stop offset="100%" stop-color="#16a34a" stop-opacity="0.02"/>
+            </linearGradient>
+          </defs>
+          <path d="${areaPath}" fill="url(#divProgGrad)"/>
+          <path d="${linePath}" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+          ${dots}
+          ${yTicks}
+          ${xLabels.join("")}
+          ${interactiveLine}
+        </svg>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:#64748b">
+        <span>Total acumulado: <strong style="color:#16a34a">${fmtEUR(points[points.length-1].v)}</strong></span>
+        <span>${points.length} cobros registrados · Desde ${points[0].label.toLocaleDateString('es-ES',{day:'2-digit',month:'long',year:'numeric'})}</span>
+      </div>
+    </div>`;
+}
+
+// Tooltip helpers específicos para la gráfica de progresión
+function divProgressMouseMove(e, W, PL, gW, PT, gH, minT, spanT, minV, vRange, svgId) {
+  const svg = e.currentTarget;
+  const rect = svg.getBoundingClientRect();
+  const scaleX = W / rect.width;
+  const mx = (e.clientX - rect.left) * scaleX;
+  const relX = mx - PL;
+  const frac = Math.max(0, Math.min(1, relX / gW));
+  const t = minT + frac * spanT;
+
+  // Encontrar punto más cercano
+  const dividends = state.dividends || [];
+  const sorted = [...dividends].map(d => {
+    let dt; if (d.date instanceof Date) dt = d.date; else if (typeof d.date === 'string') dt = new Date(d.date); else if (typeof d.date === 'number') dt = new Date(d.date); else return null;
+    if (isNaN(dt.getTime())) return null;
+    return { date: dt, amountEUR: toEUR((d.amount||0)*(d.shares||0), d.currency||'EUR') };
+  }).filter(Boolean).sort((a,b)=>a.date-b.date);
+
+  let cum = 0, nearest = null, nearestDist = Infinity;
+  for (const p of sorted) {
+    cum += p.amountEUR;
+    const dist = Math.abs(p.date.getTime() - t);
+    if (dist < nearestDist) { nearestDist = dist; nearest = { ...p, cum }; }
+  }
+  if (!nearest) return;
+
+  const toX = tt => PL + ((tt - minT) / spanT) * gW;
+  const toY = vv => PT + gH - ((vv - minV) / vRange) * gH;
+  const cx = toX(nearest.date.getTime()).toFixed(1);
+  const cy = toY(nearest.cum).toFixed(1);
+
+  const vline = document.getElementById(`${svgId}_vline`);
+  const dot = document.getElementById(`${svgId}_dot`);
+  const tip = document.getElementById('div-chart-tip');
+  if (vline) { vline.setAttribute("x1", cx); vline.setAttribute("x2", cx); vline.removeAttribute("display"); }
+  if (dot) { dot.setAttribute("cx", cx); dot.setAttribute("cy", cy); dot.removeAttribute("display"); }
+  if (tip) {
+    const dateStr = nearest.date.toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'});
+    tip.innerHTML = `<div style="font-weight:700">${dateStr}</div><div>Acumulado: <b>${fmtEUR(nearest.cum)}</b></div><div style="font-size:10px;color:#cbd5e1">Este cobro: ${fmtEUR(nearest.amountEUR)}</div>`;
+    tip.style.display = 'block';
+    const tipX = e.clientX - rect.left;
+    tip.style.left = (tipX + 120 > rect.width ? tipX - 130 : tipX + 10) + 'px';
+    tip.style.top = Math.max(0, (e.clientY - rect.top) - 40) + 'px';
+  }
+}
+
+function divProgressMouseLeave(svgId) {
+  const vline = document.getElementById(`${svgId}_vline`);
+  const dot = document.getElementById(`${svgId}_dot`);
+  const tip = document.getElementById('div-chart-tip');
+  if (vline) vline.setAttribute("display", "none");
+  if (dot) dot.setAttribute("display", "none");
+  if (tip) tip.style.display = 'none';
+}
+  
 function renderDivDashboard(totalAnnExpected) {
   const dividends = state.dividends || [];
   const years = [];
   dividends.forEach(d => {
     let dt;
-    if (d.date instanceof Date) {
-      dt = d.date;
-    } else if (typeof d.date === 'string') {
-      dt = new Date(d.date);
-    } else if (typeof d.date === 'number') {
-      dt = new Date(d.date);
-    } else {
-      return;
-    }
-    if (!isNaN(dt.getTime())) {
-      years.push(dt.getFullYear());
-    }
+    if (d.date instanceof Date) dt = d.date;
+    else if (typeof d.date === 'string') dt = new Date(d.date);
+    else if (typeof d.date === 'number') dt = new Date(d.date);
+    else return;
+    if (!isNaN(dt.getTime())) years.push(dt.getFullYear());
   });
   const uniqueYears = [...new Set(years)].sort((a, b) => b - a);
   if (state._divYearSel === undefined) state._divYearSel = "Anual";
@@ -3749,161 +3899,117 @@ function renderDivDashboard(totalAnnExpected) {
 
   const filtered = sel === "Anual" ? dividends : dividends.filter(d => {
     let dt;
-    if (d.date instanceof Date) {
-      dt = d.date;
-    } else if (typeof d.date === 'string') {
-      dt = new Date(d.date);
-    } else if (typeof d.date === 'number') {
-      dt = new Date(d.date);
-    } else {
-      return false;
-    }
+    if (d.date instanceof Date) dt = d.date;
+    else if (typeof d.date === 'string') dt = new Date(d.date);
+    else if (typeof d.date === 'number') dt = new Date(d.date);
+    else return false;
     return !isNaN(dt.getTime()) && dt.getFullYear() === +sel;
   });
 
   const totalHist = filtered.reduce((s,d) => s + ((+d.amount||0) * (+d.shares||0)), 0);
-
-  let portfolioValue = 0;
-  let portfolioCost = 0;
+  let portfolioValue = 0, portfolioCost = 0;
   if (sel === "Anual") {
-    portfolioValue = state.positions.reduce((s,p) => {
-      const cp = state.priceCache[p.ticker];
-      const cpEUR = cp ? priceToEUR(cp, p) : null;
-      return s + (cpEUR !== null ? p.shares * cpEUR : posInvEUR(p));
-    }, 0);
+    portfolioValue = state.positions.reduce((s,p) => { const cp = state.priceCache[p.ticker]; const cpEUR = cp ? priceToEUR(cp, p) : null; return s + (cpEUR !== null ? p.shares * cpEUR : posInvEUR(p)); }, 0);
     portfolioCost = state.positions.reduce((s,p) => s + posInvEUR(p), 0);
   } else {
-    const yearStr = String(sel);
-    const relevantTickers = new Set();
-    state.transactions.forEach(t => {
-      if (safeDateStr(t.date).startsWith(yearStr)) {
-        relevantTickers.add(t.ticker);
-      }
-    });
+    const yearStr = String(sel); const relevantTickers = new Set();
+    state.transactions.forEach(t => { if (safeDateStr(t.date).startsWith(yearStr)) relevantTickers.add(t.ticker); });
     if (relevantTickers.size === 0) {
-      portfolioValue = state.positions.reduce((s,p) => {
-        const cp = state.priceCache[p.ticker];
-        const cpEUR = cp ? priceToEUR(cp, p) : null;
-        return s + (cpEUR !== null ? p.shares * cpEUR : posInvEUR(p));
-      }, 0);
+      portfolioValue = state.positions.reduce((s,p) => { const cp = state.priceCache[p.ticker]; const cpEUR = cp ? priceToEUR(cp, p) : null; return s + (cpEUR !== null ? p.shares * cpEUR : posInvEUR(p)); }, 0);
       portfolioCost = state.positions.reduce((s,p) => s + posInvEUR(p), 0);
     } else {
-      state.positions.forEach(p => {
-        if (relevantTickers.has(p.ticker)) {
-          const cp = state.priceCache[p.ticker];
-          const cpEUR = cp ? priceToEUR(cp, p) : null;
-          portfolioValue += (cpEUR !== null ? p.shares * cpEUR : posInvEUR(p));
-          portfolioCost += posInvEUR(p);
-        }
-      });
+      state.positions.forEach(p => { if (relevantTickers.has(p.ticker)) { const cp = state.priceCache[p.ticker]; const cpEUR = cp ? priceToEUR(cp, p) : null; portfolioValue += (cpEUR !== null ? p.shares * cpEUR : posInvEUR(p)); portfolioCost += posInvEUR(p); } });
     }
   }
-
   const bigTotal = sel === "Anual" ? (totalAnnExpected || 0) : totalHist;
   const monthly  = bigTotal / 12;
   const daily    = bigTotal / 365;
   const rent     = portfolioValue > 0 ? (bigTotal / portfolioValue * 100) : 0;
   const yoc      = portfolioCost  > 0 ? (bigTotal / portfolioCost  * 100) : 0;
 
-  const GREEN_FILL   = "#86efac";
+  const GREEN_FILL   = "#bbf7d0";
   const GREEN_STROKE = "#16a34a";
   const GREEN_DARK   = "#15803d";
+  const GREEN_LIGHT  = "#f0fdf4";
 
+  // ── GRÁFICO 1: Total por año (barras mensuales + línea acumulada) ──
   const months = Array(12).fill(0);
-  filtered.forEach(d => {
-    const dt = new Date(d.date);
-    if (!isNaN(dt)) months[dt.getMonth()] += ((+d.amount||0) * (+d.shares||0));
-  });
+  filtered.forEach(d => { const dt = new Date(d.date); if (!isNaN(dt)) months[dt.getMonth()] += ((+d.amount||0) * (+d.shares||0)); });
   const maxMonth = Math.max(...months, 0.0001);
-
-  const sortedByDate = [...filtered].sort((a,b) => new Date(a.date) - new Date(b.date));
-  let cum = 0;
-  const cumPoints = sortedByDate.map(d => {
-    cum += ((+d.amount||0) * (+d.shares||0));
-    return { t: new Date(d.date).getTime(), v: cum };
-  });
-
-  const W1 = 500, H1 = 200, ML1 = 24, MR1 = 12, MT1 = 12, MB1 = 30;
+  const W1 = 340, H1 = 160, ML1 = 28, MR1 = 10, MT1 = 10, MB1 = 24;
   const cw1 = W1 - ML1 - MR1, ch1 = H1 - MT1 - MB1;
-  const bw1 = Math.max(6, (cw1/12) * 0.55);
-
+  const bw1 = Math.max(5, (cw1/12) * 0.55);
   const bars1 = months.map((v, i) => {
     const h = (v / maxMonth) * ch1;
     const x = ML1 + (i + 0.5) * (cw1/12);
     const y = MT1 + ch1 - h;
     const monthName = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"][i];
     const tipText = `${monthName}: ${fmtEUR(v)}`;
-    return `<rect x="${(x - bw1/2).toFixed(1)}" y="${y.toFixed(1)}" width="${bw1.toFixed(1)}" height="${Math.max(0,h).toFixed(1)}" fill="${GREEN_FILL}" stroke="${GREEN_STROKE}" stroke-width="0.6" rx="3" style="cursor:pointer"
-      onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onclick="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()" ontouchstart="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" ontouchmove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')"></rect>`;
+    return `<rect x="${(x - bw1/2).toFixed(1)}" y="${y.toFixed(1)}" width="${bw1.toFixed(1)}" height="${Math.max(0,h).toFixed(1)}" fill="${GREEN_FILL}" stroke="${GREEN_STROKE}" stroke-width="0.6" rx="2" style="cursor:pointer"
+      onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()"></rect>`;
   }).join("");
-
   const monthAbbr = ["E","F","M","A","M","J","J","A","S","O","N","D"];
   const labels1 = monthAbbr.map((m,i) => {
     const x = ML1 + (i + 0.5) * (cw1/12);
-    return `<text x="${x.toFixed(1)}" y="${(H1 - 8).toFixed(1)}" fill="#64748b" font-size="9" text-anchor="middle" font-family="system-ui,sans-serif">${m}</text>`;
+    return `<text x="${x.toFixed(1)}" y="${(H1 - 4).toFixed(1)}" fill="#94a3b8" font-size="8" text-anchor="middle" font-family="system-ui,sans-serif">${m}</text>`;
   }).join("");
-
+  let cum = 0;
+  const cumPoints = [...filtered].sort((a,b) => new Date(a.date) - new Date(b.date)).map(d => {
+    cum += ((+d.amount||0) * (+d.shares||0));
+    return { t: new Date(d.date).getTime(), v: cum };
+  });
   let line1 = "";
   if (cumPoints.length > 1) {
     const maxV = cumPoints[cumPoints.length-1].v || 1;
     let minT, maxT;
-    if (sel === "Anual") {
-      minT = cumPoints[0].t; maxT = cumPoints[cumPoints.length-1].t;
-    } else {
-      minT = new Date(+sel, 0, 1).getTime(); maxT = new Date(+sel, 11, 31).getTime();
-    }
+    if (sel === "Anual") { minT = cumPoints[0].t; maxT = cumPoints[cumPoints.length-1].t; }
+    else { minT = new Date(+sel, 0, 1).getTime(); maxT = new Date(+sel, 11, 31).getTime(); }
     const span = (maxT - minT) || 1;
-    const coords = cumPoints.map(p => {
-      const x = ML1 + ((p.t - minT) / span) * cw1;
-      const y = MT1 + ch1 - (p.v / maxV) * ch1;
-      return { x, y, v: p.v };
-    });
+    const coords = cumPoints.map(p => { const x = ML1 + ((p.t - minT) / span) * cw1; const y = MT1 + ch1 - (p.v / maxV) * ch1; return {x,y,v:p.v}; });
     const path = coords.map((c,i) => `${i===0?"M":"L"}${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
-    const dots = coords.map(c => {
-      const tipText = `Acumulado: ${fmtEUR(c.v)}`;
-      return `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="7" fill="transparent" style="cursor:pointer"
-        onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onclick="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()" ontouchstart="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" ontouchmove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')"></circle>`;
-    }).join("");
-    line1 = `<path d="${path}" fill="none" stroke="${GREEN_DARK}" stroke-width="1.4" opacity="0.9"/>${dots}`;
+    line1 = `<path d="${path}" fill="none" stroke="${GREEN_DARK}" stroke-width="1.2" opacity="0.9"/>`;
   }
+  const chart1 = `<div style="background:${GREEN_LIGHT};border:1px solid ${GREEN_FILL};border-radius:12px;padding:10px">
+    <div style="font-size:11px;font-weight:700;color:#166534;margin-bottom:6px">📊 Total por año</div>
+    <svg viewBox="0 0 ${W1} ${H1}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block">
+      ${bars1}${line1}${labels1}
+    </svg>
+  </div>`;
 
+  // ── GRÁFICO 2: Total por empresa ──
   const totalsByTicker = {};
-  dividends.forEach(d => {
-    const t = d.ticker || "?";
-    totalsByTicker[t] = (totalsByTicker[t] || 0) + ((+d.amount||0) * (+d.shares||0));
-  });
+  dividends.forEach(d => { const t = d.ticker || "?"; totalsByTicker[t] = (totalsByTicker[t] || 0) + ((+d.amount||0) * (+d.shares||0)); });
   const tickerEntries = Object.entries(totalsByTicker).sort((a,b)=>b[1]-a[1]);
   const maxTicker = Math.max(...tickerEntries.map(e=>e[1]), 0.0001);
-
-  const ROW_H2 = 24;
-  const W2 = 500, ML2 = 80, MR2 = 40, MT2 = 8, MB2 = 12;
+  const ROW_H2 = 20;
+  const W2 = 340, ML2 = 70, MR2 = 50, MT2 = 6, MB2 = 10;
   const cw2 = W2 - ML2 - MR2;
-  const H2 = Math.max(120, tickerEntries.length * ROW_H2 + MT2 + MB2);
-
+  const H2 = Math.max(100, tickerEntries.length * ROW_H2 + MT2 + MB2);
   const bars2 = tickerEntries.map(([tk, val], i) => {
     const w = (val / maxTicker) * cw2;
     const y = MT2 + i * ROW_H2 + ROW_H2 * 0.1;
     const h = ROW_H2 * 0.7;
     const tipText = `${tk}: ${fmtEUR(val)}`;
-    return `
-      <text x="${ML2 - 6}" y="${(y + h*0.6).toFixed(1)}" fill="#334155" font-size="10" text-anchor="end" font-family="system-ui,sans-serif" font-weight="600">${esc(tk)}</text>
-      <rect x="${ML2}" y="${y.toFixed(1)}" width="${Math.max(w, 2).toFixed(1)}" height="${h.toFixed(1)}" fill="${GREEN_FILL}" stroke="${GREEN_STROKE}" stroke-width="0.6" rx="3" style="cursor:pointer"
-        onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onclick="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()" ontouchstart="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" ontouchmove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')"></rect>
-      <text x="${(ML2 + Math.max(w, 2) + 4).toFixed(1)}" y="${(y + h*0.6).toFixed(1)}" fill="#334155" font-size="9" text-anchor="start" font-family="system-ui,sans-serif">${fmtEUR(val)}</text>
-    `;
+    return `<text x="${ML2 - 4}" y="${(y + h*0.6).toFixed(1)}" fill="#334155" font-size="9" text-anchor="end" font-family="system-ui,sans-serif" font-weight="600">${esc(tk)}</text>
+      <rect x="${ML2}" y="${y.toFixed(1)}" width="${Math.max(w,2).toFixed(1)}" height="${h.toFixed(1)}" fill="${GREEN_FILL}" stroke="${GREEN_STROKE}" stroke-width="0.6" rx="2" style="cursor:pointer"
+        onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()"></rect>
+      <text x="${(ML2 + Math.max(w,2) + 3).toFixed(1)}" y="${(y + h*0.6).toFixed(1)}" fill="#334155" font-size="8" text-anchor="start" font-family="system-ui,sans-serif">${fmtEUR(val)}</text>`;
   }).join("");
+  const chart2 = `<div style="background:${GREEN_LIGHT};border:1px solid ${GREEN_FILL};border-radius:12px;padding:10px">
+    <div style="font-size:11px;font-weight:700;color:#166534;margin-bottom:6px">🏢 Total por empresa</div>
+    <div style="overflow-y:auto;max-height:200px">
+      <svg viewBox="0 0 ${W2} ${H2}" style="display:block;width:100%;height:auto">
+        ${tickerEntries.length ? bars2 : `<text x="${W2/2}" y="50" fill="#94a3b8" font-size="10" text-anchor="middle">Sin datos</text>`}
+      </svg>
+    </div>
+  </div>`;
 
-  const chart2Empty = tickerEntries.length === 0
-    ? `<text x="${W2/2}" y="60" fill="#94a3b8" font-size="11" text-anchor="middle" font-family="system-ui,sans-serif">Sin datos históricos</text>`
-    : "";
-
-  const growths = [];
-  const growthsSinDatos = [];
+  // ── GRÁFICO 3: Crecimiento anual ──
+  const growths = [], growthsSinDatos = [];
   Object.keys(totalsByTicker).forEach(tk => {
     const byYear = {};
     dividends.filter(d => d.ticker === tk).forEach(d => {
-      const yr = new Date(d.date).getFullYear();
-      if (isNaN(yr)) return;
+      const yr = new Date(d.date).getFullYear(); if (isNaN(yr)) return;
       byYear[yr] = (byYear[yr] || 0) + (+d.amount||0) * (+d.shares||0);
     });
     const yrs = Object.keys(byYear).map(Number).sort((a,b)=>a-b);
@@ -3915,101 +4021,65 @@ function renderDivDashboard(totalAnnExpected) {
     growths.push({ tk, avg: +cagr.toFixed(1) });
   });
   growths.sort((a,b)=>b.avg-a.avg);
-
   const maxAbsGrowth = growths.length ? Math.max(1, ...growths.map(g => Math.abs(g.avg))) : 1;
-
-  const ROW_H3 = 24;
-  const W3 = 500, ML3 = 80, MR3 = 40, MT3 = 8, MB3 = 12;
+  const ROW_H3 = 20;
+  const W3 = 340, ML3 = 70, MR3 = 50, MT3 = 6, MB3 = 10;
   const cw3 = W3 - ML3 - MR3;
-  const H3 = Math.max(120, growths.length * ROW_H3 + MT3 + MB3);
+  const H3 = Math.max(100, growths.length * ROW_H3 + MT3 + MB3);
   const zeroX3 = ML3 + cw3 * 0.5;
-
   const bars3 = growths.map((g, i) => {
     const w = Math.abs(g.avg) / maxAbsGrowth * (cw3 * 0.45);
     const y = MT3 + i * ROW_H3 + ROW_H3 * 0.1;
     const h = ROW_H3 * 0.7;
     const positive = g.avg >= 0;
-    const fill = positive ? GREEN_FILL : "#fca5a5";
+    const fill = positive ? GREEN_FILL : "#fecaca";
     const stroke = positive ? GREEN_STROKE : "#dc2626";
     const x = positive ? zeroX3 : zeroX3 - w;
-    const tipText = `${g.tk}: ${g.avg>=0?"+":""}${g.avg.toFixed(1)}% anual (CAGR real)`;
-    return `
-      <text x="${ML3 - 6}" y="${(y + h*0.6).toFixed(1)}" fill="#334155" font-size="10" text-anchor="end" font-family="system-ui,sans-serif" font-weight="600">${esc(g.tk)}</text>
-      <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(w, 2).toFixed(1)}" height="${h.toFixed(1)}" fill="${fill}" stroke="${stroke}" stroke-width="0.6" rx="3" style="cursor:pointer"
-        onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onclick="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()" ontouchstart="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" ontouchmove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')"></rect>
-      <text x="${positive ? (x + Math.max(w, 2) + 4) : (x - 4)}" y="${(y + h*0.6).toFixed(1)}" fill="${positive?GREEN_DARK:"#b91c1c"}" font-size="9" text-anchor="${positive?"start":"end"}" font-family="system-ui,sans-serif" font-weight="600">${g.avg>=0?"+":""}${g.avg.toFixed(1)}%</text>
-    `;
+    const tipText = `${g.tk}: ${g.avg>=0?"+":""}${g.avg.toFixed(1)}% anual (CAGR)`;
+    return `<text x="${ML3 - 4}" y="${(y + h*0.6).toFixed(1)}" fill="#334155" font-size="9" text-anchor="end" font-family="system-ui,sans-serif" font-weight="600">${esc(g.tk)}</text>
+      <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(w,2).toFixed(1)}" height="${h.toFixed(1)}" fill="${fill}" stroke="${stroke}" stroke-width="0.6" rx="2" style="cursor:pointer"
+        onmousemove="divChartTip(event,'div-chart-wrap','${esc(tipText)}')" onmouseleave="divChartTipHide()"></rect>
+      <text x="${positive ? (x + Math.max(w,2) + 3) : (x - 3)}" y="${(y + h*0.6).toFixed(1)}" fill="${positive?GREEN_DARK:"#b91c1c"}" font-size="8" text-anchor="${positive?"start":"end"}" font-family="system-ui,sans-serif" font-weight="600">${g.avg>=0?"+":""}${g.avg.toFixed(1)}%</text>`;
   }).join("");
+  const chart3 = `<div style="background:${GREEN_LIGHT};border:1px solid ${GREEN_FILL};border-radius:12px;padding:10px">
+    <div style="font-size:11px;font-weight:700;color:#166534;margin-bottom:6px">📈 Crecimiento anual</div>
+    <div style="overflow-y:auto;max-height:200px">
+      <svg viewBox="0 0 ${W3} ${H3}" style="display:block;width:100%;height:auto">
+        ${growths.length ? `<line x1="${zeroX3}" y1="${MT3}" x2="${zeroX3}" y2="${MT3+growths.length*ROW_H3}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="2,2"/>` : ''}
+        ${growths.length ? bars3 : `<text x="${W3/2}" y="50" fill="#94a3b8" font-size="10" text-anchor="middle">Necesitas 2+ años</text>`}
+      </svg>
+    </div>
+    ${growthsSinDatos.length ? `<div style="font-size:9px;color:#94a3b8;margin-top:4px">Sin histórico: ${growthsSinDatos.map(esc).join(", ")}</div>` : ""}
+  </div>`;
 
-  const chart3Empty = growths.length === 0
-    ? `<text x="${W3/2}" y="60" fill="#94a3b8" font-size="11" text-anchor="middle" font-family="system-ui,sans-serif">Necesitas cobros en al menos 2 años distintos por empresa</text>`
-    : `<line x1="${zeroX3}" y1="${MT3}" x2="${zeroX3}" y2="${MT3+growths.length*ROW_H3}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="2,2"/>`;
-  const chart3Note = growthsSinDatos.length
-    ? `<div style="font-size:10px;color:#94a3b8;margin-top:4px">Sin histórico suficiente todavía: ${growthsSinDatos.map(esc).join(", ")}</div>` : "";
+  // ── GRÁFICA NUEVA: Progresión acumulada desde el inicio ──
+  const progressChart = buildDividendProgressChart();
 
   const yearBtns = ["Anual", ...uniqueYears].map(y => {
     const active = String(sel) === String(y);
-    return `<button onclick="selectDivYear('${y}')" style="background:${active?GREEN_STROKE:"transparent"};color:${active?"#fff":"#64748b"};border:1px solid ${active?GREEN_STROKE:"#e2e8f0"};border-radius:16px;padding:4px 12px;font-size:11px;font-weight:${active?700:500};cursor:pointer;transition:all 0.15s">${y}</button>`;
+    return `<button onclick="selectDivYear('${y}')" style="background:${active?GREEN_STROKE:"transparent"};color:${active?"#fff":"#64748b"};border:1px solid ${active?GREEN_STROKE:"#e2e8f0"};border-radius:16px;padding:3px 10px;font-size:10px;font-weight:${active?700:500};cursor:pointer">${y}</button>`;
   }).join("");
 
-  const bigLabel = sel === "Anual" ? "Dividendos anuales" : `Dividendos ${sel}`;
-  const chartContent = [
-    `<div>
-      <div style="display:flex;gap:22px;margin-bottom:10px;flex-wrap:wrap">
-        <div><span style="font-size:15px;font-weight:700;color:#0f172a">${fmtEUR(monthly)}</span> <span style="font-size:11px;color:#64748b;margin-left:3px">Mensual</span></div>
-        <div><span style="font-size:15px;font-weight:700;color:#0f172a">${fmtEUR(daily)}</span> <span style="font-size:11px;color:#64748b;margin-left:3px">Diario</span></div>
-        <div><span style="font-size:15px;font-weight:700;color:${GREEN_DARK}">${rent.toFixed(2)}%</span> <span style="font-size:11px;color:#64748b;margin-left:3px">Rentabilidad</span></div>
-        <div><span style="font-size:15px;font-weight:700;color:${GREEN_DARK}">${yoc.toFixed(2)}%</span> <span style="font-size:11px;color:#64748b;margin-left:3px">Rendim. sobre coste</span></div>
-      </div>
-      <div class="div-chart-container">
-        <svg viewBox="0 0 ${W1} ${H1}" preserveAspectRatio="none" style="width:100%;height:auto;max-height:280px;display:block">
-          ${bars1}
-          ${line1}
-          ${labels1}
-        </svg>
-      </div>
-    </div>`,
-    `<div class="div-chart-card">
-      <div class="div-chart-scroll">
-        <svg viewBox="0 0 ${W2} ${H2}" style="display:block">
-          ${bars2}
-          ${chart2Empty}
-        </svg>
-      </div>
-      <div style="font-size:10px;color:#94a3b8;margin-top:6px;text-align:center">${tickerEntries.length>10?'⇅ Desliza dentro del gráfico para ver el resto':''}</div>
-    </div>`,
-    `<div>
-      <div class="div-chart-card">
-        <div class="div-chart-scroll">
-          <svg viewBox="0 0 ${W3} ${H3}" style="display:block">
-            ${chart3Empty}
-            ${bars3}
-          </svg>
-        </div>
-        <div style="font-size:10px;color:#94a3b8;margin-top:6px;text-align:center">${growths.length>10?'⇅ Desliza dentro del gráfico para ver el resto':''}</div>
-      </div>
-      ${chart3Note}
-    </div>`,
-    renderDividendCalendar()
-  ];
-
-  const activeChart = chartContent[state._divChartTab] || chartContent[0];
-
-  return `<div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;padding:16px 18px;margin-bottom:20px;font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif">
-    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;flex-wrap:wrap">
-      <div style="font-size:26px;font-weight:800;color:#0f172a;letter-spacing:-0.4px">${fmtEUR(bigTotal)}</div>
-      <div style="font-size:13px;color:#64748b">${bigLabel}</div>
+  return `<div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;padding:14px;margin-bottom:16px;font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+      <div style="font-size:22px;font-weight:800;color:#0f172a;letter-spacing:-0.4px">${fmtEUR(bigTotal)}</div>
+      <div style="font-size:12px;color:#64748b">${sel === "Anual" ? "Dividendos anuales" : `Dividendos ${sel}`}</div>
     </div>
+
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px;align-items:center">${yearBtns}</div>
 
     <div id="div-chart-wrap" style="position:relative">
-      ${activeChart}
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:14px">
+        ${chart1}
+        ${chart2}
+        ${chart3}
+      </div>
+      ${progressChart}
       <div id="div-chart-tip" style="display:none;position:absolute;top:0;left:0;background:#1e293b;color:#fff;padding:5px 9px;border-radius:6px;font-size:11px;font-weight:600;pointer-events:none;white-space:nowrap;z-index:10;box-shadow:0 2px 8px #0004"></div>
     </div>
-
-    ${state._divChartTab === 0 ? `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:10px;align-items:center">${yearBtns}</div>` : ''}
   </div>`;
 }
-
+  
 function divChartTip(e, wrapId, text) {
   const tip = document.getElementById('div-chart-tip');
   const wrap = document.getElementById(wrapId);
@@ -4057,34 +4127,20 @@ function renderDividends() {
     const incNetoEUR  = incBrutoEUR*(1-ret);
     const retColor = ret===0?"#16a34a":ret<=0.15?"#b45309":ret<=0.25?"#ea580c":"#dc2626";
     return {
-      ticker: d.ticker,
-      name: d.name,
-      shares: Math.round(d.shares||0),
+      ticker: d.ticker, name: d.name, shares: Math.round(d.shares||0),
       div_rate: d.div_rate ? d.div_rate.toFixed(4)+" "+d.currency : "—",
-      yield: yp,
-      yieldDisplay: yp?(d._estimated?"≈"+yp.toFixed(2)+"%":yp.toFixed(2)+"%"):"—",
-      ex_date: d.ex_date||"—",
-      freq: d.freq||"—",
-      pais: paisLabel(d.ticker,d.currency),
-      retencion: ret>0?(ret*100).toFixed(1)+"%":"Sin ret.",
-      incBrutoEUR: incBrutoEUR,
-      incNetoEUR: incNetoEUR,
-      _yc: yc,
-      _retColor: retColor,
-      _d: d
+      yield: yp, yieldDisplay: yp?(d._estimated?"≈"+yp.toFixed(2)+"%":yp.toFixed(2)+"%"):"—",
+      ex_date: d.ex_date||"—", freq: d.freq||"—", pais: paisLabel(d.ticker,d.currency),
+      retencion: ret>0?(ret*100).toFixed(1)+"%":"Sin ret.", incBrutoEUR, incNetoEUR,
+      _yc: yc, _retColor: retColor, _d: d
     };
   });
 
   const sortEsperados = state._divEsperadosSort;
   divRowsData.sort((a,b) => {
-    let va = a[sortEsperados.col] ?? "";
-    let vb = b[sortEsperados.col] ?? "";
-    if (typeof va === "number") {
-      const dir = sortEsperados.dir === "asc" ? 1 : -1;
-      return dir * (va - vb);
-    }
-    const dir = sortEsperados.dir === "asc" ? 1 : -1;
-    return dir * String(va).localeCompare(String(vb));
+    let va = a[sortEsperados.col] ?? ""; let vb = b[sortEsperados.col] ?? "";
+    if (typeof va === "number") { const dir = sortEsperados.dir === "asc" ? 1 : -1; return dir * (va - vb); }
+    const dir = sortEsperados.dir === "asc" ? 1 : -1; return dir * String(va).localeCompare(String(vb));
   });
 
   const divRows = divRowsData.map(d => `
@@ -4105,30 +4161,15 @@ function renderDividends() {
 
   let histRowsData = state.dividends.map(d => {
     let dateStr = safeDateStr(d.date);
-    return {
-      id: d.id,
-      date: dateStr,
-      ticker: d.ticker,
-      shares: d.shares,
-      amount: d.amount,
-      total: d.amount * d.shares,
-      notes: d.notes || "—",
-      source: d.source || "manual"
-    };
+    return { id: d.id, date: dateStr, ticker: d.ticker, shares: d.shares, amount: d.amount,
+      total: d.amount * d.shares, notes: d.notes || "—", source: d.source || "manual" };
   });
-
   const sortHist = state._divSort;
   histRowsData.sort((a,b) => {
-    let va = a[sortHist.col] ?? "";
-    let vb = b[sortHist.col] ?? "";
-    if (typeof va === "number") {
-      const dir = sortHist.dir === "asc" ? 1 : -1;
-      return dir * (va - vb);
-    }
-    const dir = sortHist.dir === "asc" ? 1 : -1;
-    return dir * String(va).localeCompare(String(vb));
+    let va = a[sortHist.col] ?? ""; let vb = b[sortHist.col] ?? "";
+    if (typeof va === "number") { const dir = sortHist.dir === "asc" ? 1 : -1; return dir * (va - vb); }
+    const dir = sortHist.dir === "asc" ? 1 : -1; return dir * String(va).localeCompare(String(vb));
   });
-
   const histRows = histRowsData.map(d=>`<tr style="${d.source==='auto'?'background:#fefce8':''}">
     <td style="color:#64748b">${d.date}</td>
     <td style="color:#1d4ed8;font-weight:700">${esc(d.ticker)} ${d.source==='auto'?'<span title="Registrado automáticamente al llegar la fecha ex-dividendo — revisa el importe" style="font-size:10px">🤖</span>':''}</td>
@@ -4138,57 +4179,6 @@ function renderDividends() {
     <td style="color:#64748b">${esc(d.notes)}</td>
     <td><button class="btn-edit-sm" onclick="editDividend(${d.id})">✏️</button><button class="btn-danger-sm" onclick="deleteDividend(${d.id})">✕</button></td>
   </tr>`).join("");
-
-  const esperadosHeader = `
-    <div class="table-header" onclick="toggleDivEsperados()">
-      <span style="font-weight:700;font-size:13px;color:#1d4ed8">📊 Dividendos esperados por posición</span>
-      <span style="color:#64748b;font-size:11px">${state._divEsperadosCollapsed ? '▶ Mostrar' : '▼ Ocultar'}</span>
-    </div>
-  `;
-
-  const esperadosContent = `
-    <div class="table-content">
-      <div style="overflow-x:auto;margin-bottom:20px">
-        <table style="min-width:900px">
-          <thead><tr>
-            ${["Ticker","Empresa","Acciones","Div./acc","Yield %","Ex-date","Frecuencia","País","Retención","Bruto anual","Neto anual"].map((h,i) => {
-              const keys = ["ticker","name","shares","div_rate","yield","ex_date","freq","pais","retencion","incBrutoEUR","incNetoEUR"];
-              const col = keys[i] || "";
-              const isSorted = state._divEsperadosSort.col === col;
-              const arrow = isSorted ? (state._divEsperadosSort.dir === "asc" ? " ↑" : " ↓") : "";
-              return `<th style="cursor:pointer;user-select:none;" onclick="sortDivEsperados('${col}')">${h}${arrow}</th>`;
-            }).join("")}
-          </tr></thead>
-          <tbody>${divRows||`<tr><td colspan="11" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>`}</tbody>
-        </table>
-      </div>
-    </div>
-  `;
-
-  const historialHeader = `
-    <div class="table-header" onclick="toggleDivHistorial()">
-      <span style="font-weight:700;font-size:13px;color:#1d4ed8">📜 Historial de cobros registrados</span>
-      <span style="color:#64748b;font-size:11px">${state._divHistorialCollapsed ? '▶ Mostrar' : '▼ Ocultar'}</span>
-    </div>
-  `;
-
-  const historialContent = `
-    <div class="table-content">
-      <table>
-        <thead><tr>
-          ${["Fecha","Ticker","Acc.","Importe/acc","Total","Notas",""].map((h,i) => {
-            const keys = ["date","ticker","shares","amount","total","notes",""];
-            const col = keys[i] || "";
-            const isSorted = state._divSort.col === col;
-            const arrow = isSorted ? (state._divSort.dir === "asc" ? " ↑" : " ↓") : "";
-            if (col === "") return `<th>${h}</th>`;
-            return `<th style="cursor:pointer;user-select:none;" onclick="sortDivTable('${col}')">${h}${arrow}</th>`;
-          }).join("")}
-        </tr></thead>
-        <tbody>${histRows||`<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px">Sin dividendos registrados</td></tr>`}</tbody>
-      </table>
-    </div>
-  `;
 
   const esperadosClass = `table-collapsible ${state._divEsperadosCollapsed ? 'collapsed' : ''}`;
   const historialClass = `table-collapsible ${state._divHistorialCollapsed ? 'collapsed' : ''}`;
@@ -4207,44 +4197,73 @@ function renderDividends() {
       <span style="margin-left:auto;font-size:10px;color:#94a3b8">${state.autoRegisterEnabled ? "Activado" : "Desactivado"}</span>
     </label>`;
 
-  const tabOptions = [
-    {v:0,l:"📊 Total por año"},
-    {v:1,l:"🏢 Total por empresa"},
-    {v:2,l:"📈 Crecimiento anual"},
-    {v:3,l:"📅 Calendario"}
-  ];
-  const chartDropdown = `
-    <div style="margin-bottom:10px">
-      <select onchange="setDivChartTab(+this.value)" style="padding:6px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;background:#fff;color:#334155;min-width:200px;cursor:pointer">
-        ${tabOptions.map(o => `<option value="${o.v}" ${state._divChartTab===o.v?'selected':''}>${o.l}</option>`).join('')}
-      </select>
-    </div>
-  `;
+  // ── Botón calendario y progresión ──
+  const calVisible = !!state._divCalendarVisible;
+  const calBtn = `<button class="btn" onclick="state._divCalendarVisible=!state._divCalendarVisible;renderActiveTab()" style="font-size:12px;padding:6px 14px">${calVisible?'📅 Ocultar calendario':'📅 Ver calendario'}</button>`;
 
   return `<div style="padding:14px">
     ${stickyCards}
     ${autoBanner}
     ${autoToggle}
-    ${chartDropdown}
-    ${renderDivDashboard(totalAnn)}
-    <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">
+    <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn" onclick="openAddDividend()">💰 Registrar dividendo</button>
       <button class="btn" onclick="document.getElementById('div-csv-input').click()">📥 Importar CSV</button>
       <button class="btn" onclick="exportDividendsCsv()">📤 Exportar CSV</button>
+      ${calBtn}
       <input type="file" id="div-csv-input" accept=".csv" style="display:none" onchange="importDividendsCsv(event)">
     </div>
 
+    ${renderDivDashboard(totalAnn)}
+
+    ${calVisible ? `<div style="margin-top:16px">${renderDividendCalendar()}</div>` : ''}
+
     <div class="${esperadosClass}" style="margin-bottom:16px">
-      ${esperadosHeader}
-      ${esperadosContent}
+      <div class="table-header" onclick="toggleDivEsperados()">
+        <span style="font-weight:700;font-size:13px;color:#1d4ed8">📊 Dividendos esperados por posición</span>
+        <span style="color:#64748b;font-size:11px">${state._divEsperadosCollapsed ? '▶ Mostrar' : '▼ Ocultar'}</span>
+      </div>
+      <div class="table-content">
+        <div style="overflow-x:auto;margin-bottom:20px">
+          <table style="min-width:900px">
+            <thead><tr>
+              ${["Ticker","Empresa","Acciones","Div./acc","Yield %","Ex-date","Frecuencia","País","Retención","Bruto anual","Neto anual"].map((h,i) => {
+                const keys = ["ticker","name","shares","div_rate","yield","ex_date","freq","pais","retencion","incBrutoEUR","incNetoEUR"];
+                const col = keys[i] || "";
+                const isSorted = state._divEsperadosSort.col === col;
+                const arrow = isSorted ? (state._divEsperadosSort.dir === "asc" ? " ↑" : " ↓") : "";
+                return `<th style="cursor:pointer;user-select:none;" onclick="sortDivEsperados('${col}')">${h}${arrow}</th>`;
+              }).join("")}
+            </tr></thead>
+            <tbody>${divRows||`<tr><td colspan="11" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <div class="${historialClass}">
-      ${historialHeader}
-      ${historialContent}
+      <div class="table-header" onclick="toggleDivHistorial()">
+        <span style="font-weight:700;font-size:13px;color:#1d4ed8">📜 Historial de cobros registrados</span>
+        <span style="color:#64748b;font-size:11px">${state._divHistorialCollapsed ? '▶ Mostrar' : '▼ Ocultar'}</span>
+      </div>
+      <div class="table-content">
+        <table>
+          <thead><tr>
+            ${["Fecha","Ticker","Acc.","Importe/acc","Total","Notas",""].map((h,i) => {
+              const keys = ["date","ticker","shares","amount","total","notes",""];
+              const col = keys[i] || "";
+              const isSorted = state._divSort.col === col;
+              const arrow = isSorted ? (state._divSort.dir === "asc" ? " ↑" : " ↓") : "";
+              if (col === "") return `<th>${h}</th>`;
+              return `<th style="cursor:pointer;user-select:none;" onclick="sortDivTable('${col}')">${h}${arrow}</th>`;
+            }).join("")}
+          </tr></thead>
+          <tbody>${histRows||`<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px">Sin dividendos registrados</td></tr>`}</tbody>
+        </table>
+      </div>
     </div>
   </div>`;
 }
+  
 function deleteDividend(id){ state.dividends=state.dividends.filter(d=>d.id!==id); save(); renderActiveTab(); }
   
 // ─────────────────────────────────────────────
