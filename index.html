@@ -4801,28 +4801,18 @@ function renderPortfolioChartsBody(tickers) {
   const companyBreakdown = calculateAllocationBreakdown(activePositions, p => p.ticker, 8);
 
   return `
-            <div style="display:grid;grid-template-columns:1fr;gap:14px">
+      <div class="charts-donut-row">
         <div class="chart-card">
-          <h4>📈 Evolución de la cartera</h4>
-          ${buildPortfolioChartSVG(portfolioData, period)}
+          <h4>🏭 Por Sector</h4>
+          ${buildDonutChartSVG(sectorBreakdown, { unitLabel: sectorBreakdown.length === 1 ? 'sector' : 'sectores', centerValue: sectorBreakdown.length })}
         </div>
-
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));gap:14px">
-          <div class="chart-card">
-            <h4>💰 Dividendos históricos</h4>
-            <div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap">
-              ${['Mensual','Trimestral','Anual'].map(p =>
-                `<button onclick="state._portfolioCharts.divPeriod='${p}';renderActiveTab()"
-                  style="padding:2px 10px;border:1px solid ${divPeriod === p ? '#2563eb' : '#e2e8f0'};border-radius:4px;font-size:10px;font-weight:600;background:${divPeriod === p ? '#2563eb' : '#fff'};color:${divPeriod === p ? '#fff' : '#64748b'};cursor:pointer">${p}</button>`
-              ).join('')}
-            </div>
-            ${buildDividendChartSVG(divData, divPeriod)}
-          </div>
-
-          <div class="chart-card">
-            <h4>📈 Crecimiento de dividendos (últimos 10 años)</h4>
-            ${buildDividendGrowthChartSVG(calculateDividendGrowth(activeTickers))}
-          </div>
+        <div class="chart-card">
+          <h4>💱 Por Divisa</h4>
+          ${buildDonutChartSVG(currencyBreakdown, { unitLabel: currencyBreakdown.length === 1 ? 'divisa' : 'divisas', centerValue: currencyBreakdown.length })}
+        </div>
+        <div class="chart-card">
+          <h4>🏢 Por Empresa</h4>
+          ${buildDonutChartSVG(companyBreakdown, { unitLabel: 'posiciones', centerValue: activePositions.length })}
         </div>
       </div>
 
@@ -5515,88 +5505,6 @@ async function fetchPriceAndDividendHistory(ticker) {
   }
   return null;
 }
-function calculateDividendGrowth(tickers) {
-  const tickerSet = new Set(tickers);
-  const tenYearsAgo = new Date();
-  tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
-  
-  const growthData = [];
-  
-  tickerSet.forEach(ticker => {
-    const divs = (state.dividends || []).filter(d => d.ticker === ticker);
-    if (divs.length < 2) return;
-    
-    const byYear = {};
-    divs.forEach(d => {
-      const dt = d.date instanceof Date ? d.date : new Date(d.date);
-      if (isNaN(dt.getTime())) return;
-      const yr = dt.getFullYear();
-      if (yr < tenYearsAgo.getFullYear()) return;
-      byYear[yr] = (byYear[yr] || 0) + ((d.amount || 0) * (d.shares || 1));
-    });
-    
-    const years = Object.keys(byYear).map(Number).sort((a,b) => a-b);
-    if (years.length < 2) return;
-    
-    const first = byYear[years[0]];
-    const last = byYear[years[years.length-1]];
-    if (first <= 0) return;
-    
-    const yearSpan = years[years.length-1] - years[0] || 1;
-    const cagr = (Math.pow(last / first, 1 / yearSpan) - 1) * 100;
-    
-    growthData.push({
-      ticker,
-      cagr: +cagr.toFixed(1),
-      years: years.length,
-      firstAmount: first,
-      lastAmount: last
-    });
-  });
-  
-  return growthData.sort((a,b) => b.cagr - a.cagr);
-}
-
-function buildDividendGrowthChartSVG(data) {
-  if (!data || !data.length) {
-    return `<div class="no-data-msg">Sin datos de dividendos suficientes (se necesitan al menos 2 años)</div>`;
-  }
-  
-  const ROW_H = 28;
-  const H = Math.max(180, data.length * ROW_H + 40);
-  const W = 340;
-  const ML = 70, MR = 60, MT = 10, MB = 10;
-  const gW = W - ML - MR;
-  
-  const maxAbs = Math.max(...data.map(d => Math.abs(d.cagr)), 1);
-  const zeroX = ML + gW * 0.5;
-  
-  const bars = data.map((d, i) => {
-    const w = Math.abs(d.cagr) / maxAbs * (gW * 0.45);
-    const y = MT + i * ROW_H + 4;
-    const h = ROW_H - 8;
-    const positive = d.cagr >= 0;
-    const fill = positive ? "#bbf7d0" : "#fecaca";
-    const stroke = positive ? "#16a34a" : "#dc2626";
-    const x = positive ? zeroX : zeroX - w;
-    
-    return `
-      <text x="${ML - 6}" y="${y + h*0.6}" text-anchor="end" font-size="10" font-weight="600" fill="#334155">${esc(d.ticker)}</text>
-      <rect x="${x}" y="${y}" width="${Math.max(w, 2)}" height="${h}" fill="${fill}" stroke="${stroke}" stroke-width="0.6" rx="3"/>
-      <text x="${positive ? x + Math.max(w,2) + 4 : x - 4}" y="${y + h*0.6}" text-anchor="${positive ? 'start' : 'end'}" font-size="10" font-weight="700" fill="${positive ? '#15803d' : '#b91c1c'}">${d.cagr >= 0 ? '+' : ''}${d.cagr.toFixed(1)}%</text>
-    `;
-  }).join('');
-  
-  return `
-    <div style="overflow-y:auto;max-height:300px">
-      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block">
-        <line x1="${zeroX}" y1="${MT}" x2="${zeroX}" y2="${H-MB}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="2,2"/>
-        ${bars}
-      </svg>
-    </div>
-    <div style="font-size:10px;color:#94a3b8;margin-top:6px">CAGR anual · Últimos 10 años (o desde el primer dato disponible)</div>
-  `;
-}  
   
 function calculateAllocationBreakdown(positions, keyFn, maxSlices = 10) {
   const groups = {};
