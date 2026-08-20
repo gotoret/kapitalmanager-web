@@ -2694,12 +2694,37 @@ function openTWRModal() {
 async function loadPortfolioHealthData() {
   if (state._healthLoading) return;
   state._healthLoading = true;
-  state._healthProgress = { done: 0, total: 0 };
-  renderActiveTab();
+
+  // ── Configuración de límites ──
+  const GLOBAL_TIMEOUT_MS = 90000;   // 90 segundos máximo total
+  const MAX_RETRIES_PER_TICKER = 2;  // lote + 1 reintento individual (FMP es fallback, no cuenta)
+  const startTime = Date.now();
 
   const tickers = state.positions.map(p => p.ticker).filter(Boolean);
   const missing = tickers.filter(t => !state._portfolioCharts.companyData?.[t]?.priceHistory);
-  state._healthProgress.total = missing.length + 1; // +1 por el índice S&P 500
+
+  // Total real de trabajo: cada ticker puede pasar por hasta 2 intentos + índice
+  const totalWorkUnits = missing.length * MAX_RETRIES_PER_TICKER + 1;
+  state._healthProgress = { done: 0, total: totalWorkUnits, stopped: false, reason: "" };
+  renderActiveTab();
+
+  function shouldStop() {
+    if (state._healthProgress.stopped) return true;
+    if (Date.now() - startTime > GLOBAL_TIMEOUT_MS) {
+      state._healthProgress.stopped = true;
+      state._healthProgress.reason = "Tiempo límite alcanzado (90s). Algunos datos no se pudieron cargar.";
+      return true;
+    }
+    return false;
+  }
+
+  function incProgress(n = 1) {
+    state._healthProgress.done = Math.min(
+      state._healthProgress.done + n,
+      state._healthProgress.total
+    );
+    renderActiveTab();
+  }
 
   // ── Intento 1: carga por lotes con proxies CORS ──
   const CONCURRENCY = 2;
@@ -2707,48 +2732,60 @@ async function loadPortfolioHealthData() {
   const loadedInAttempt1 = new Set();
 
   for (let i = 0; i < missing.length; i += CONCURRENCY) {
+    if (shouldStop()) break;
     const batch = missing.slice(i, i + CONCURRENCY);
     await Promise.allSettled(batch.map(async t => {
+      if (shouldStop()) return;
       await loadCompanyChartsData(t);
       if (state._portfolioCharts.companyData?.[t]?.priceHistory) loadedInAttempt1.add(t);
     }));
-    state._healthProgress.done += batch.length;
-    renderActiveTab();
-    if (i + CONCURRENCY < missing.length) await sleep(DELAY_MS);
+    incProgress(batch.length);
+    if (i + CONCURRENCY < missing.length && !shouldStop()) await sleep(DELAY_MS);
   }
 
-  // ── Intento 2: reintento individual para los que fallaron ──
-  const stillMissing = missing.filter(t => !loadedInAttempt1.has(t) && !state._portfolioCharts.companyData?.[t]?.priceHistory);
-  if (stillMissing.length) {
+  // ── Intento 2: reintento individual SOLO para los que fallaron ──
+  const stillMissing = missing.filter(t =>
+    !loadedInAttempt1.has(t) &&
+    !state._portfolioCharts.companyData?.[t]?.priceHistory
+  );
+
+  if (stillMissing.length && !shouldStop()) {
     for (const t of stillMissing) {
+      if (shouldStop()) break;
       if (state._portfolioCharts.companyData?.[t]?.loading) {
         state._portfolioCharts.companyData[t] = null;
       }
       await loadCompanyChartsData(t);
-      state._healthProgress.done++;
-      renderActiveTab();
-      await sleep(800);
+      incProgress(1);
+      if (!shouldStop()) await sleep(800);
     }
+  } else {
+    // Si no hay reintentos, avanzamos el progreso igual para no dejar la barra truncada
+    incProgress(missing.length - stillMissing.length);
   }
 
-  // ── Intento 3: FMP como fallback (mucho más fiable que proxies CORS) ──
-  const stillMissingAfterRetry = missing.filter(t => !state._portfolioCharts.companyData?.[t]?.priceHistory);
-  if (stillMissingAfterRetry.length && state.fmpKey) {
+  // ── Intento 3: FMP como fallback (sin contar en progress, es bonus) ──
+  const stillMissingAfterRetry = missing.filter(t =>
+    !state._portfolioCharts.companyData?.[t]?.priceHistory
+  );
+  if (stillMissingAfterRetry.length && state.fmpKey && !shouldStop()) {
     for (const t of stillMissingAfterRetry) {
+      if (shouldStop()) break;
       const fmpData = await fetchPriceAndDividendHistoryFMP(t);
       if (fmpData) {
         if (!state._portfolioCharts.companyData) state._portfolioCharts.companyData = {};
         state._portfolioCharts.companyData[t] = { loading: false, priceHistory: fmpData, fundamentals: null };
       }
-      state._healthProgress.done++;
-      renderActiveTab();
       await sleep(600);
     }
   }
 
-  if (!state._portfolioCharts.indexData?.["^GSPC"]?.priceHistory) {
+  // ── Índice de referencia ──
+  if (!shouldStop() && !state._portfolioCharts.indexData?.["^GSPC"]?.priceHistory) {
     await loadIndexData("^GSPC");
   }
+  incProgress(1); // índice
+
   state._healthProgress.done = state._healthProgress.total;
   state._healthLoading = false;
   renderActiveTab();
@@ -2758,12 +2795,16 @@ function renderPortfolioHealthCard() {
   const tickers = state.positions.map(p => p.ticker).filter(Boolean);
   if (!tickers.length) return "";
 
-  // ── Diversificación (HHI): siempre calculable, no depende de históricos ──
-  const totalVal = state.positions.reduce((s,p) => s + posValEUR(p), 0);
+  // Diversificación (HHI): siempre calculable
+  const totalVal = state.positions.reduce((s, p) => s + posValEUR(p), 0);
   const weights = state.positions.map(p => totalVal > 0 ? posValEUR(p) / totalVal : 0);
-  const hhi = weights.reduce((s,w) => s + w*w, 0);
-  const effectivePositions = hhi > 0 ? +(1/hhi).toFixed(1) : 0;
-  const diversifLabel = hhi > 0.15 ? { txt: "Concentrada", color: "#dc2626" } : hhi > 0.08 ? { txt: "Moderada", color: "#f59e0b" } : { txt: "Bien diversificada", color: "#16a34a" };
+  const hhi = weights.reduce((s, w) => s + w * w, 0);
+  const effectivePositions = hhi > 0 ? +(1 / hhi).toFixed(1) : 0;
+  const diversifLabel = hhi > 0.15
+    ? { txt: "Concentrada", color: "#dc2626" }
+    : hhi > 0.08
+      ? { txt: "Moderada", color: "#f59e0b" }
+      : { txt: "Bien diversificada", color: "#16a34a" };
 
   const cachedCount = tickers.filter(t => state._portfolioCharts.companyData?.[t]?.priceHistory).length;
   const coveragePct = Math.round((cachedCount / tickers.length) * 100);
@@ -2771,92 +2812,93 @@ function renderPortfolioHealthCard() {
   let riskMetricsHtml;
   if (state._healthLoading) {
     const p = state._healthProgress || { done: 0, total: 1 };
-    riskMetricsHtml = `<div style="padding:16px;text-align:center;color:#94a3b8">
-      <div class="spinner" style="width:22px;height:22px;border-width:2px;margin:0 auto 8px"></div>
-      Cargando históricos de precio... ${p.done}/${p.total}
-    </div>`;
+    const pct = p.total > 0 ? Math.round((p.done / p.total) * 100) : 0;
+    riskMetricsHtml = `
+      <div style="padding:16px;text-align:center;color:#94a3b8">
+        <div class="spinner" style="width:22px;height:22px;border-width:2px;margin:0 auto 8px"></div>
+        Cargando históricos de precio... ${p.done}/${p.total} (${pct}%)
+        ${p.reason ? `<div style="margin-top:6px;font-size:11px;color:#dc2626">${esc(p.reason)}</div>` : ""}
+      </div>`;
   } else {
     const minRequired = Math.max(5, Math.floor(tickers.length / 2));
     if (cachedCount < minRequired) {
-      riskMetricsHtml = `<div style="padding:12px;text-align:center">
-        <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">Datos disponibles: ${cachedCount}/${tickers.length}. Se necesitan al menos ${minRequired} para calcular Sharpe, Beta y Max Drawdown de forma fiable.</div>
-        <button class="btn" style="font-size:12px;padding:7px 16px" onclick="loadPortfolioHealthData()">📥 Cargar datos completos</button>
-      </div>`;
+      riskMetricsHtml = `
+        <div style="padding:12px;text-align:center">
+          <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">
+            Datos disponibles: ${cachedCount}/${tickers.length}. Se necesitan al menos ${minRequired} para calcular Sharpe, Beta y Max Drawdown de forma fiable.
+          </div>
+          <button class="btn" style="font-size:12px;padding:7px 16px" onclick="loadPortfolioHealthData()">📥 Cargar datos completos</button>
+        </div>`;
     } else {
-      // ── Rentabilidad mensual ponderada de la cartera (usando el peso actual
-    // de cada posición como aproximación, ya que no se guarda el peso
-    // histórico exacto en cada fecha pasada) ──
-    const perTickerReturns = {};
-    state.positions.forEach(p => {
-      const ph = state._portfolioCharts.companyData?.[p.ticker]?.priceHistory;
-      if (ph?.priceItems?.length) perTickerReturns[p.ticker] = monthlyReturns(ph.priceItems);
-    });
-    const allMonths = [...new Set(Object.values(perTickerReturns).flatMap(r => Object.keys(r)))].sort();
-    const portfolioMonthly = {};
-    allMonths.forEach(m => {
-      let sumW = 0, sumWR = 0;
-      state.positions.forEach((p,i) => {
-        const r = perTickerReturns[p.ticker]?.[m];
-        if (r != null) { sumW += weights[i]; sumWR += weights[i]*r; }
+      // ... (resto del cálculo de métricas se mantiene igual) ...
+      const perTickerReturns = {};
+      state.positions.forEach(p => {
+        const ph = state._portfolioCharts.companyData?.[p.ticker]?.priceHistory;
+        if (ph?.priceItems?.length) perTickerReturns[p.ticker] = monthlyReturns(ph.priceItems);
       });
-      if (sumW > 0) portfolioMonthly[m] = sumWR / sumW; // renormalizado sobre los pesos disponibles ese mes
-    });
-    const monthKeys = Object.keys(portfolioMonthly).sort();
-    const returns = monthKeys.map(m => portfolioMonthly[m]);
-    const n = returns.length;
-
-    let sharpeHtml = `<div style="font-size:20px;font-weight:800;color:#94a3b8">—</div>`;
-    let ddHtml = `<div style="font-size:20px;font-weight:800;color:#94a3b8">—</div>`;
-    let betaHtml = `<div style="font-size:20px;font-weight:800;color:#94a3b8">—</div>`;
-
-    if (n >= 6) {
-      const mean = returns.reduce((s,v)=>s+v,0)/n;
-      const variance = returns.reduce((s,v)=>s+(v-mean)**2,0)/n;
-      const std = Math.sqrt(variance);
-      const annualReturn = Math.pow(1+mean,12)-1;
-      const annualVol = std*Math.sqrt(12);
-      const RISK_FREE = 0.02; // aproximación fija (deuda pública a corto plazo); no se actualiza en tiempo real
-      const sharpe = annualVol > 0 ? +((annualReturn - RISK_FREE)/annualVol).toFixed(2) : null;
-      if (sharpe != null) {
-        const sc = sharpe >= 1 ? "#16a34a" : sharpe >= 0 ? "#f59e0b" : "#dc2626";
-        sharpeHtml = `<div style="font-size:20px;font-weight:800;color:${sc}">${sharpe.toFixed(2)}</div>`;
-      }
-
-      // Max Drawdown de la cartera: se encadenan los rendimientos mensuales
-      // ponderados en un índice de valor y se mide la mayor caída desde
-      // cualquier máximo previo.
-      let value = 100, peak = 100, maxDD = 0;
-      monthKeys.forEach(m => {
-        value *= (1 + portfolioMonthly[m]);
-        peak = Math.max(peak, value);
-        maxDD = Math.min(maxDD, (value-peak)/peak);
+      const allMonths = [...new Set(Object.values(perTickerReturns).flatMap(r => Object.keys(r)))].sort();
+      const portfolioMonthly = {};
+      allMonths.forEach(m => {
+        let sumW = 0, sumWR = 0;
+        state.positions.forEach((p, i) => {
+          const r = perTickerReturns[p.ticker]?.[m];
+          if (r != null) { sumW += weights[i]; sumWR += weights[i] * r; }
+        });
+        if (sumW > 0) portfolioMonthly[m] = sumWR / sumW;
       });
-      ddHtml = `<div style="font-size:20px;font-weight:800;color:#dc2626">${(maxDD*100).toFixed(1)}%</div>`;
+      const monthKeys = Object.keys(portfolioMonthly).sort();
+      const returns = monthKeys.map(m => portfolioMonthly[m]);
+      const n = returns.length;
 
-      // Beta vs S&P 500
-      const idxPh = state._portfolioCharts.indexData?.["^GSPC"]?.priceHistory;
-      if (idxPh?.priceItems?.length) {
-        const idxReturns = monthlyReturns(idxPh.priceItems);
-        const common = monthKeys.filter(m => idxReturns[m] != null);
-        if (common.length >= 6) {
-          const px = common.map(m => portfolioMonthly[m]), py = common.map(m => idxReturns[m]);
-          const mx = px.reduce((s,v)=>s+v,0)/px.length, my = py.reduce((s,v)=>s+v,0)/py.length;
-          let cov=0, varY=0;
-          for (let i=0;i<px.length;i++){ cov += (px[i]-mx)*(py[i]-my); varY += (py[i]-my)**2; }
-          const beta = varY > 0 ? +(cov/varY).toFixed(2) : null;
-          if (beta != null) {
-            const bc = beta > 1.2 ? "#dc2626" : beta < 0.8 ? "#16a34a" : "#f59e0b";
-            betaHtml = `<div style="font-size:20px;font-weight:800;color:${bc}">${beta.toFixed(2)}</div>`;
+      let sharpeHtml = `<div style="font-size:20px;font-weight:800;color:#94a3b8">—</div>`;
+      let ddHtml = `<div style="font-size:20px;font-weight:800;color:#94a3b8">—</div>`;
+      let betaHtml = `<div style="font-size:20px;font-weight:800;color:#94a3b8">—</div>`;
+
+      if (n >= 6) {
+        const mean = returns.reduce((s, v) => s + v, 0) / n;
+        const variance = returns.reduce((s, v) => s + (v - mean) ** 2, 0) / n;
+        const std = Math.sqrt(variance);
+        const annualReturn = Math.pow(1 + mean, 12) - 1;
+        const annualVol = std * Math.sqrt(12);
+        const RISK_FREE = 0.02;
+        const sharpe = annualVol > 0 ? +((annualReturn - RISK_FREE) / annualVol).toFixed(2) : null;
+        if (sharpe != null) {
+          const sc = sharpe >= 1 ? "#16a34a" : sharpe >= 0 ? "#f59e0b" : "#dc2626";
+          sharpeHtml = `<div style="font-size:20px;font-weight:800;color:${sc}">${sharpe.toFixed(2)}</div>`;
+        }
+
+        let value = 100, peak = 100, maxDD = 0;
+        monthKeys.forEach(m => {
+          value *= (1 + portfolioMonthly[m]);
+          peak = Math.max(peak, value);
+          maxDD = Math.min(maxDD, (value - peak) / peak);
+        });
+        ddHtml = `<div style="font-size:20px;font-weight:800;color:#dc2626">${(maxDD * 100).toFixed(1)}%</div>`;
+
+        const idxPh = state._portfolioCharts.indexData?.["^GSPC"]?.priceHistory;
+        if (idxPh?.priceItems?.length) {
+          const idxReturns = monthlyReturns(idxPh.priceItems);
+          const common = monthKeys.filter(m => idxReturns[m] != null);
+          if (common.length >= 6) {
+            const px = common.map(m => portfolioMonthly[m]), py = common.map(m => idxReturns[m]);
+            const mx = px.reduce((s, v) => s + v, 0) / px.length, my = py.reduce((s, v) => s + v, 0) / py.length;
+            let cov = 0, varY = 0;
+            for (let i = 0; i < px.length; i++) { cov += (px[i] - mx) * (py[i] - my); varY += (py[i] - my) ** 2; }
+            const beta = varY > 0 ? +(cov / varY).toFixed(2) : null;
+            if (beta != null) {
+              const bc = beta > 1.2 ? "#dc2626" : beta < 0.8 ? "#16a34a" : "#f59e0b";
+              betaHtml = `<div style="font-size:20px;font-weight:800;color:${bc}">${beta.toFixed(2)}</div>`;
+            }
           }
         }
       }
-    }
 
-    riskMetricsHtml = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:14px">
-      <div><div style="font-size:10px;color:#64748b;font-weight:600">SHARPE (APROX.)</div>${sharpeHtml}</div>
-      <div><div style="font-size:10px;color:#64748b;font-weight:600">BETA VS S&P 500</div>${betaHtml}</div>
-      <div><div style="font-size:10px;color:#64748b;font-weight:600">MAX DRAWDOWN</div>${ddHtml}</div>
-    </div>`;
+      riskMetricsHtml = `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:14px">
+          <div><div style="font-size:10px;color:#64748b;font-weight:600">SHARPE (APROX.)</div>${sharpeHtml}</div>
+          <div><div style="font-size:10px;color:#64748b;font-weight:600">BETA VS S&P 500</div>${betaHtml}</div>
+          <div><div style="font-size:10px;color:#64748b;font-weight:600">MAX DRAWDOWN</div>${ddHtml}</div>
+        </div>`;
     }
   }
 
@@ -2873,7 +2915,7 @@ function renderPortfolioHealthCard() {
     <div style="border-top:1px solid #e2e8f0;padding-top:12px">${riskMetricsHtml}</div>
   </div>`;
 }
-
+  
 // ═══════════════════════════════════════════════════════════════════════
 // ANÁLISIS 360 — pestaña nueva, independiente de Valoración (no comparte
 // estado con ella para no interferir con lo ya existente). Reutiliza la
