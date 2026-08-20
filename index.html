@@ -5227,6 +5227,98 @@ async function loadCompanyChartsData(ticker) {
   if (state.activeTab === 4) renderActiveTab();
 }
 
+// Helpers compartidos para construir el histórico de precio (con SMA de 12
+// meses y drawdown) y las métricas de dividendo por año, a partir de una
+// serie mensual { date, close } y una lista de dividendos { date, amount }.
+// Se usan tanto para la fuente FMP como para la fuente Yahoo (vía proxies).
+function buildPriceItemsWithSMA(raw) {
+  const W = 12;
+  return raw.map((x, i) => {
+    let sma = null;
+    if (i >= W - 1) {
+      const sl = raw.slice(i - W + 1, i + 1);
+      sma = +(sl.reduce((s, p) => s + p.close, 0) / W).toFixed(2);
+    }
+    const maxSoFar = Math.max(...raw.slice(0, i + 1).map(p => p.close));
+    const drawdown = maxSoFar > 0 ? +((x.close / maxSoFar - 1) * 100).toFixed(1) : 0;
+    return { date: x.date, close: +(x.close.toFixed(2)), sma, drawdown };
+  });
+}
+
+function buildDivAnalytics(priceItems, divList) {
+  const divByYear = {};
+  divList.forEach(d => {
+    const yr = d.date.getFullYear();
+    divByYear[yr] = (divByYear[yr] || 0) + d.amount;
+  });
+  const divYears = Object.keys(divByYear).map(Number).sort((a, b) => a - b);
+
+  const yieldByYear = {};
+  divYears.forEach(yr => {
+    const yrPrices = priceItems.filter(p => p.date.getFullYear() === yr).map(p => p.close);
+    const lastP = yrPrices[yrPrices.length - 1];
+    if (lastP && divByYear[yr]) yieldByYear[yr] = +((divByYear[yr] / lastP) * 100).toFixed(2);
+  });
+
+  let divCagr = null;
+  if (divYears.length >= 3) {
+    const first = divByYear[divYears[0]], last = divByYear[divYears[divYears.length - 1]];
+    const n = divYears[divYears.length - 1] - divYears[0];
+    if (first > 0 && n > 0) divCagr = +((Math.pow(last / first, 1 / n) - 1) * 100).toFixed(2);
+  }
+
+  const projYears = [], projAmounts = [];
+  if (divCagr !== null && divByYear[divYears[divYears.length - 1]]) {
+    const lastDiv = divByYear[divYears[divYears.length - 1]], g = divCagr / 100;
+    for (let i = 1; i <= 3; i++) {
+      projYears.push(divYears[divYears.length - 1] + i);
+      projAmounts.push(+(lastDiv * Math.pow(1 + g, i)).toFixed(4));
+    }
+  }
+
+  return { divByYear, divYears, yieldByYear, divCagr, projYears, projAmounts };
+}
+
+// Fuente preferente cuando hay clave FMP configurada: histórico mensual de
+// precio (más estable que Yahoo vía proxies CORS, que se satura/bloquea con
+// muchos tickers seguidos) + dividendos reales por fecha.
+async function fetchPriceAndDividendHistoryFMP(ticker) {
+  if (!state.fmpKey) return null;
+  try {
+    const [priceRes, divRes] = await Promise.all([
+      fetch(`https://financialmodelingprep.com/api/v3/historical-chart/1month/${encodeURIComponent(ticker)}?apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(12000) }),
+      fetch(`https://financialmodelingprep.com/stable/dividends?symbol=${encodeURIComponent(ticker)}&apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(12000) }).catch(() => null)
+    ]);
+    if (!priceRes.ok) return null;
+    const priceArr = await priceRes.json();
+    if (!Array.isArray(priceArr) || priceArr.length < 2) return null;
+
+    const raw = priceArr
+      .map(p => ({ date: new Date(p.date), close: +p.close }))
+      .filter(p => !isNaN(p.date.getTime()) && !isNaN(p.close))
+      .sort((a, b) => a.date - b.date);
+    if (raw.length < 2) return null;
+
+    const priceItems = buildPriceItemsWithSMA(raw);
+
+    let divList = [];
+    if (divRes && divRes.ok) {
+      const divArr = await divRes.json();
+      if (Array.isArray(divArr)) {
+        divList = divArr
+          .map(d => ({ date: new Date(d.date), amount: +(d.adjDividend ?? d.dividend ?? 0) }))
+          .filter(d => !isNaN(d.date.getTime()) && d.amount > 0)
+          .sort((a, b) => a.date - b.date);
+      }
+    }
+
+    return { priceItems, divList, ...buildDivAnalytics(priceItems, divList) };
+  } catch (e) {
+    console.warn(`fetchPriceAndDividendHistoryFMP(${ticker}) falló:`, e?.message || e);
+    return null;
+  }
+}
+
 async function fetchPriceAndDividendHistory(ticker) {
   // Primero intentar con la misma fuente que usa la pestaña Cartera (más fiable)
   const cacheKey = `${ticker}_max`;
@@ -5249,6 +5341,9 @@ async function fetchPriceAndDividendHistory(ticker) {
       return { priceItems, divList: [], divByYear: {}, divYears: [], yieldByYear: {}, divCagr: null, projYears: [], projAmounts: [] };
     }
   }
+
+  const fmpResult = await fetchPriceAndDividendHistoryFMP(ticker);
+  if (fmpResult) return fmpResult;
 
   const isGBp = ticker.toUpperCase().endsWith('.L');
   const proxies = [
