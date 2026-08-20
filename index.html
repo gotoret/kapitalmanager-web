@@ -2691,6 +2691,7 @@ function openTWRModal() {
 // indicadores solo tienen sentido si cubren la cartera casi entera, así que
 // aquí SÍ se cargan de forma activa todos los históricos que falten, en vez
 // de esperar a que el usuario vaya visitando fichas una a una.
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 async function loadPortfolioHealthData() {
   if (state._healthLoading) return;
   state._healthLoading = true;
@@ -2701,13 +2702,40 @@ async function loadPortfolioHealthData() {
   const missing = tickers.filter(t => !state._portfolioCharts.companyData?.[t]?.priceHistory);
   state._healthProgress.total = missing.length + 1; // +1 por el índice S&P 500
 
-  const CONCURRENCY = 3;
+  // ── Intento 1: carga normal con delays amplios ──
+  const CONCURRENCY = 2; // más conservador
   for (let i = 0; i < missing.length; i += CONCURRENCY) {
     const batch = missing.slice(i, i + CONCURRENCY);
     await Promise.allSettled(batch.map(t => loadCompanyChartsData(t)));
     state._healthProgress.done += batch.length;
     renderActiveTab();
+    if (i + CONCURRENCY < missing.length) await sleep(1200); // 1,2 s entre lotes
   }
+
+  // ── Intento 2: reintentar los que siguen fallando (hasta 2 reintentos) ──
+  const stillMissing = tickers.filter(t => !state._portfolioCharts.companyData?.[t]?.priceHistory);
+  if (stillMissing.length > 0 && stillMissing.length < missing.length) {
+    for (const t of stillMissing) {
+      await loadCompanyChartsData(t);
+      await sleep(800);
+    }
+  }
+
+  // ── Intento 3: FMP como fuente alternativa si hay clave ──
+  const fmpMissing = tickers.filter(t => !state._portfolioCharts.companyData?.[t]?.priceHistory);
+  if (fmpMissing.length && state.fmpKey) {
+    for (const t of fmpMissing) {
+      try {
+        const hist = await fetchFMPPriceHistory(t);
+        if (hist?.priceItems?.length) {
+          if (!state._portfolioCharts.companyData[t]) state._portfolioCharts.companyData[t] = {};
+          state._portfolioCharts.companyData[t].priceHistory = hist;
+        }
+      } catch(e) {}
+      await sleep(400);
+    }
+  }
+
   if (!state._portfolioCharts.indexData?.["^GSPC"]?.priceHistory) {
     await loadIndexData("^GSPC");
   }
@@ -2737,12 +2765,15 @@ function renderPortfolioHealthCard() {
       <div class="spinner" style="width:22px;height:22px;border-width:2px;margin:0 auto 8px"></div>
       Cargando históricos de precio... ${p.done}/${p.total}
     </div>`;
-  } else if (cachedCount < tickers.length) {
+  } else if (cachedCount < Math.max(5, Math.ceil(tickers.length * 0.5))) {
+    // Se necesitan datos de al menos la mitad de las posiciones (mínimo 5)
+    // para que las métricas de riesgo tengan sentido estadístico.
     riskMetricsHtml = `<div style="padding:12px;text-align:center">
-      <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">Sharpe, Beta y Max Drawdown necesitan el histórico de precio de toda la cartera (ahora mismo tienes ${cachedCount}/${tickers.length} = ${coveragePct}%).</div>
-      <button class="btn" style="font-size:12px;padding:7px 16px" onclick="loadPortfolioHealthData()">📥 Cargar datos completos</button>
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">Se han cargado ${cachedCount}/${tickers.length} históricos. Las métricas de riesgo necesitan al menos ${Math.max(5, Math.ceil(tickers.length * 0.5))}.</div>
+      <button class="btn" style="font-size:12px;padding:7px 16px" onclick="loadPortfolioHealthData()">📥 Reintentar carga</button>
     </div>`;
   } else {
+    // Cálculo parcial: usamos solo las posiciones que tengan datos
     // ── Rentabilidad mensual ponderada de la cartera (usando el peso actual
     // de cada posición como aproximación, ya que no se guarda el peso
     // histórico exacto en cada fecha pasada) ──
@@ -4151,13 +4182,11 @@ function divChartTip(e, wrapId, text) {
   const rect = wrap.getBoundingClientRect();
   tip.textContent = text;
   tip.style.display = 'block';
-  // Forzar reflow para leer dimensiones reales del tooltip
   const tipW = tip.offsetWidth || 120;
   const tipH = tip.offsetHeight || 28;
   const cx = (e.touches?.[0]?.clientX ?? e.clientX) - rect.left;
   const cy = (e.touches?.[0]?.clientY ?? e.clientY) - rect.top;
   tip.style.left = Math.min(Math.max(0, cx + 10), rect.width - tipW - 4) + 'px';
-  // Justo encima del cursor, no 32 px más arriba
   tip.style.top = Math.max(0, cy - tipH - 6) + 'px';
 }
 function divChartTipHide() {
@@ -5258,6 +5287,8 @@ async function fetchPriceAndDividendHistory(ticker) {
     `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
     `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
     `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=10y&interval=1mo&events=div`)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=10y&interval=1mo&events=div`)}`,
   ];
   for (const url of proxies) {
     try {
