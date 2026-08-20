@@ -3729,7 +3729,6 @@ function buildDividendProgressChart() {
   const dividends = state.dividends || [];
   if (dividends.length < 2) return "";
 
-  // Ordenar por fecha y calcular acumulado
   const sorted = [...dividends]
     .map(d => {
       let dt;
@@ -3757,16 +3756,13 @@ function buildDividendProgressChart() {
   const toX = t => PL + ((t - minT) / spanT) * gW;
   const toY = v => PT + gH - ((v - minV) / (maxV - minV)) * gH;
 
-  // Área suave bajo la curva
   const areaPath = `M${toX(points[0].t).toFixed(1)},${toY(points[0].v).toFixed(1)} ` +
     points.slice(1).map(p => `L${toX(p.t).toFixed(1)},${toY(p.v).toFixed(1)}`).join(" ") +
     ` L${toX(maxT).toFixed(1)},${PT+gH} L${toX(minT).toFixed(1)},${PT+gH} Z`;
 
-  // Línea principal
   const linePath = `M${toX(points[0].t).toFixed(1)},${toY(points[0].v).toFixed(1)} ` +
     points.slice(1).map(p => `L${toX(p.t).toFixed(1)},${toY(p.v).toFixed(1)}`).join(" ");
 
-  // Puntos clave (uno cada ~12 para no saturar)
   const step = Math.max(1, Math.floor(points.length / 24));
   const dots = points.filter((_, i) => i % step === 0 || i === points.length - 1).map(p => {
     const cx = toX(p.t).toFixed(1);
@@ -3776,7 +3772,6 @@ function buildDividendProgressChart() {
       onmousemove="divChartTip(event,'div-chart-wrap','${esc(tip)}')" onmouseleave="divChartTipHide()"/>`;
   }).join("");
 
-  // Eje X: 6 etiquetas distribuidas
   const xLabels = [];
   const labelCount = 6;
   for (let i = 0; i < labelCount; i++) {
@@ -3786,7 +3781,6 @@ function buildDividendProgressChart() {
     xLabels.push(`<text x="${x.toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="9" fill="#94a3b8">${p.label.toLocaleDateString('es-ES',{month:'short',year:'2-digit'})}</text>`);
   }
 
-  // Eje Y: 5 ticks
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => {
     const v = minV + f * (maxV - minV);
     const y = PT + gH - f * gH;
@@ -3794,18 +3788,20 @@ function buildDividendProgressChart() {
             <line x1="${PL}" y1="${y}" x2="${W-PR}" y2="${y}" stroke="#f1f5f9" stroke-width="1"/>`;
   }).join("");
 
+  // Línea vertical + punto que siguen al ratón (calculados vía JS global)
   const svgId = 'div_progress_chart';
-  // Tooltip interactivo sobre la línea (línea vertical fantasma)
-  const interactiveLine = `<line id="${svgId}_vline" x1="0" y1="${PT}" x2="0" y2="${PT+gH}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,2" display="none"/>
-    <circle id="${svgId}_dot" r="5" fill="#16a34a" stroke="#fff" stroke-width="2" display="none"/>`;
+  const interactiveOverlay = `
+    <line id="${svgId}_vline" x1="0" y1="${PT}" x2="0" y2="${PT+gH}" stroke="#64748b" stroke-width="1" stroke-dasharray="3,2" display="none" pointer-events="none"/>
+    <circle id="${svgId}_dot" r="5" fill="#16a34a" stroke="#fff" stroke-width="2" display="none" pointer-events="none"/>
+  `;
 
   return `
     <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:12px;margin-top:4px">
       <div style="font-size:12px;font-weight:700;color:#166534;margin-bottom:8px">🌱 Progresión acumulada desde el inicio</div>
       <div style="position:relative">
-        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block;overflow:visible;cursor:crosshair"
-          onmousemove="divProgressMouseMove(event,${W},${PL},${gW},${PT},${gH},${minT},${spanT},${minV},${maxV - minV},'${svgId}')"
-          onmouseleave="divProgressMouseLeave('${svgId}')">
+        <svg id="${svgId}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block;overflow:visible;cursor:crosshair"
+          onmousemove="divProgressMove(event,'${svgId}',${W},${H},${PL},${PR},${PT},${PB},${minT},${spanT},${minV},${maxV})"
+          onmouseleave="divProgressLeave('${svgId}')">
           <defs>
             <linearGradient id="divProgGrad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stop-color="#16a34a" stop-opacity="0.20"/>
@@ -3817,16 +3813,83 @@ function buildDividendProgressChart() {
           ${dots}
           ${yTicks}
           ${xLabels.join("")}
-          ${interactiveLine}
+          ${interactiveOverlay}
         </svg>
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:#64748b">
         <span>Total acumulado: <strong style="color:#16a34a">${fmtEUR(points[points.length-1].v)}</strong></span>
-        <span>${points.length} cobros registrados · Desde ${points[0].label.toLocaleDateString('es-ES',{day:'2-digit',month:'long',year:'numeric'})}</span>
+        <span>${points.length} cobros · Desde ${points[0].label.toLocaleDateString('es-ES',{day:'2-digit',month:'long',year:'numeric'})}</span>
       </div>
     </div>`;
 }
 
+// ── Tooltip que SÍ funciona sobre la gráfica de progresión ──
+function divProgressMove(e, svgId, W, H, PL, PR, PT, PB, minT, spanT, minV, maxV) {
+  const svg = document.getElementById(svgId);
+  const wrap = document.getElementById('div-chart-wrap');
+  const tip = document.getElementById('div-chart-tip');
+  if (!svg || !wrap || !tip) return;
+
+  const svgRect = svg.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+  const scaleX = W / svgRect.width;
+  const mx = (e.clientX - svgRect.left) * scaleX;
+
+  const gW = W - PL - PR;
+  const gH = H - PT - PB;
+
+  if (mx < PL || mx > W - PR) { divProgressLeave(svgId); return; }
+
+  const frac = (mx - PL) / gW;
+  const t = minT + frac * spanT;
+
+  // Buscar punto más cercano en el tiempo
+  const dividends = state.dividends || [];
+  const sorted = [...dividends].map(d => {
+    let dt; if (d.date instanceof Date) dt = d.date; else if (typeof d.date === 'string') dt = new Date(d.date); else if (typeof d.date === 'number') dt = new Date(d.date); else return null;
+    if (isNaN(dt.getTime())) return null;
+    return { date: dt, amountEUR: toEUR((d.amount||0)*(d.shares||0), d.currency||'EUR') };
+  }).filter(Boolean).sort((a,b)=>a.date-b.date);
+
+  let cum = 0, nearest = null, nearestDist = Infinity;
+  for (const p of sorted) {
+    cum += p.amountEUR;
+    const dist = Math.abs(p.date.getTime() - t);
+    if (dist < nearestDist) { nearestDist = dist; nearest = { ...p, cum }; }
+  }
+  if (!nearest) return;
+
+  const toX = tt => PL + ((tt - minT) / spanT) * gW;
+  const toY = vv => PT + gH - ((vv - minV) / (maxV - minV)) * gH;
+  const cx = toX(nearest.date.getTime());
+  const cy = toY(nearest.cum);
+
+  const vline = document.getElementById(`${svgId}_vline`);
+  const dot = document.getElementById(`${svgId}_dot`);
+  if (vline) { vline.setAttribute("x1", cx.toFixed(1)); vline.setAttribute("x2", cx.toFixed(1)); vline.removeAttribute("display"); }
+  if (dot) { dot.setAttribute("cx", cx.toFixed(1)); dot.setAttribute("cy", cy.toFixed(1)); dot.removeAttribute("display"); }
+
+  const dateStr = nearest.date.toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'});
+  tip.innerHTML = `<div style="font-weight:700;margin-bottom:2px">${dateStr}</div><div>Acumulado: <b>${fmtEUR(nearest.cum)}</b></div><div style="font-size:10px;color:#cbd5e1">Este cobro: ${fmtEUR(nearest.amountEUR)}</div>`;
+  tip.style.display = 'block';
+
+  // Posición relativa al wrap contenedor
+  const relX = e.clientX - wrapRect.left;
+  const relY = e.clientY - wrapRect.top;
+  const tipW = 140;
+  tip.style.left = (relX + tipW + 10 > wrapRect.width ? Math.max(0, relX - tipW - 8) : relX + 10) + 'px';
+  tip.style.top = Math.max(0, relY - 10) + 'px';
+}
+
+function divProgressLeave(svgId) {
+  const vline = document.getElementById(`${svgId}_vline`);
+  const dot = document.getElementById(`${svgId}_dot`);
+  const tip = document.getElementById('div-chart-tip');
+  if (vline) vline.setAttribute("display", "none");
+  if (dot) dot.setAttribute("display", "none");
+  if (tip) tip.style.display = 'none';
+}
+  
 // Tooltip helpers específicos para la gráfica de progresión
 function divProgressMouseMove(e, W, PL, gW, PT, gH, minT, spanT, minV, vRange, svgId) {
   const svg = e.currentTarget;
@@ -3932,7 +3995,7 @@ function renderDivDashboard(totalAnnExpected) {
   const GREEN_DARK   = "#15803d";
   const GREEN_LIGHT  = "#f0fdf4";
 
-  // ── GRÁFICO 1: Total por año (barras mensuales + línea acumulada) ──
+  // ── GRÁFICO 1: Total por año ──
   const months = Array(12).fill(0);
   filtered.forEach(d => { const dt = new Date(d.date); if (!isNaN(dt)) months[dt.getMonth()] += ((+d.amount||0) * (+d.shares||0)); });
   const maxMonth = Math.max(...months, 0.0001);
@@ -4052,7 +4115,7 @@ function renderDivDashboard(totalAnnExpected) {
     ${growthsSinDatos.length ? `<div style="font-size:9px;color:#94a3b8;margin-top:4px">Sin histórico: ${growthsSinDatos.map(esc).join(", ")}</div>` : ""}
   </div>`;
 
-  // ── GRÁFICA NUEVA: Progresión acumulada desde el inicio ──
+  // ── GRÁFICA NUEVA: Progresión acumulada ──
   const progressChart = buildDividendProgressChart();
 
   const yearBtns = ["Anual", ...uniqueYears].map(y => {
@@ -4109,13 +4172,18 @@ function renderDividends() {
     return s + toEUR((d.annual_income||0)*(1-ret), d.currency||"EUR");
   },0);
 
-  const stickyCards = `<div style="position:sticky;top:0;z-index:20;background:#fff;padding:10px 0;margin:-14px -14px 14px -14px;box-shadow:0 2px 8px #0001">
-    <div style="padding:0 14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">
-      ${["BRUTO ANUAL","NETO ANUAL","MENSUAL NETO","DIARIO NETO"].map((l,i)=>{
-        const v=[totalAnn,totalNeto,totalNeto/12,totalNeto/365][i];
-        const color=i===0?"#b45309":"#16a34a";
-        return `<div class="metric-card" style="border-left:3px solid ${color};margin-bottom:0"><div class="metric-label">${l}</div><div class="metric-value" style="color:${color}">${fmtEUR(v)}</div></div>`;
-      }).join("")}
+  // ── Header en UNA sola línea ──
+  const stickyCards = `<div style="position:sticky;top:0;z-index:20;background:#fff;padding:10px 14px;margin:-14px -14px 14px -14px;box-shadow:0 2px 8px #0001">
+    <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:baseline">
+      ${[
+        {l:"Bruto anual", v:totalAnn, c:"#b45309"},
+        {l:"Neto anual", v:totalNeto, c:"#16a34a"},
+        {l:"Mensual neto", v:totalNeto/12, c:"#16a34a"},
+        {l:"Diario neto", v:totalNeto/365, c:"#16a34a"}
+      ].map(({l,v,c})=>`<div style="display:flex;align-items:baseline;gap:5px;white-space:nowrap">
+        <span style="font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.3px">${l}:</span>
+        <span style="font-size:16px;font-weight:800;color:${c}">${fmtEUR(v)}</span>
+      </div>`).join("")}
     </div>
   </div>`;
 
@@ -4197,7 +4265,6 @@ function renderDividends() {
       <span style="margin-left:auto;font-size:10px;color:#94a3b8">${state.autoRegisterEnabled ? "Activado" : "Desactivado"}</span>
     </label>`;
 
-  // ── Botón calendario y progresión ──
   const calVisible = !!state._divCalendarVisible;
   const calBtn = `<button class="btn" onclick="state._divCalendarVisible=!state._divCalendarVisible;renderActiveTab()" style="font-size:12px;padding:6px 14px">${calVisible?'📅 Ocultar calendario':'📅 Ver calendario'}</button>`;
 
