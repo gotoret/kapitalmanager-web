@@ -3525,10 +3525,20 @@ function renderNewsEventsPanel() {
     </div>`;
   }
 
+  if (state._newsMinimized) {
+    return `<div class="card" style="margin-bottom:14px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="state._newsMinimized=false;renderActiveTab()">
+      <span style="font-size:13px;font-weight:700;color:#1d4ed8">📰 Noticias y eventos corporativos</span>
+      <span style="font-size:11px;color:#64748b">▶ Ampliar</span>
+    </div>`;
+  }
+
   if (state._newsLoading) {
     const p = state._newsProgress || { done: 0, total: 1 };
     return `<div class="card" style="margin-bottom:14px">
-      <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📰 Noticias y eventos corporativos</h4>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin:0">📰 Noticias y eventos corporativos</h4>
+        <button class="btn-gray" style="font-size:10px;padding:4px 10px" onclick="event.stopPropagation();state._newsMinimized=true;renderActiveTab()">▼ Minimizar</button>
+      </div>
       <div style="padding:12px;text-align:center;color:#94a3b8">
         <div class="spinner" style="width:20px;height:20px;border-width:2px;margin:0 auto 8px"></div>
         Cargando noticias... ${p.done}/${p.total}
@@ -3538,7 +3548,10 @@ function renderNewsEventsPanel() {
 
   if (!state._newsCache) {
     return `<div class="card" style="margin-bottom:14px">
-      <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:8px">📰 Noticias y eventos corporativos</h4>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin:0">📰 Noticias y eventos corporativos</h4>
+        <button class="btn-gray" style="font-size:10px;padding:4px 10px" onclick="state._newsMinimized=true;renderActiveTab()">▼ Minimizar</button>
+      </div>
       <button class="btn" style="font-size:12px;padding:7px 16px" onclick="loadNewsAndEvents()">📥 Cargar noticias y próximos resultados</button>
     </div>`;
   }
@@ -3565,7 +3578,7 @@ function renderNewsEventsPanel() {
   return `<div class="card" style="margin-bottom:14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
       <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin:0">📰 Noticias y eventos corporativos</h4>
-      <button class="btn-gray" style="font-size:10px;padding:4px 10px" onclick="loadNewsAndEvents()">🔄 Actualizar</button>
+      <button class="btn-gray" style="font-size:10px;padding:4px 10px" onclick="state._newsMinimized=true;renderActiveTab()">▼ Minimizar</button>
     </div>
     <div style="font-size:10px;color:#94a3b8;margin-bottom:10px">Actualizado ${loadedAt.toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit"})}</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
@@ -3580,7 +3593,6 @@ function renderNewsEventsPanel() {
     </div>
   </div>`;
 }
-
 function renderAlerts() {
   const rows = state.alerts.map(a=>{
     const cond=a.direction==="ABOVE"?"↑ Sube a":"↓ Baja a";
@@ -3947,15 +3959,6 @@ function renderDivDashboard(totalAnnExpected) {
   }).join("");
 
   const bigLabel = sel === "Anual" ? "Dividendos anuales" : `Dividendos ${sel}`;
-
-  const tabLabels = ["📊 Total por año", "🏢 Total por empresa", "📈 Crecimiento anual", "📅 Calendario"];
-  const chartTabs = tabLabels.map((label, idx) => `
-    <button class="div-chart-tab ${state._divChartTab === idx ? 'active' : ''}"
-           onclick="setDivChartTab(${idx})">
-      ${label}
-    </button>
-  `).join("");
-
   const chartContent = [
     `<div>
       <div style="display:flex;gap:22px;margin-bottom:10px;flex-wrap:wrap">
@@ -4004,8 +4007,6 @@ function renderDivDashboard(totalAnnExpected) {
       <div style="font-size:13px;color:#64748b">${bigLabel}</div>
     </div>
 
-    <div class="div-chart-tabs">${chartTabs}</div>
-
     <div id="div-chart-wrap" style="position:relative">
       ${activeChart}
       <div id="div-chart-tip" style="display:none;position:absolute;top:0;left:0;background:#1e293b;color:#fff;padding:5px 9px;border-radius:6px;font-size:11px;font-weight:600;pointer-events:none;white-space:nowrap;z-index:10;box-shadow:0 2px 8px #0004"></div>
@@ -4043,6 +4044,17 @@ function renderDividends() {
     const ret = retencionOrigenPct(d.ticker, d.currency);
     return s + toEUR((d.annual_income||0)*(1-ret), d.currency||"EUR");
   },0);
+
+  // ── TARJETAS FIJAS ARRIBA ──
+  const stickyCards = `<div style="position:sticky;top:0;z-index:20;background:#fff;padding:10px 0;margin:-14px -14px 14px -14px;box-shadow:0 2px 8px #0001">
+    <div style="padding:0 14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">
+      ${["BRUTO ANUAL","NETO ANUAL","MENSUAL NETO","DIARIO NETO"].map((l,i)=>{
+        const v=[totalAnn,totalNeto,totalNeto/12,totalNeto/365][i];
+        const color=i===0?"#b45309":"#16a34a";
+        return `<div class="metric-card" style="border-left:3px solid ${color};margin-bottom:0"><div class="metric-label">${l}</div><div class="metric-value" style="color:${color}">${fmtEUR(v)}</div></div>`;
+      }).join("")}
+    </div>
+  </div>`;
 
   let divRowsData = state.divInfo.map((d)=>{
     const yp=(d.div_yield||0)*100;
@@ -4202,17 +4214,27 @@ function renderDividends() {
       <span style="margin-left:auto;font-size:10px;color:#94a3b8">${state.autoRegisterEnabled ? "Activado" : "Desactivado"}</span>
     </label>`;
 
+  // ── DROPDOWN PARA TABS DE GRÁFICOS ──
+  const tabOptions = [
+    {v:0,l:"📊 Total por año"},
+    {v:1,l:"🏢 Total por empresa"},
+    {v:2,l:"📈 Crecimiento anual"},
+    {v:3,l:"📅 Calendario"}
+  ];
+  const chartDropdown = `
+    <div style="margin-bottom:10px">
+      <select onchange="setDivChartTab(+this.value)" style="padding:6px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;background:#fff;color:#334155;min-width:200px;cursor:pointer">
+        ${tabOptions.map(o => `<option value="${o.v}" ${state._divChartTab===o.v?'selected':''}>${o.l}</option>`).join('')}
+      </select>
+    </div>
+  `;
+
   return `<div style="padding:14px">
+    ${stickyCards}
     ${autoBanner}
     ${autoToggle}
+    ${chartDropdown}
     ${renderDivDashboard(totalAnn)}
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px">
-      ${["BRUTO ANUAL","NETO ANUAL","MENSUAL NETO","DIARIO NETO"].map((l,i)=>{
-        const v=[totalAnn,totalNeto,totalNeto/12,totalNeto/365][i];
-        const color=i===0?"#b45309":"#16a34a";
-        return `<div class="metric-card" style="border-left:3px solid ${color}"><div class="metric-label">${l}</div><div class="metric-value" style="color:${color}">${fmtEUR(v)}</div></div>`;
-      }).join("")}
-    </div>
     <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn" onclick="openAddDividend()">💰 Registrar dividendo</button>
       <button class="btn" onclick="document.getElementById('div-csv-input').click()">📥 Importar CSV</button>
@@ -4241,8 +4263,7 @@ function renderTransactions() {
   if (!state._txDir)  state._txDir  = "desc";
   const txFilter = state._txFilter ?? ls.get("km_tx_filter", "");
 
-  const COLS = [
-    {key:"id",    label:"ID"},
+   const COLS = [
     {key:"date",  label:"Fecha"},
     {key:"ticker",label:"Ticker"},
     {key:"type",  label:"Tipo"},
@@ -4311,7 +4332,6 @@ function renderTransactions() {
   const rows = sorted.map(t => {
     const isSel = sel === t.id;
     return `<tr style="cursor:pointer;background:${isSel?"#eff6ff":""}" onclick="state._selTx=${t.id===sel?"null":t.id};renderActiveTab()">
-      <td style="color:#94a3b8;font-size:10px">${t.id}</td>
       <td style="color:#64748b;white-space:nowrap">${safeDateStr(t.date)}</td>
       <td><div style="display:flex;align-items:center;gap:6px">${logoImg(t.ticker,"",22)}<span style="color:#1d4ed8;font-weight:700">${esc(t.ticker)}</span></div></td>
       <td><span class="badge" style="background:${t.type==="BUY"?"#2563eb22":t.type==="SELL"?"#dc262622":"#b4530922"};color:${t.type==="BUY"?"#2563eb":t.type==="SELL"?"#dc2626":"#b45309"}">${esc(t.type)}</span></td>
