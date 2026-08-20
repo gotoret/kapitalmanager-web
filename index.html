@@ -116,11 +116,10 @@
 <script src="js/utils/helpers.js"></script>
 <script>
 
-// sleep(ms): pequeño helper usado en varios puntos del código para espaciar
-// peticiones (evitar saturar APIs/proxies). Definido aquí porque antes se
-// usaba en 4 sitios sin existir en ningún lado, lo que producía un
-// ReferenceError silencioso en esos flujos.
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+// NOTA: sleep(ms) ya está definido en js/utils/helpers.js (cargado antes de
+// este bloque inline), así que NO se redeclara aquí — hacerlo causaba un
+// "Identifier 'sleep' has already been declared" que rompía TODO este
+// script inline (incluido doLogin), y por eso dejó de funcionar el login.
 
 // ── Cola específica para financialmodelingprep.com (plan gratuito) ──
 // El plan gratuito de FMP tiene un límite de peticiones por segundo muy
