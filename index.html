@@ -116,6 +116,38 @@
 <script src="js/utils/helpers.js"></script>
 <script>
 
+// sleep(ms): pequeño helper usado en varios puntos del código para espaciar
+// peticiones (evitar saturar APIs/proxies). Definido aquí porque antes se
+// usaba en 4 sitios sin existir en ningún lado, lo que producía un
+// ReferenceError silencioso en esos flujos.
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ── Cola específica para financialmodelingprep.com (plan gratuito) ──
+// El plan gratuito de FMP tiene un límite de peticiones por segundo muy
+// bajo. Con varios tickers cargándose en paralelo (carga de "Salud de la
+// Cartera", fundamentales, etc.) se disparaban ráfagas de 10-15 peticiones
+// simultáneas contra FMP, lo que producía 429 (Too Many Requests) en casi
+// todas ellas. fmpFetch() serializa TODAS las llamadas a FMP (pasen o no
+// por un proxy CORS, ya que el límite lo aplica FMP en origen igualmente),
+// espacia cada una ~350ms de la anterior, y reintenta automáticamente con
+// backoff si recibe un 429.
+let _fmpQueueTail = Promise.resolve();
+async function fmpFetch(url, opts = {}) {
+  const run = async () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await fetch(url, opts);
+      if (res.status !== 429) return res;
+      await sleep(1200 * (attempt + 1)); // backoff: 1.2s, 2.4s, 3.6s
+    }
+    return fetch(url, opts); // último intento, se devuelve tal cual (puede seguir siendo 429)
+  };
+  const p = _fmpQueueTail.then(run, run);
+  // Cadena SIEMPRE avanza (incluso si esta petición falla) para no bloquear
+  // las siguientes, y cada eslabón espera ~350ms antes de liberar el turno.
+  _fmpQueueTail = p.catch(() => {}).then(() => sleep(350));
+  return p;
+}
+
 // ── Medidas anti-copia básicas (disuasorias, no son seguridad real: cualquiera con
 // Ver código fuente o las herramientas de desarrollador las salta igualmente) ──
 document.addEventListener('contextmenu', e => e.preventDefault());
@@ -912,7 +944,7 @@ function updateDivTicker() {
 async function fetchDividendDataFMP(ticker) {
   if (!state.fmpKey) return null;
   try {
-    const res = await fetch(`https://financialmodelingprep.com/stable/dividends?symbol=${encodeURIComponent(ticker)}&apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(8000) });
+    const res = await fmpFetch(`https://financialmodelingprep.com/stable/dividends?symbol=${encodeURIComponent(ticker)}&apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
     const arr = await res.json();
     if (!Array.isArray(arr) || !arr.length) return { yield: 0, rate: 0, exDate: null, freq: "—" };
@@ -1415,7 +1447,7 @@ async function fetchQuotesFMP(tickers) {
   if (!state.fmpKey) return null;
   try {
     const symbols = tickers.map(t => encodeURIComponent(t)).join(',');
-    const res = await fetch(`https://financialmodelingprep.com/api/v3/quote/${symbols}?apikey=${state.fmpKey}`, {signal: AbortSignal.timeout(8000)});
+    const res = await fmpFetch(`https://financialmodelingprep.com/api/v3/quote/${symbols}?apikey=${state.fmpKey}`, {signal: AbortSignal.timeout(8000)});
     if (!res.ok) return null;
     const arr = await res.json();
     if (!Array.isArray(arr) || !arr.length) return null;
@@ -1447,7 +1479,7 @@ async function fetchRadarQuotesFMP(tickers) {
     const chunk = tickers.slice(i, i + CHUNK);
     try {
       const symbols = chunk.map(t => encodeURIComponent(t)).join(',');
-      const res = await fetch(`https://financialmodelingprep.com/api/v3/quote/${symbols}?apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(10000) });
+      const res = await fmpFetch(`https://financialmodelingprep.com/api/v3/quote/${symbols}?apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(10000) });
       if (!res.ok) continue;
       const arr = await res.json();
       if (!Array.isArray(arr)) continue;
@@ -2704,7 +2736,7 @@ async function loadPortfolioHealthData() {
   const CONCURRENCY = 5;
   for (let i = 0; i < missing.length; i += CONCURRENCY) {
     const batch = missing.slice(i, i + CONCURRENCY);
-    await Promise.allSettled(batch.map(t => loadCompanyChartsData(t)));
+    await Promise.allSettled(batch.map(t => loadCompanyChartsData(t, true)));
     state._healthProgress.done += batch.length;
     renderActiveTab();
   }
@@ -5221,9 +5253,10 @@ function renderCorrelationCard(ticker) {
   </div>`;
 }
 
-async function loadCompanyChartsData(ticker) {
+async function loadCompanyChartsData(ticker, skipFundamentals = false) {
   if (!state._portfolioCharts.companyData) state._portfolioCharts.companyData = {};
   if (state._portfolioCharts.companyData[ticker]?.loading) return;
+  const prevFundamentals = state._portfolioCharts.companyData[ticker]?.fundamentals || null;
   state._portfolioCharts.companyData[ticker] = { loading: true };
 
   // Promise.allSettled en vez de Promise.all: si fetchFundamentals falla
@@ -5235,16 +5268,20 @@ async function loadCompanyChartsData(ticker) {
   // lo que con 31 posiciones podía hacer sentir que la carga "no termina
   // nunca". Si un ticker no responde a tiempo, se da por fallido y se sigue
   // con el resto en vez de esperarlo indefinidamente.
+  // skipFundamentals: la carga masiva de "Salud de la Cartera" solo necesita
+  // el histórico de precio (Sharpe/Beta/Drawdown), así que ahí nos saltamos
+  // los fundamentales — evita quemar cuota de FMP en peticiones que no hacen
+  // falta y que solo compiten por el mismo límite de peticiones/segundo.
   const withTimeout = (p, ms) => Promise.race([
     p,
     new Promise((_, rej) => setTimeout(() => rej(new Error("timeout global")), ms))
   ]);
   const [priceResult, fundResult] = await Promise.allSettled([
     withTimeout(fetchPriceAndDividendHistory(ticker), 25000),
-    withTimeout(fetchFundamentals(ticker), 25000)
+    skipFundamentals ? Promise.resolve(prevFundamentals) : withTimeout(fetchFundamentals(ticker), 25000)
   ]);
   const priceHistory = priceResult.status === "fulfilled" ? priceResult.value : null;
-  const fundamentals = fundResult.status === "fulfilled" ? fundResult.value : null;
+  const fundamentals = fundResult.status === "fulfilled" ? fundResult.value : prevFundamentals;
   if (priceResult.status === "rejected") console.warn(`Precio de ${ticker} falló:`, priceResult.reason?.message || priceResult.reason);
   if (fundResult.status === "rejected") console.warn(`Fundamentales de ${ticker} fallaron:`, fundResult.reason?.message || fundResult.reason);
 
@@ -5311,8 +5348,8 @@ async function fetchPriceAndDividendHistoryFMP(ticker) {
   if (!state.fmpKey) return null;
   try {
     const [priceRes, divRes] = await Promise.all([
-      fetch(`https://financialmodelingprep.com/api/v3/historical-chart/1month/${encodeURIComponent(ticker)}?apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(12000) }),
-      fetch(`https://financialmodelingprep.com/stable/dividends?symbol=${encodeURIComponent(ticker)}&apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(12000) }).catch(() => null)
+      fmpFetch(`https://financialmodelingprep.com/api/v3/historical-chart/1month/${encodeURIComponent(ticker)}?apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(12000) }),
+      fmpFetch(`https://financialmodelingprep.com/stable/dividends?symbol=${encodeURIComponent(ticker)}&apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(12000) }).catch(() => null)
     ]);
     if (!priceRes.ok) return null;
     const priceArr = await priceRes.json();
@@ -6571,7 +6608,7 @@ async function _fetchFMP(ticker, key) {
     const incUrls = wrapUrl(`${BASE}/income-statement/${t}?limit=25&apikey=${key}`);
     for (const incUrl of incUrls) {
       try {
-        const incR = await fetch(incUrl, { signal: AbortSignal.timeout(10000) });
+        const incR = await fmpFetch(incUrl, { signal: AbortSignal.timeout(10000) });
         if (!incR.ok) { errors.push(`HTTP ${incR.status} @ ${incUrl.slice(0,50)}`); continue; }
         const iD = await incR.json();
         if (iD?.["Error Message"]) {
@@ -6591,9 +6628,9 @@ async function _fetchFMP(ticker, key) {
           : u;
 
         const [cfR, bsR, kmR] = await Promise.all([
-          fetch(wrap2(`${BASE}/cash-flow-statement/${t}?limit=25&apikey=${key}`), { signal: AbortSignal.timeout(10000) }),
-          fetch(wrap2(`${BASE}/balance-sheet-statement/${t}?limit=25&apikey=${key}`), { signal: AbortSignal.timeout(10000) }),
-          fetch(wrap2(`${BASE}/key-metrics/${t}?limit=25&apikey=${key}`), { signal: AbortSignal.timeout(10000) }),
+          fmpFetch(wrap2(`${BASE}/cash-flow-statement/${t}?limit=25&apikey=${key}`), { signal: AbortSignal.timeout(10000) }),
+          fmpFetch(wrap2(`${BASE}/balance-sheet-statement/${t}?limit=25&apikey=${key}`), { signal: AbortSignal.timeout(10000) }),
+          fmpFetch(wrap2(`${BASE}/key-metrics/${t}?limit=25&apikey=${key}`), { signal: AbortSignal.timeout(10000) }),
         ]);
         const [cD, bD, kD] = await Promise.all([cfR.json(), bsR.json(), kmR.json()]);
         const cf = Array.isArray(cD) && cD.length ? [...cD].reverse() : [];
@@ -8484,7 +8521,7 @@ async function runRadarSearch() {
           // suele quedar en el nivel gratuito mientras el TTM es de pago.
           // No es exactamente lo mismo (datos del último año fiscal cerrado,
           // no de los últimos 12 meses móviles) pero es mejor que nada.
-          const res = await fetch(`https://financialmodelingprep.com/api/v3/ratios/${encodeURIComponent(q.symbol)}?limit=1&apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(8000) });
+          const res = await fmpFetch(`https://financialmodelingprep.com/api/v3/ratios/${encodeURIComponent(q.symbol)}?limit=1&apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(8000) });
           if (res.ok) {
             const arr = await res.json();
             const rt = Array.isArray(arr) ? arr[0] : null;
