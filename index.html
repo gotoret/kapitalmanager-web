@@ -5145,6 +5145,28 @@ async function loadCompanyChartsData(ticker) {
 }
 
 async function fetchPriceAndDividendHistory(ticker) {
+  // Primero intentar con la misma fuente que usa la pestaña Cartera (más fiable)
+  const cacheKey = `${ticker}_max`;
+  if (state._chartCache?.[cacheKey] && state._chartCache[cacheKey] !== "loading") {
+    // Reutilizar datos de precio ya cargados
+    const cached = state._chartCache[cacheKey];
+    if (Array.isArray(cached) && cached.length > 2) {
+      const priceItems = cached.map((p, i) => {
+        const W = 12;
+        let sma = null;
+        if (i >= W - 1) {
+          const sl = cached.slice(i - W + 1, i + 1);
+          sma = +(sl.reduce((s, pp) => s + pp.v, 0) / W).toFixed(2);
+        }
+        const maxSoFar = Math.max(...cached.slice(0, i + 1).map(pp => pp.v));
+        const drawdown = maxSoFar > 0 ? +((p.v / maxSoFar - 1) * 100).toFixed(1) : 0;
+        return { date: new Date(p.t * 1000), close: +(p.v.toFixed(2)), sma, drawdown };
+      });
+      // Dividendos no estarán, pero al menos carga el precio rápido
+      return { priceItems, divList: [], divByYear: {}, divYears: [], yieldByYear: {}, divCagr: null, projYears: [], projAmounts: [] };
+    }
+  }
+
   const isGBp = ticker.toUpperCase().endsWith('.L');
   const proxies = [
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
@@ -5152,10 +5174,11 @@ async function fetchPriceAndDividendHistory(ticker) {
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
     `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
   ];
   for (const url of proxies) {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
+      const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
       if (!res.ok) continue;
       const json = await res.json();
       const result = json?.chart?.result?.[0];
@@ -5172,10 +5195,7 @@ async function fetchPriceAndDividendHistory(ticker) {
           if (isNaN(dateObj.getTime())) return null;
           const closeVal = adjclose[i] ?? quotes.close?.[i];
           if (closeVal == null || isNaN(closeVal)) return null;
-          return {
-            date: dateObj,
-            close: gbpDiv(closeVal)
-          };
+          return { date: dateObj, close: gbpDiv(closeVal) };
         })
         .filter(x => x !== null);
 
@@ -5229,7 +5249,7 @@ async function fetchPriceAndDividendHistory(ticker) {
       if (divYears.length >= 3) {
         const first = divByYear[divYears[0]], last = divByYear[divYears[divYears.length - 1]];
         const n = divYears[divYears.length - 1] - divYears[0];
-        if (first > 0 && n > 0) divCagr = +((Math.pow(last / first, 1 / n) - 1) * 100).toFixed(2);
+                if (first > 0 && n > 0) divCagr = +((Math.pow(last / first, 1 / n) - 1) * 100).toFixed(2);
       }
 
       const projYears = [], projAmounts = [];
@@ -5246,7 +5266,7 @@ async function fetchPriceAndDividendHistory(ticker) {
   }
   return null;
 }
-
+  
 function calculateAllocationBreakdown(positions, keyFn, maxSlices = 10) {
   const groups = {};
   positions.forEach(p => {
@@ -5632,7 +5652,7 @@ function buildPortfolioChartSVG(data, period) {
     ${chartScrollWrap(svgId, W, H, innerSvg, `onmousemove="multiChartMouseMove(event,'${svgId}',${W},${PL},${gW},${PT},${gH})" onmouseleave="multiChartMouseLeave('${svgId}')"`)}
   `;
 }
-
+  
 function buildDividendChartSVG(divData, period) {
   if (!divData || !divData.data || divData.data.length < 2) {
     return `<div class="no-data-msg">Sin datos de dividendos</div>`;
@@ -7066,57 +7086,36 @@ function closeModal() {
 }
 
 function openAddPos() {
-  const curFX = cur => cur === "EUR" ? null : (state.fxCache[cur] ? (1/state.fxCache[cur]).toFixed(4) : "");
+  const tickers = [...new Set([...state.positions.map(p=>p.ticker), ...state.transactions.map(t=>t.ticker)])].sort();
   openModal(`
-    <h3>＋ Nueva posición</h3>
-    <div class="field"><label>Ticker / Empresa</label>
-      <div class="ac-wrap"><input id="m-ticker" class="inp" placeholder="Escribe empresa o ticker: Iberdrola, Apple, SAN..."></div>
+    <h3>➕ Añadir posición</h3>
+    <div class="ac-wrap" style="position:relative">
+      <input id="m-ticker" class="inp" placeholder="Ticker (ej: IBE.MC)" list="pos-ticker-list" style="width:100%">
+      <datalist id="pos-ticker-list">${tickers.map(t=>`<option>${t}</option>`).join("")}</datalist>
     </div>
-    <div class="field"><label>Nombre empresa</label><input id="m-name" class="inp" placeholder="Se rellena automáticamente..."></div>
+    <div class="field"><label>Empresa</label><input id="m-name" class="inp" placeholder="Nombre de la empresa"></div>
+    <div class="field"><label>ISIN</label><input id="m-isin" class="inp" placeholder="Ej: ES0144580Y14" maxlength="12"></div>
     <div class="grid2">
-      <div class="field"><label>Nº acciones</label><input id="m-shares" type="number" class="inp" value="0" min="0" step="1"></div>
-      <div class="field"><label>Coste medio (en divisa local)</label><input id="m-cost" type="number" step="0.0001" class="inp" value="0" min="0" oninput="updateFXPreview()"></div>
-      <div class="field"><label>Divisa</label><select id="m-cur" class="inp" onchange="updateFXField()">${CURRENCIES.map(c=>`<option>${c}</option>`).join("")}</select></div>
-      <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">— Sector —</option>${SECTORS.map(s=>`<option>${s}</option>`).join("")}</select></div>
+      <div class="field"><label>Acciones</label><input id="m-shares" type="number" step="any" class="inp" value="0"></div>
+      <div class="field"><label>Coste medio</label><input id="m-price" type="number" step="any" class="inp" value="0"></div>
     </div>
-    <div id="m-fx-row" style="display:none">
-      <div class="field" style="margin-bottom:4px">
-        <label style="display:flex;align-items:center;gap:6px">
-          Tipo de cambio en la compra (EUR/<span id="m-fx-cur-label">USD</span>)
-          <span style="background:#dbeafe;color:#1d4ed8;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600">tipo actual → editable</span>
-        </label>
-        <input id="m-fx-rate" type="number" step="0.0001" class="inp" placeholder="Ej: 1.08" oninput="updateFXPreview()">
+    <div class="grid2">
+      <div class="field"><label>Divisa</label>
+        <select id="m-currency" class="inp">${CURRENCIES.map(c=>`<option ${c==="EUR"?"selected":""}>${c}</option>`).join("")}</select>
       </div>
-      <div id="m-fx-preview" style="font-size:11px;color:#059669;font-weight:600;padding:4px 10px;background:#f0fdf4;border-radius:6px;margin-bottom:10px"></div>
+      <div class="field"><label>Sector</label><input id="m-sector" class="inp" placeholder="Ej: Utilities"></div>
     </div>
-    <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${new Date().toISOString().slice(0,10)}"></div>
-    <div id="m-price-preview" style="display:none;padding:8px 12px;background:#f0fdf4;border-radius:8px;font-size:12px;color:#065f46;font-weight:600;margin-bottom:10px"></div>
+    <div class="field"><label>Fecha</label><input id="m-date" type="date" class="inp" value="${new Date().toISOString().slice(0,10)}"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
       <button class="btn-gray" onclick="closeModal()">Cancelar</button>
       <button class="btn" onclick="saveNewPos()">💾 Guardar</button>
     </div>`);
-
-  setupAutocomplete("m-ticker", async r => {
-    document.getElementById("m-name").value = r.name||r.ticker;
-    const exchCur = {"MCE":"EUR","MAD":"EUR","NYQ":"USD","NMS":"USD","NGM":"USD","ASE":"USD","LSE":"GBP","FRA":"EUR","PAR":"EUR","AMS":"EUR","MIL":"EUR","TSX":"CAD","ASX":"AUD","TYO":"JPY","HKG":"HKD"}[r.exchange]||"USD";
-    const sel = document.getElementById("m-cur");
-    if (sel && CURRENCIES.includes(exchCur)) { sel.value = exchCur; updateFXField(); }
-    const sectorSel = document.getElementById("m-sector");
-    if (sectorSel && !sectorSel.value) {
-      const guessed = guessSectorFromNameOrTicker(r.ticker, r.name);
-      if (guessed) sectorSel.value = guessed;
-    }
-    const preview = document.getElementById("m-price-preview");
-    if (preview) { preview.style.display="block"; preview.textContent="⏳ Buscando precio actual..."; }
-    const price = await fetchWithProxy(PROXIES, r.ticker);
-    if (price && preview) {
-      preview.textContent = `✅ Precio actual en Yahoo Finance: ${price} ${exchCur}`;
-      const costInp = document.getElementById("m-cost");
-      if (costInp && (+costInp.value===0||costInp.value==="0")) { costInp.value = price; updateFXPreview(); }
-    } else if (preview) { preview.style.display="none"; }
+  setupAutocomplete("m-ticker", r => {
+    document.getElementById("m-name").value = r.name || "";
+    document.getElementById("m-sector").value = guessSectorFromNameOrTicker(r.ticker, r.name);
   });
 }
-
+  
 function updateFXField() {
   const cur = document.getElementById("m-cur")?.value || "EUR";
   const row = document.getElementById("m-fx-row");
@@ -7157,70 +7156,65 @@ function updateFXPreview() {
 }
 
 function saveNewPos() {
-  const ticker=(document.getElementById("m-ticker").value||"").trim().toUpperCase().split(" ")[0];
-  const shares=+document.getElementById("m-shares").value;
-  const cost=+document.getElementById("m-cost").value;
-  const currency=document.getElementById("m-cur").value;
-  if(!ticker||shares<=0){alert("Ticker y acciones son obligatorios");return;}
+  const ticker = (document.getElementById("m-ticker")?.value || "").trim().toUpperCase();
+  const name = (document.getElementById("m-name")?.value || "").trim();
+  const shares = +document.getElementById("m-shares")?.value || 0;
+  const avgCost = +document.getElementById("m-price")?.value || 0;
+  const currency = document.getElementById("m-currency")?.value || "EUR";
+  const sector = (document.getElementById("m-sector")?.value || "").trim();
+  const date = document.getElementById("m-date")?.value || new Date().toISOString().slice(0, 10);
+  const isin = (document.getElementById("m-isin")?.value || "").trim().toUpperCase();
 
-  const fxRawInput = +document.getElementById("m-fx-rate")?.value || 0;
-  const fx_rate = currency === "EUR" ? 1 : (fxRawInput > 0 ? fxRawInput : (state.fxCache[currency] ? +(1/state.fxCache[currency]).toFixed(4) : 1));
-
-  const pos={ticker,name:document.getElementById("m-name").value||ticker,shares,avg_cost:cost,currency,sector:document.getElementById("m-sector").value,date:document.getElementById("m-date").value,fx_rate};
-  const idx=state.positions.findIndex(p=>p.ticker===ticker);
-  if(idx<0 && state.positions.length >= (state.planMaxPositions||5)){
-    openModal(`
-      <h3>🔒 Límite de tu plan alcanzado</h3>
-      <div style="font-size:13px;color:#475569;line-height:1.6;margin-bottom:14px">
-        Tu plan actual permite un máximo de <strong>${state.planMaxPositions}</strong> posiciones en cartera.
-        Para añadir "${esc(ticker)}" necesitas ampliar tu plan.
-      </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button class="btn-gray" onclick="closeModal()">Cancelar</button>
-        <button class="btn" onclick="location.href='index.html'">⭐ Mejorar plan</button>
-      </div>`);
+  if (!ticker || shares <= 0 || avgCost <= 0) {
+    alert("Ticker, acciones y precio son obligatorios");
     return;
   }
-  if(idx>=0) state.positions[idx]=pos; else state.positions.push(pos);
-  state.transactions.unshift({id:uid(),ticker,type:"BUY",shares,price:cost,date:pos.date,fx_rate,notes:"Posición inicial"});
-  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
+
+  const existing = state.positions.find(p => p.ticker === ticker);
+  if (existing) {
+    alert("Ya existe una posición con ese ticker. Usa Editar.");
+    return;
+  }
+
+  if (state.positions.length >= (state.planMaxPositions || Infinity)) {
+    alert(`Límite de ${state.planMaxPositions} posiciones alcanzado. Actualiza tu plan.`);
+    return;
+  }
+
+  state.positions.push({
+    ticker, name: name || ticker, shares, avg_cost: avgCost, currency,
+    sector, date, fx_rate: 1, isin
+  });
+
+  save(); closeModal(); renderHeader(); renderActiveTab();
   refreshDividendYields();
 }
-
+  
 function openEditPos(ticker) {
-  const tk=ticker||state.selectedTicker;
-  const pos=tk?state.positions.find(p=>p.ticker===tk):null;
-  if(!pos){alert("Selecciona una posición primero");return;}
-  const isEUR = pos.currency === "EUR";
-  const savedFX = pos.fx_rate && pos.fx_rate !== 1 ? pos.fx_rate : "";
+  const pos = ticker ? state.positions.find(p => p.ticker === ticker) : (state.selectedTicker ? state.positions.find(p => p.ticker === state.selectedTicker) : null);
+  if (!pos) { alert("Selecciona una posición primero"); return; }
   openModal(`
-    <h3>✏ Editar posición — ${esc(pos.ticker)}</h3>
-    <div class="field"><label>Ticker</label><input class="inp" value="${esc(pos.ticker)}" readonly style="background:#f1f5f9;color:#64748b"></div>
-    <div class="field"><label>Nombre empresa</label><input id="m-name" class="inp" value="${esc(pos.name||"")}"></div>
+    <h3>✏️ Editar posición</h3>
+    <div class="field"><label>Ticker</label><input id="m-ticker" class="inp" value="${esc(pos.ticker)}" readonly style="background:#f8fafc"></div>
+    <div class="field"><label>Empresa</label><input id="m-name" class="inp" value="${esc(pos.name||"")}"></div>
+    <div class="field"><label>ISIN</label><input id="m-isin" class="inp" value="${esc(pos.isin||"")}" placeholder="Ej: ES0144580Y14" maxlength="12"></div>
     <div class="grid2">
-      <div class="field"><label>Nº acciones</label><input id="m-shares" type="number" class="inp" value="${pos.shares}"></div>
-      <div class="field"><label>Coste medio (divisa local)</label><input id="m-cost" type="number" step="0.0001" class="inp" value="${pos.avg_cost}" oninput="updateFXPreview()"></div>
-      <div class="field"><label>Divisa</label><select id="m-cur" class="inp" onchange="updateFXField()">${CURRENCIES.map(c=>`<option ${c===pos.currency?"selected":""}>${c}</option>`).join("")}</select></div>
-      <div class="field"><label>Sector</label><select id="m-sector" class="inp"><option value="">— Sector —</option>${SECTORS.map(s=>`<option ${s===pos.sector?"selected":""}>${s}</option>`).join("")}</select></div>
+      <div class="field"><label>Acciones</label><input id="m-shares" type="number" step="any" class="inp" value="${pos.shares||0}"></div>
+      <div class="field"><label>Coste medio</label><input id="m-price" type="number" step="any" class="inp" value="${pos.avg_cost||0}"></div>
     </div>
-    <div id="m-fx-row" style="display:${isEUR?"none":"block"}">
-      <div class="field" style="margin-bottom:4px">
-        <label style="display:flex;align-items:center;gap:6px">
-          Tipo de cambio en la compra (EUR/<span id="m-fx-cur-label">${pos.currency}</span>)
-          ${savedFX ? `<span style="background:#dcfce7;color:#15803d;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600">valor guardado</span>` : `<span style="background:#dbeafe;color:#1d4ed8;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600">tipo actual → editable</span>`}
-        </label>
-        <input id="m-fx-rate" type="number" step="0.0001" class="inp" value="${savedFX||""}" placeholder="Ej: 1.08" oninput="updateFXPreview()">
+    <div class="grid2">
+      <div class="field"><label>Divisa</label>
+        <select id="m-currency" class="inp">${CURRENCIES.map(c=>`<option ${c===pos.currency?"selected":""}>${c}</option>`).join("")}</select>
       </div>
-      <div id="m-fx-preview" style="font-size:11px;color:#059669;font-weight:600;padding:4px 10px;background:#f0fdf4;border-radius:6px;margin-bottom:10px"></div>
+      <div class="field"><label>Sector</label><input id="m-sector" class="inp" value="${esc(pos.sector||"")}"></div>
     </div>
-    <div class="field"><label>Fecha compra</label><input id="m-date" type="date" class="inp" value="${pos.date||""}"></div>
+    <div class="field"><label>Fecha</label><input id="m-date" type="date" class="inp" value="${pos.date||new Date().toISOString().slice(0,10)}"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
       <button class="btn-gray" onclick="closeModal()">Cancelar</button>
-      <button class="btn" onclick="saveEditPos('${esc(pos.ticker)}')">💾 Guardar</button>
+      <button class="btn" onclick="saveEditPos()">💾 Guardar</button>
     </div>`);
-  if (!isEUR) setTimeout(updateFXPreview, 50);
 }
-
+  
 function deletePosition(ticker) {
   const tk = ticker || state.selectedTicker;
   if (!tk) { alert("Selecciona una posición primero"); return; }
@@ -7235,47 +7229,29 @@ function deletePosition(ticker) {
   buildDivInfo(); save(); renderHeader(); renderActiveTab();
 }
 
-function saveEditPos(ticker) {
-  const idx = state.positions.findIndex(p=>p.ticker===ticker);
-  if (idx<0) return;
-  const currency = document.getElementById("m-cur").value;
-  const fxRawInput = +document.getElementById("m-fx-rate")?.value || 0;
-  const fx_rate = currency==="EUR" ? 1 : (fxRawInput>0 ? fxRawInput : (state.positions[idx].fx_rate||1));
-  const newShares   = +document.getElementById("m-shares").value;
-  const newAvgCost  = +document.getElementById("m-cost").value;
-  const oldShares   = state.positions[idx].shares;
-  const oldAvgCost  = state.positions[idx].avg_cost;
-  const name        = document.getElementById("m-name").value;
-  const sector      = document.getElementById("m-sector").value;
-  const date        = document.getElementById("m-date").value;
+function saveEditPos() {
+  const ticker = (document.getElementById("m-ticker")?.value || "").trim().toUpperCase();
+  const name = (document.getElementById("m-name")?.value || "").trim();
+  const shares = +document.getElementById("m-shares")?.value || 0;
+  const avgCost = +document.getElementById("m-price")?.value || 0;
+  const currency = document.getElementById("m-currency")?.value || "EUR";
+  const sector = (document.getElementById("m-sector")?.value || "").trim();
+  const date = document.getElementById("m-date")?.value || new Date().toISOString().slice(0, 10);
+  const isin = (document.getElementById("m-isin")?.value || "").trim().toUpperCase();
 
-  state.positions[idx] = {...state.positions[idx], name, shares:newShares, avg_cost:newAvgCost, currency, sector, date, fx_rate};
-
-  state.transactions = state.transactions.map(t =>
-    t.ticker===ticker ? {...t, currency, name} : t
-  );
-
-  if (Math.abs(newShares-oldShares) > 0.0001 || Math.abs(newAvgCost-oldAvgCost) > 0.0001) {
-    const txShares = _calcSharesFromTx(ticker);
-    const diffShares = newShares - txShares;
-    if (Math.abs(diffShares) > 0.0001) {
-      state.transactions.push({
-        id: uid(),
-        ticker, type: diffShares > 0 ? "BUY" : "SELL",
-        date: (date ? new Date(date) : new Date()).toISOString(),
-        shares: Math.abs(diffShares),
-        price: newAvgCost,
-        commission: 0,
-        currency,
-        broker: "",
-        notes: "Ajuste manual de posición"
-      });
-    }
+  if (!ticker || shares <= 0 || avgCost <= 0) {
+    alert("Ticker, acciones y precio son obligatorios");
+    return;
   }
 
-  buildDivInfo(); save(); closeModal(); renderHeader(); renderActiveTab();
-}
+  const pos = state.positions.find(p => p.ticker === ticker);
+  if (!pos) return;
 
+  Object.assign(pos, { name: name || ticker, shares, avg_cost: avgCost, currency, sector, date, isin });
+  save(); closeModal(); renderHeader(); renderActiveTab();
+  refreshDividendYields();
+}
+  
 function _calcSharesFromTx(ticker) {
   const lots = [];
   [...state.transactions]
