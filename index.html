@@ -6213,6 +6213,252 @@ function calcProjection() {
   state._projData=rows; renderActiveTab();
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// PATCH: Botón "Analizar según sector" en pestaña Valoración
+// ═══════════════════════════════════════════════════════════════════════
+
+const SECTOR_VALUATION_MAP = {
+  "Banca": {
+    method: "pb",
+    methodLabel: "P/BV (Price-to-Book) + ROE",
+    range: "ROE alto → 1,2-1,8x libros; ROE bajo → ≤1,0x",
+    why: "Las provisiones distorsionan el beneficio contable de forma recurrente; el capital propio (libros) es el activo productivo real del negocio bancario. Por eso el P/BV es más fiable que el P/E."
+  },
+  "Seguros": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA + P/BV + Combined Ratio",
+    range: "EV/EBITDA ≈ 8,5-8,7x",
+    why: "Las reservas técnicas y la siniestralidad hacen que el beneficio puntual sea volátil y menos representativo. El EV/EBITDA y el P/BV capturan mejor la solvencia y la capacidad de underwriting."
+  },
+  "REITs / inmobiliario cotizado": {
+    method: "ddm",
+    methodLabel: "P/FFO, P/AFFO, NAV y ocupación",
+    range: "P/FFO 8-15x",
+    why: "La amortización de inmuebles infravalora masivamente el cash flow real disponible para dividendos. Los REITs se valoran por su capacidad de generar FFO y distribuirlo, no por beneficios contables."
+  },
+  "Petróleo y gas integrado": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA",
+    range: "≈ 6,7-8,2x",
+    why: "Negocio intensivo en capital con ciclos de precio de materia prima. El EBITDA elimina el impacto de la depreciación y permite comparar entre ciclos altos y bajos."
+  },
+  "Petróleo y gas (exploración/producción)": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA + Reservas probadas",
+    range: "≈ 4-6x",
+    why: "Muy cíclico; el valor depende de las reservas probadas y del precio de commodities, no del beneficio anual puntual."
+  },
+  "Minería y metales": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA + NAV de reservas",
+    range: "≈ 10,3x",
+    why: "Activos agotables valorados fundamentalmente por sus reservas minerales. El EBITDA normaliza el efecto de la depreciación de minas."
+  },
+  "Utilities/energía regulada": {
+    method: "ddm",
+    methodLabel: "EV/EBITDA + DCF regulado",
+    range: "EV/EBITDA ≈ 7,7-9,5x",
+    why: "Flujos de caja estables, predecibles y regulados a largo plazo. Son ideales para modelos de descuento de dividendos (DDM) o DCF regulado."
+  },
+  "Telecomunicaciones": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA + EV/suscriptor",
+    range: "Wireless ≈ 9x",
+    why: "Alta inversión en infraestructura de red que genera depreciaciones elevadas. El EBITDA elimina esa distorsión y refleja mejor la generación de caja real."
+  },
+  "Tecnología/software (SaaS)": {
+    method: "ev_revenue",
+    methodLabel: "EV/Revenue, ARR/MRR, EV/EBITDA",
+    range: "Revenue 4-7x; EBITDA 13-19x",
+    why: "Muchas tecnológicas priorizan crecimiento sobre beneficio y aún no son rentables. Se paga por ingresos recurrentes (ARR/MRR) y escalabilidad, no por beneficio neto."
+  },
+  "eCommerce/marketplaces": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA + GMV",
+    range: "≈ 9x",
+    why: "La escalabilidad y el volumen de transacciones (GMV) priman sobre el beneficio contable. El EBITDA refleja mejor la eficiencia operativa de la plataforma."
+  },
+  "Salud (hospitales, equipos médicos)": {
+    method: "pe",
+    methodLabel: "P/E + EV/EBITDA",
+    range: "P/E medio ≈ 28x",
+    why: "Sector con prima por crecimiento sostenido y demanda estructural (envejecimiento poblacional). El P/E es el estándar cuando los beneficios son estables y predecibles."
+  },
+  "Farma y biotecnología": {
+    method: "dcf_quality",
+    methodLabel: "DCF ajustado por riesgo (rNPV), EV/Ventas, P/S",
+    range: "EV/EBITDA ≈ 19-22x en picos",
+    why: "Empresas early-stage sin ingresos estables; se valora el pipeline con opciones reales y VAN ajustado a probabilidad de éxito. La calidad del DCF es crítica."
+  },
+  "Aeroespacial y defensa": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA",
+    range: "≈ 10-15x",
+    why: "Contratos a largo plazo y ciclos de programa. El EBITDA normaliza el impacto de la depreciación de activos industriales de larga vida."
+  },
+  "Transporte aéreo (aerolíneas)": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA, EV/EBITDAR (incluye leasing)",
+    range: "Muy volátil, 5,5-20x según ciclo",
+    why: "Alto apalancamiento operativo y sensibilidad al combustible y ciclo económico. El EBITDA/EBITDAR es el estándar del sector por los contratos de leasing de flota."
+  },
+  "Retail y consumo": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA + Ventas comparables (like-for-like)",
+    range: "≈ 8,5x",
+    why: "Márgenes ajustados; el crecimiento de ventas en mismas tiendas (like-for-like) es clave. El EBITDA permite comparar eficiencia operativa independientemente de la estructura de costes fijos."
+  },
+  "Automoción/retail automotriz": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA",
+    range: "≈ 14,8-17,5x",
+    why: "Combina componente industrial y de distribución. El EBITDA captura la generación de caja operativa sin distorsionar por la estructura de financiación de cada marca."
+  },
+  "Alimentación y bebidas": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA",
+    range: "≈ 5,5x",
+    why: "Negocio maduro, defensivo y con márgenes relativamente bajos pero estables. El EBITDA es el múltiplo estándar para comparar empresas de consumo básico."
+  },
+  "Industria y manufactura": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA",
+    range: "≈ 5,3x",
+    why: "Negocio de capital intensivo con crecimiento moderado. El EBITDA elimina las diferencias de política de depreciación entre compañías."
+  },
+  "Construcción": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA",
+    range: "≈ 3,8x",
+    why: "Alta ciclicidad y bajo margen relativo. El EBITDA permite valorar la capacidad de generación de caja en diferentes fases del ciclo constructivo."
+  },
+  "Logística y transporte": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA",
+    range: "≈ 5,0x",
+    why: "Márgenes estrechos y sensible a combustible y ciclo económico. El EBITDA es el estándar para comparar eficiencia operativa en el sector."
+  },
+  "Hostelería y turismo": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA",
+    range: "≈ 5,5x",
+    why: "Negocio estacional e intensivo en activos fijos (hoteles, resorts). El EBITDA refleja mejor la capacidad de generación de caja que el beneficio neto."
+  },
+  "Servicios empresariales": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA",
+    range: "Variable según recurrencia de ingresos",
+    why: "Depende de si el ingreso es recurrente (contratos) o puntual. El EBITDA permite comparar la rentabilidad operativa independientemente del modelo de contratación."
+  },
+  "Gestión de activos e inversión": {
+    method: "ev_ebitda",
+    methodLabel: "EV/EBITDA + AUM",
+    range: "≈ 12,25x",
+    why: "El valor depende de los activos bajo gestión (AUM) y las comisiones recurrentes. El EBITDA refleja la capacidad de generar ingresos por gestión sobre la base de AUM."
+  }
+};
+
+function resolveSectorProfile(ticker, name) {
+  const t = (ticker || "").toUpperCase();
+  const n = (name || "").toUpperCase();
+
+  if (n.includes("BANK") || n.includes("BANCO") || n.includes("CAIXA") || n.includes("SABADELL") || ["SAN.MC","BBVA.MC","CABK.MC","BKT.MC","SAB.MC","JPM","BAC","C","WFC","HSBA.L"].includes(t))
+    return SECTOR_VALUATION_MAP["Banca"];
+  if (n.includes("INSURANCE") || n.includes("MAPFRE") || n.includes("AXA") || n.includes("ALLIANZ") || n.includes("GENERALI") || ["MAP.MC","AXA.PA","ALV.DE","G.MI"].includes(t))
+    return SECTOR_VALUATION_MAP["Seguros"];
+  if (n.includes("ASSET") || n.includes("INVESTMENT") || n.includes("TROWE") || n.includes("FRANKLIN") || n.includes("BLACKROCK") || ["TROW","BEN","BLK","AMP","IVZ","NTRS"].includes(t))
+    return SECTOR_VALUATION_MAP["Gestión de activos e inversión"];
+  if (n.includes("REIT") || n.includes("REALTY") || n.includes("PROPERTY") || n.includes("AMERICAN TOWER") || ["WPC","O","SPG","VICI","AMT","PLD","EQIX"].includes(t))
+    return SECTOR_VALUATION_MAP["REITs / inmobiliario cotizado"];
+  if (n.includes("EXXON") || n.includes("SHELL") || n.includes("BP") || n.includes("TOTAL") || n.includes("REPSOL") || n.includes("CHEVRON") || ["XOM","CVX","SHEL.L","BP.L","REP.MC","TTE.PA","ENB"].includes(t))
+    return SECTOR_VALUATION_MAP["Petróleo y gas integrado"];
+  if (n.includes("CONOCOPHILLIPS") || n.includes("EOG") || n.includes("PIONEER") || ["COP","EOG","PXD","OXY","DVN","FANG"].includes(t))
+    return SECTOR_VALUATION_MAP["Petróleo y gas (exploración/producción)"];
+  if (n.includes("MINING") || n.includes("RIO TINTO") || n.includes("BHP") || n.includes("GLENCORE") || ["RIO.L","BHP","GLEN.L","AAL.L","ANTO.L"].includes(t))
+    return SECTOR_VALUATION_MAP["Minería y metales"];
+  if (n.includes("IBERDROLA") || n.includes("ENAGAS") || n.includes("NATURGY") || n.includes("ENDESA") || n.includes("UTILITY") || n.includes("NEXTERA") || ["IBE.MC","ENG.MC","ELE.MC","NTGY.MC","RED.MC","NEE","NWN","DUK","SO","AEP"].includes(t))
+    return SECTOR_VALUATION_MAP["Utilities/energía regulada"];
+  if (n.includes("TELEFON") || n.includes("VERIZON") || n.includes("VODAFONE") || n.includes("COMMUNICATION") || n.includes("DEUTSCHE TELEKOM") || n.includes("ORANGE") || ["TEF.MC","VZ","T","VOD.L","DTE.DE","ORA.PA","TIM.MI"].includes(t))
+    return SECTOR_VALUATION_MAP["Telecomunicaciones"];
+  if (n.includes("SOFTWARE") || n.includes("MICROSOFT") || n.includes("APPLE") || n.includes("GOOGLE") || n.includes("SALESFORCE") || n.includes("SERVICENOW") || ["MSFT","AAPL","GOOGL","AMZN","CRM","NOW","ADBE","ORCL","SAP","INTU"].includes(t))
+    return SECTOR_VALUATION_MAP["Tecnología/software (SaaS)"];
+  if (n.includes("AMAZON") || n.includes("EBAY") || n.includes("SHOPIFY") || n.includes("ALIBABA") || n.includes("MERCADOLIBRE") || ["AMZN","EBAY","SHOP","BABA","MELI","ETSY"].includes(t))
+    return SECTOR_VALUATION_MAP["eCommerce/marketplaces"];
+  if (n.includes("PHARMA") || n.includes("BIOTECH") || n.includes("PFIZER") || n.includes("ASTRAZENECA") || n.includes("ROCHE") || n.includes("NOVARTIS") || n.includes("AMGEN") || ["PFE","AZN.L","AZN","ROG.SW","NVS","GSK.L","AMGN","BIIB","REGN","VRTX"].includes(t))
+    return SECTOR_VALUATION_MAP["Farma y biotecnología"];
+  if (n.includes("HEALTH") || n.includes("HOSPITAL") || n.includes("MEDICAL") || n.includes("UNITEDHEALTH") || n.includes("ANTHEM") || ["CVS","JNJ","UNH","ABBV","LLY","MRK","BMY","CI","HUM"].includes(t))
+    return SECTOR_VALUATION_MAP["Salud (hospitales, equipos médicos)"];
+  if (n.includes("AEROSPACE") || n.includes("DEFENSE") || n.includes("BOEING") || n.includes("AIRBUS") || n.includes("LOCKHEED") || n.includes("NORTHROP") || ["LMT","RTX","BA","AIR.PA","SAAB.B","NOC","GD"].includes(t))
+    return SECTOR_VALUATION_MAP["Aeroespacial y defensa"];
+  if (n.includes("AIRLINE") || n.includes("AEROLINEA") || n.includes("IAG") || n.includes("LUFTHANSA") || n.includes("RYANAIR") || n.includes("DELTA") || ["IAG.MC","LHA.DE","RYA.L","UAL","DAL","AAL","LUV","BA.L"].includes(t))
+    return SECTOR_VALUATION_MAP["Transporte aéreo (aerolíneas)"];
+  if (n.includes("RETAIL") || n.includes("INDITEX") || n.includes("ZARA") || n.includes("H&M") || n.includes("TARGET") || n.includes("WALMART") || ["ITX.MC","HM.B","TGT","WMT","COST","LOW","HD","AMT.MC"].includes(t))
+    return SECTOR_VALUATION_MAP["Retail y consumo"];
+  if (n.includes("AUTOMOTIVE") || n.includes("TOYOTA") || n.includes("VOLKSWAGEN") || n.includes("TESLA") || n.includes("STELLANTIS") || n.includes("FERRARI") || ["TSLA","TM","VOW.DE","STLA","RACE","F","GM","HMC"].includes(t))
+    return SECTOR_VALUATION_MAP["Automoción/retail automotriz"];
+  if (n.includes("FOOD") || n.includes("BEVERAGE") || n.includes("COCA") || n.includes("KRAFT") || n.includes("NESTLE") || n.includes("PEPSI") || n.includes("DANONE") || ["KO","KHC","PEP","NESN.SW","EBRO.MC","DANONE.PA","GIS","K","MDLZ"].includes(t))
+    return SECTOR_VALUATION_MAP["Alimentación y bebidas"];
+  if (n.includes("CONSTRUCTION") || n.includes("ACS") || n.includes("FERROVIAL") || n.includes("HOCHTIEF") || n.includes("VINCI") || ["ACS.MC","FER.MC","HOT.DE","VINCI.PA","FCC.MC","SNC.TO"].includes(t))
+    return SECTOR_VALUATION_MAP["Construcción"];
+  if (n.includes("LOGISTICS") || n.includes("LOGISTA") || n.includes("UPS") || n.includes("FEDEX") || n.includes("DSV") || ["LOG.MC","UPS","FDX","DSV.CO","KNIN.SW","DHL.DE"].includes(t))
+    return SECTOR_VALUATION_MAP["Logística y transporte"];
+  if (n.includes("HOTEL") || n.includes("TOURISM") || n.includes("MELIA") || n.includes("MARRIOTT") || n.includes("HILTON") || ["MEL.MC","MAR","HLT","IHG","H","WH"].includes(t))
+    return SECTOR_VALUATION_MAP["Hostelería y turismo"];
+  if (n.includes("SERVICES") || n.includes("CONSULTING") || n.includes("ACCENTURE") || n.includes("CAPGEMINI") || ["ACN","CAP.PA","INFO","CTSH","GIB"].includes(t))
+    return SECTOR_VALUATION_MAP["Servicios empresariales"];
+
+  const appSector = guessSectorFromNameOrTicker(ticker, name);
+  const fallbackMap = {
+    "Servicios Financieros": "Banca",
+    "Inmobiliario": "REITs / inmobiliario cotizado",
+    "Energía": "Petróleo y gas integrado",
+    "Materiales Básicos": "Minería y metales",
+    "Utilities": "Utilities/energía regulada",
+    "Comunicaciones": "Telecomunicaciones",
+    "Tecnología": "Tecnología/software (SaaS)",
+    "Salud": "Salud (hospitales, equipos médicos)",
+    "Industria": "Industria y manufactura",
+    "Consumo Defensivo": "Alimentación y bebidas"
+  };
+  const fk = fallbackMap[appSector];
+  return fk ? SECTOR_VALUATION_MAP[fk] : null;
+}
+
+async function analyzeBySector() {
+  const input = document.getElementById("val-ticker");
+  const ticker = (input?.value || "").trim().toUpperCase().split(" ")[0];
+  if (!ticker) { alert("Introduce un ticker primero"); return; }
+
+  const pos = state.positions.find(p => p.ticker === ticker);
+  const profile = resolveSectorProfile(ticker, pos?.name || "");
+
+  if (!profile) {
+    alert("No se pudo determinar el sector de " + ticker + ". Añádela a tu cartera con el sector correcto o usa el análisis general.");
+    return;
+  }
+
+  state._valSectorProfile = profile;
+  state._valSectorTicker = ticker;
+  state._valSectorLoading = true;
+  state._valSectorError = "";
+  state._valSectorResult = null;
+  state._valResult = null;
+  state._valError = "";
+  renderActiveTab();
+
+  try {
+    const { data, error } = await supabaseClient.functions.invoke('valuation', { body: { ticker } });
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+    state._valSectorResult = data;
+  } catch (e) {
+    state._valSectorError = e?.message || String(e);
+  } finally {
+    state._valSectorLoading = false;
+    renderActiveTab();
+  }
+}
+
 // ─────────────────────────────────────────────
 // TAB 6 — VALORACIÓN IA
 // ─────────────────────────────────────────────
@@ -6239,7 +6485,7 @@ function createValAlert(ticker, name, perFwd, yieldPct) {
     <h3>🔔 Alerta de compra óptima — ${esc(ticker)}</h3>
     <div style="background:#f0fdf4;border-radius:8px;padding:10px;font-size:11px;color:#166534">${infoTxt}</div>
     <div class="field"><label>Ticker</label><input class="inp" id="va-ticker" value="${esc(ticker)}" readonly style="background:#f8fafc"/></div>
-    <div class="field"><label>Precio de alerta (€) — avisar cuando BAJE a este precio</label><input class="inp" id="va-price" type="number" step="0.01" value="${priceTxt}" placeholder="Ej: 42.50"/></div>
+    <div class="field"><label>Precio de alerta (€) — avisar cuando BAJA a este precio</label><input class="inp" id="va-price" type="number" step="0.01" value="${priceTxt}" placeholder="Ej: 42.50"/></div>
     <button class="btn" style="width:100%;margin-top:6px;" onclick="saveValAlert()">🔔 Crear alerta</button>
   `);
 }
@@ -6508,6 +6754,82 @@ function renderValuation() {
       `;
   }
 
+  // ── Resultado de análisis por sector ──
+  const sectorResultHtml = (() => {
+    if (state._valSectorLoading) {
+      return `<div class="card" style="margin-bottom:12px"><div style="padding:20px;text-align:center"><div class="spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto 8px"></div><div style="font-size:12px;color:#64748b">Analizando ${esc(state._valSectorTicker)} según sector...</div></div></div>`;
+    }
+    if (state._valSectorError) {
+      return `<div class="card" style="margin-bottom:12px;background:#fef2f2"><div style="padding:12px;color:#991b1b;font-size:12px">⚠️ ${esc(state._valSectorError)}</div></div>`;
+    }
+    if (!state._valSectorResult || !state._valSectorProfile) return "";
+
+    const profile = state._valSectorProfile;
+    const sr = state._valSectorResult;
+    const methodKey = profile.method;
+    const score = sr.scores?.[methodKey];
+    const hasScore = typeof score === "number";
+
+    const metricMap = { pb: "P_Book", pe: "PER", ev_ebitda: "EV_EBITDA", ev_revenue: "EV_Revenue", dcf_quality: "DCF_quality" };
+    const metricValue = sr.metrics?.[metricMap[methodKey]] ?? sr.metrics?.[methodKey];
+
+    const scoreColor = !hasScore ? "#94a3b8" : score >= 70 ? "#16a34a" : score >= 40 ? "#f59e0b" : "#dc2626";
+    const verdict = !hasScore ? "Sin datos suficientes" : score >= 70 ? "✅ Atractivo según sector" : score >= 40 ? "🟡 Precio neutro para el sector" : "🔴 Caro respecto a sector";
+
+    // Tarjeta de empresa (reutilizada del análisis normal)
+    const companyCard = (() => {
+      const m = sr.metrics || {};
+      const price = sr.priceHistory?.priceItems?.length ? sr.priceHistory.priceItems[sr.priceHistory.priceItems.length-1].close : null;
+      return `
+      <div class="card" style="margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          ${logoImg(sr.ticker || state._valSectorTicker, sr.name || state._valSectorTicker, 36)}
+          <div>
+            <div style="font-size:16px;font-weight:800;color:#1e293b">${esc(sr.name || state._valSectorTicker)}</div>
+            <div style="font-size:11px;color:#94a3b8">${esc(sr.ticker || state._valSectorTicker)}${sr.sector ? " · " + esc(sr.sector) : ""}</div>
+          </div>
+        </div>
+        ${sr.description ? `<div style="font-size:12px;color:#334155;line-height:1.5;margin-bottom:10px">${esc(sr.description)}</div>` : ""}
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px">
+          ${m.PER_fwd != null ? `<div><div style="font-size:9px;color:#64748b;font-weight:600">PER (fwd)</div><div style="font-size:13px;font-weight:700">${m.PER_fwd}</div></div>` : ""}
+          ${m.EV_EBITDA != null ? `<div><div style="font-size:9px;color:#64748b;font-weight:600">EV/EBITDA</div><div style="font-size:13px;font-weight:700">${m.EV_EBITDA}</div></div>` : ""}
+          ${m.FCF_yield != null ? `<div><div style="font-size:9px;color:#64748b;font-weight:600">FCF yield %</div><div style="font-size:13px;font-weight:700">${m.FCF_yield}%</div></div>` : ""}
+          ${m.ROIC != null ? `<div><div style="font-size:9px;color:#64748b;font-weight:600">ROIC %</div><div style="font-size:13px;font-weight:700">${m.ROIC}%</div></div>` : ""}
+          ${m.Deuda_EBITDA != null ? `<div><div style="font-size:9px;color:#64748b;font-weight:600">Deuda/EBITDA</div><div style="font-size:13px;font-weight:700">${m.Deuda_EBITDA}x</div></div>` : ""}
+          ${m.Yield_pct != null ? `<div><div style="font-size:9px;color:#64748b;font-weight:600">Yield div.</div><div style="font-size:13px;font-weight:700">${m.Yield_pct}%</div></div>` : ""}
+          ${price != null ? `<div><div style="font-size:9px;color:#64748b;font-weight:600">Precio</div><div style="font-size:13px;font-weight:700">${fmtEUR(price)}</div></div>` : ""}
+        </div>
+      </div>`;
+    })();
+
+    return companyCard + `
+      <div class="card" style="margin-bottom:12px;border-left:4px solid #7c3aed">
+        <h4 style="font-size:13px;font-weight:700;color:#7c3aed;margin-bottom:8px">🏭 Valoración por sector — ${esc(profile.methodLabel)}</h4>
+        <div style="background:#faf5ff;border-radius:8px;padding:10px 12px;margin-bottom:10px">
+          <div style="font-size:12px;color:#334155;line-height:1.6;margin-bottom:6px">
+            <strong>¿Por qué este método?</strong> ${esc(profile.why)}
+          </div>
+          <div style="font-size:11px;color:#64748b">
+            <strong>Rango orientativo del sector:</strong> ${esc(profile.range)} · 
+            <strong>Métrica aplicada:</strong> ${esc(profile.methodLabel)}
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+          <div>
+            <div style="font-size:10px;color:#64748b;font-weight:600;text-transform:uppercase">Puntuación sectorial</div>
+            <div style="font-size:22px;font-weight:800;color:${scoreColor}">${hasScore ? score + "/100" : "—"}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:#64748b;font-weight:600;text-transform:uppercase">Veredicto</div>
+            <div style="font-size:14px;font-weight:700;color:${scoreColor}">${verdict}</div>
+          </div>
+          ${metricValue != null ? `<div><div style="font-size:10px;color:#64748b;font-weight:600;text-transform:uppercase">Valor actual</div><div style="font-size:16px;font-weight:800">${metricValue}</div></div>` : ""}
+        </div>
+        ${hasScore ? `<div style="background:#e2e8f0;border-radius:6px;height:8px"><div style="background:${scoreColor};border-radius:6px;height:8px;width:${Math.min(score,100)}%"></div></div>` : ""}
+      </div>
+    `;
+  })();
+
   const fmpKey = state.fmpKey || "";
   const fmpPanel = `
     <div style="background:${fmpKey?"#f0fdf4":"#fffbeb"};border:1px solid ${fmpKey?"#bbf7d0":"#fde68a"};border-radius:10px;padding:12px 14px;margin-bottom:14px">
@@ -6537,6 +6859,7 @@ function renderValuation() {
           <input id="val-ticker" class="inp-sm" placeholder="Empresa o ticker: Iberdrola, GOOGL, KO..." style="width:100%;background:#fff" value="${esc(ticker)}" onkeydown="if(event.key==='Enter')analyzeValuation()">
         </div>
         <button class="btn" onclick="analyzeValuation()" ${loading?"disabled":""} style="padding:6px 16px">${loading?`<span class="spinner"></span> Analizando${state._valProgressSec?` (${state._valProgressSec}s)`:""}...`:"🔍 Analizar"}</button>
+        <button class="btn" style="background:#7c3aed;border-color:#7c3aed" onclick="analyzeBySector()" ${loading || state._valSectorLoading?"disabled":""}>${state._valSectorLoading?`<span class="spinner"></span> Analizando sector...`:"🏭 Analizar según sector"}</button>
         ${(!loading && state._valFromCache)?`<button class="btn-gray" onclick="analyzeValuation(true)" style="padding:6px 12px;font-size:11px" title="Vuelve a descargar los datos en vez de usar la caché compartida de 24h">🔄 Forzar actualización</button>`:""}
       </div>
       ${(!loading && state._valFromCache)?`<div style="font-size:10.5px;color:#94a3b8;margin-top:6px">📦 Datos en caché compartida de hace ${state._valCacheAgeHours<1?Math.round(state._valCacheAgeHours*60)+" min":state._valCacheAgeHours.toFixed(1)+" h"} (se renuevan solos pasadas 24h) — resultado idéntico para todos los usuarios hasta entonces.</div>`:""}
@@ -6545,7 +6868,8 @@ function renderValuation() {
       <div style="margin-top:8px;font-size:11px;color:#64748b">Autocompletado activo con Yahoo Finance. El análisis IA requiere conexión a internet.</div>
     </div>
     ${fmpPanel}
-    ${resultHtml}
+    ${sectorResultHtml}
+    ${loading?`<div style="text-align:center;padding:40px 20px"><div class="spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto 12px"></div><div style="color:#94a3b8;font-size:13px">Analizando ${esc(ticker)}...</div></div>`:(resultHtml||`<div style="text-align:center;color:#94a3b8;padding:40px 20px;font-size:13px">Introduce un ticker y pulsa <b>Analizar</b> para obtener la valoración</div>`)}
   </div>`;
 }
 
@@ -6787,13 +7111,6 @@ async function fetchFundamentals(ticker) {
     console.warn("FMP falló, sin más fuentes de fundamentales disponibles...", debug.fmp);
   }
 
-  // NOTA: existía aquí una llamada a _fetchYahooQS(ticker), una función que
-  // nunca llegó a definirse en el código. Eso lanzaba un ReferenceError no
-  // controlado cada vez que fallaban Yahoo TS y FMP a la vez, lo cual además
-  // tumbaba (vía Promise.all en loadCompanyChartsData) el histórico de
-  // precio de ese ticker aunque sí se hubiera descargado con éxito. Los
-  // fundamentales no son necesarios para Sharpe/Beta/Drawdown, así que aquí
-  // simplemente se renuncia a ellos sin reventar el resto de la carga.
   state._fundsDebug = debug;
   console.warn("fetchFundamentals: no se encontraron fundamentales (precio sigue disponible)", debug);
   return null;
