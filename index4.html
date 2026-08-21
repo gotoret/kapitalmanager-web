@@ -9054,7 +9054,7 @@ async function runRadarSearch() {
   state.radar._progress = "Enriqueciendo datos fundamentales...";
   renderActiveTab();
 
-   const ENRICH_GROUP = 5;
+  const ENRICH_GROUP = 5;
   for (let i = 0; i < allQuotes.length; i += ENRICH_GROUP) {
     const group = allQuotes.slice(i, i + ENRICH_GROUP);
     state.radar._progress = `Enriqueciendo datos fundamentales... ${Math.min(i+ENRICH_GROUP, allQuotes.length)}/${allQuotes.length}`;
