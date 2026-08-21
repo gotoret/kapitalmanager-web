@@ -6442,6 +6442,8 @@ async function analyzeBySector() {
   state._valSectorLoading = true;
   state._valSectorError = "";
   state._valSectorResult = null;
+  state._valResult = null;
+  state._valError = "";
   renderActiveTab();
 
   try {
@@ -6867,7 +6869,7 @@ function renderValuation() {
     </div>
     ${fmpPanel}
     ${sectorResultHtml}
-    ${resultHtml||`<div style="text-align:center;color:#94a3b8;padding:40px 20px;font-size:13px">Introduce un ticker y pulsa <b>Analizar</b> para obtener la valoración</div>`}
+    ${loading?`<div style="text-align:center;padding:40px 20px"><div class="spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto 12px"></div><div style="color:#94a3b8;font-size:13px">Analizando ${esc(ticker)}...</div></div>`:(resultHtml||`<div style="text-align:center;color:#94a3b8;padding:40px 20px;font-size:13px">Introduce un ticker y pulsa <b>Analizar</b> para obtener la valoración</div>`)}
   </div>`;
 }
 
@@ -7362,12 +7364,6 @@ async function analyzeValuation(forceRefresh = false) {
   const input = document.getElementById("val-ticker");
   const ticker = (input?.value||"").trim().toUpperCase().split(" ")[0];
   if (!ticker) return;
-    state.valuation = {
-    ticker,
-    loading: true,
-    result: null,   // ← limpia el análisis anterior
-    error: null
-  };
   state._valTicker = ticker;
   state._valLoading = true;
   state._valResult = null;
