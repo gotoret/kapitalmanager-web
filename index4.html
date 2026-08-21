@@ -7362,6 +7362,12 @@ async function analyzeValuation(forceRefresh = false) {
   const input = document.getElementById("val-ticker");
   const ticker = (input?.value||"").trim().toUpperCase().split(" ")[0];
   if (!ticker) return;
+    state.valuation = {
+    ticker,
+    loading: true,
+    result: null,   // ← limpia el análisis anterior
+    error: null
+  };
   state._valTicker = ticker;
   state._valLoading = true;
   state._valResult = null;
