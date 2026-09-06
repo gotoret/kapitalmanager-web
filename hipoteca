@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calculadora de Viabilidad Hipotecaria</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    body {
+      background: #f6f9fc;
+      margin: 0;
+      padding: 24px;
+      display: flex;
+      justify-content: center;
+    }
+    .container {
+      max-width: 1380px;
+      width: 100%;
+      background: white;
+      border-radius: 32px;
+      box-shadow: 0 20px 40px -12px rgba(0,20,40,0.25);
+      padding: 28px 32px;
+      transition: all 0.2s;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 600;
+      color: #0b1a33;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 0;
+      margin-bottom: 20px;
+      letter-spacing: -0.3px;
+      border-bottom: 2px solid #eef3f8;
+      padding-bottom: 16px;
+    }
+    h1 small {
+      font-size: 16px;
+      font-weight: 400;
+      color: #4b6a8b;
+      margin-left: 8px;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px 32px;
+    }
+    .card {
+      background: #ffffff;
+      border-radius: 20px;
+      padding: 18px 20px 22px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.02), 0 1px 2px rgba(0,0,0,0.03);
+      border: 1px solid #e9edf3;
+      transition: 0.1s;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .card-header h2 {
+      font-size: 17px;
+      font-weight: 600;
+      color: #1d2c47;
+      margin: 0;
+      letter-spacing: -0.2px;
+    }
+    .card-header .badge {
+      background: #eef3f8;
+      border-radius: 40px;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 4px 12px;
+      color: #2e4a6a;
+    }
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .input-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #f0f4fa;
+      padding: 6px 0;
+    }
+    .input-row label {
+      font-size: 14px;
+      font-weight: 450;
+      color: #1f344d;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .input-row label span {
+      color: #6b7f99;
+      font-weight: 400;
+      font-size: 12px;
+    }
+    .input-row input {
+      width: 120px;
+      padding: 6px 10px;
+      border: 1px solid #d7dfe9;
+      border-radius: 30px;
+      font-size: 14px;
+      background: white;
+      text-align: right;
+      font-weight: 500;
+      color: #0c1d33;
+      outline: none;
+      transition: 0.15s;
+    }
+    .input-row input:focus {
+      border-color: #2b6c9e;
+      box-shadow: 0 0 0 3px rgba(43,108,158,0.1);
+    }
+    .input-row input[readonly] {
+      background: #f5f8fc;
+      color: #1d3b5a;
+      font-weight: 500;
+      border-color: #dde4ed;
+    }
+    .input-row .indicator {
+      font-size: 13px;
+      color: #53738c;
+      margin-left: 6px;
+    }
+    .result-block {
+      margin-top: 12px;
+      background: #f2f7fd;
+      border-radius: 18px;
+      padding: 12px 16px;
+    }
+    .result-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 5px 0;
+      font-size: 14px;
+      border-bottom: 1px dashed #dae3ed;
+    }
+    .result-item:last-child {
+      border-bottom: none;
+    }
+    .result-item .label {
+      color: #2e4a6a;
+    }
+    .result-item .value {
+      font-weight: 600;
+      color: #0b1f36;
+    }
+    .result-item .value.positive {
+      color: #0f6e3f;
+    }
+    .result-item .value.warning {
+      color: #b45a1c;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 16px;
+      margin-top: 8px;
+    }
+    .stat-box {
+      background: #fafcff;
+      border-radius: 16px;
+      padding: 12px 12px;
+      border: 1px solid #e4ebf3;
+    }
+    .stat-box .title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      color: #5f7b98;
+      font-weight: 500;
+    }
+    .stat-box .number {
+      font-size: 22px;
+      font-weight: 650;
+      color: #0a1f37;
+      margin-top: 4px;
+    }
+    .stat-box .sub {
+      font-size: 13px;
+      color: #3d607e;
+    }
+    .hr {
+      border: none;
+      border-top: 2px solid #e8eef5;
+      margin: 16px 0;
+    }
+    .flex {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      margin-top: 10px;
+      border-radius: 16px;
+      border: 1px solid #eef3f8;
+      background: white;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th {
+      background: #f2f7fc;
+      color: #1d3a5a;
+      font-weight: 600;
+      padding: 10px 8px;
+      text-align: center;
+      border-bottom: 1px solid #dbe3ed;
+    }
+    td {
+      padding: 8px 8px;
+      text-align: center;
+      border-bottom: 1px solid #edf2f8;
+    }
+    td:first-child {
+      font-weight: 500;
+      color: #1f3857;
+      text-align: left;
+      padding-left: 12px;
+    }
+    .tag {
+      background: #eef3f9;
+      border-radius: 30px;
+      padding: 2px 12px;
+      font-size: 11px;
+      font-weight: 500;
+      color: #28517a;
+    }
+    .footnote {
+      font-size: 13px;
+      color: #59748f;
+      background: #f2f7fd;
+      padding: 12px 16px;
+      border-radius: 24px;
+      margin-top: 18px;
+      border-left: 4px solid #749bc7;
+    }
+    @media (max-width: 1000px) {
+      .grid-2 { grid-template-columns: 1fr; }
+      .grid-3 { grid-template-columns: 1fr 1fr; }
+      .container { padding: 20px; }
+    }
+    @media (max-width: 600px) {
+      .grid-3 { grid-template-columns: 1fr; }
+      .input-row { flex-wrap: wrap; gap: 4px; }
+      .input-row input { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+<div class="container" id="app">
+  <h1>🏠 Calculadora de viabilidad <small>hipotecaria familiar</small></h1>
+  
+  <div class="grid-2">
+    <!-- COLUMNA IZQUIERDA: DATOS -->
+    <div>
+      <div class="card">
+        <div class="card-header"><h2>👤 Titulares</h2><span class="badge">ingresos</span></div>
+        <div class="input-group">
+          <div class="input-row"><label>Edad titular 1</label><input type="number" id="edad1" value="40" min="18"></div>
+          <div class="input-row"><label>Edad titular 2</label><input type="number" id="edad2" value="40" min="18"></div>
+          <div class="input-row"><label>Salario neto T1 (€)</label><input type="number" id="salario1" value="2000" step="50"></div>
+          <div class="input-row"><label>Salario neto T2 (€)</label><input type="number" id="salario2" value="1900" step="50"></div>
+          <div class="input-row"><label>Pagas/año T1</label><input type="number" id="pagas1" value="12" step="1"></div>
+          <div class="input-row"><label>Pagas/año T2</label><input type="number" id="pagas2" value="12" step="1"></div>
+          <div class="input-row"><label>Otros ingresos mensuales</label><input type="number" id="otrosIng" value="0" step="50"></div>
+          <div class="input-row"><label>Alquiler bruto mensual</label><input type="number" id="alquilerBruto" value="0" step="50"></div>
+          <div class="input-row"><label>% alquiler computable</label><input type="number" id="alquilerPct" value="70" step="5"></div>
+          <div class="input-row"><label>Dividendos anuales</label><input type="number" id="dividendos" value="0" step="100"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h2>💳 Deudas actuales</h2><span class="badge">cargas</span></div>
+        <div class="input-group">
+          <div class="input-row"><label>Cuota hipoteca actual</label><input type="number" id="cuotaHipoteca" value="479" step="10"></div>
+          <div class="input-row"><label>Otras cuotas mensuales</label><input type="number" id="otrasCuotas" value="0" step="10"></div>
+          <div class="input-row"><label>Capital pendiente hipoteca</label><input type="number" id="capitalPendiente" value="0" step="1000"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h2>💰 Ahorro y patrimonio</h2><span class="badge">activos</span></div>
+        <div class="input-group">
+          <div class="input-row"><label>Ahorro líquido disponible</label><input type="number" id="ahorroLiquido" value="100000" step="5000"></div>
+          <div class="input-row"><label>Acciones/ETF/fondos</label><input type="number" id="acciones" value="0" step="1000"></div>
+          <div class="input-row"><label>Criptoactivos</label><input type="number" id="cripto" value="0" step="1000"></div>
+          <div class="input-row"><label>Valor otros inmuebles</label><input type="number" id="valorInmuebles" value="0" step="5000"></div>
+          <div class="input-row"><label>Deuda otros inmuebles</label><input type="number" id="deudaInmuebles" value="0" step="1000"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- COLUMNA DERECHA: COMPRA Y RIESGO -->
+    <div>
+      <div class="card">
+        <div class="card-header"><h2>🏡 Compra nueva</h2><span class="badge">objetivo</span></div>
+        <div class="input-group">
+          <div class="input-row"><label>Precio objetivo vivienda</label><input type="number" id="precioObjetivo" value="410000" step="5000"></div>
+          <div class="input-row"><label>Aportación propia prevista</label><input type="number" id="aportacionPropia" value="100000" step="5000"></div>
+          <div class="input-row"><label>Tipo interés nueva (%)</label><input type="number" id="tipoInteres" value="2.2" step="0.1"></div>
+          <div class="input-row"><label>Plazo nueva (años)</label><input type="number" id="plazoNueva" value="30" step="1"></div>
+          <div class="input-row"><label>Financiación máxima (%)</label><input type="number" id="financiacionMax" value="80" step="5"></div>
+          <div class="input-row"><label>Gastos/impuestos (%)</label><input type="number" id="gastosPct" value="10" step="1"></div>
+          <div class="input-row"><label>Comisión inmobiliaria (%)</label><input type="number" id="comisionPct" value="0" step="1"></div>
+          <div class="input-row"><label>Otros gastos (€)</label><input type="number" id="otrosGastos" value="0" step="100"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h2>⚖️ Hipótesis de riesgo</h2><span class="badge">esfuerzo</span></div>
+        <div class="input-group">
+          <div class="input-row"><label>Esfuerzo conservador (%)</label><input type="number" id="esfuerzoCons" value="30" step="1"></div>
+          <div class="input-row"><label>Esfuerzo probable (%)</label><input type="number" id="esfuerzoProb" value="35" step="1"></div>
+          <div class="input-row"><label>Esfuerzo máximo (%)</label><input type="number" id="esfuerzoMax" value="40" step="1"></div>
+        </div>
+        <div style="margin-top: 12px; font-size: 13px; background: #e8f0fa; padding: 10px 14px; border-radius: 40px; color: #1b3d62;">
+          <span>📊 LTV objetivo · cuota · esfuerzo actualizado</span>
+        </div>
+      </div>
+
+      <!-- botón recalcular -->
+      <button id="calcBtn" style="background: #1d3d62; border: none; color: white; font-weight: 600; padding: 14px 20px; border-radius: 60px; width: 100%; font-size: 18px; letter-spacing: 0.3px; cursor: pointer; box-shadow: 0 6px 14px rgba(23,65,110,0.25); margin-top: 6px;">Calcular viabilidad</button>
+    </div>
+  </div>
+
+  <!-- RESULTADOS PRINCIPALES -->
+  <div class="card" style="margin-top: 24px; background: #f1f7fe; border-color: #cbdae9;">
+    <div class="card-header"><h2>📋 Resultados consolidados</h2><span class="badge">simulación</span></div>
+    <div id="resultadosDinamicos" class="grid-3">
+      <div class="stat-box"><div class="title">Ingresos computables</div><div class="number" id="resIngresos">0</div><div class="sub">mensuales</div></div>
+      <div class="stat-box"><div class="title">Cuota objetivo</div><div class="number" id="resCuota">0</div><div class="sub">€ / mes</div></div>
+      <div class="stat-box"><div class="title">Esfuerzo total</div><div class="number" id="resEsfuerzo">0%</div><div class="sub">con hipoteca objetivo</div></div>
+    </div>
+    <div class="grid-3" style="margin-top: 8px;">
+      <div class="stat-box"><div class="title">Precio máx. (conservador)</div><div class="number" id="resPrecioCons">0</div><div class="sub">€</div></div>
+      <div class="stat-box"><div class="title">Precio máx. (probable)</div><div class="number" id="resPrecioProb">0</div><div class="sub">€</div></div>
+      <div class="stat-box"><div class="title">Precio máx. (máximo)</div><div class="number" id="resPrecioMax">0</div><div class="sub">€</div></div>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 12px 20px; margin-top: 14px; background: white; border-radius: 28px; padding: 12px 18px;">
+      <span><strong>LTV objetivo:</strong> <span id="resLTV">0%</span></span>
+      <span><strong>Hipoteca necesaria:</strong> <span id="resHipotecaNecesaria">0</span> €</span>
+      <span><strong>Patrimonio neto:</strong> <span id="resPatrimonio">0</span> €</span>
+    </div>
+  </div>
+
+  <!-- ESCENARIOS tabla -->
+  <div class="card" style="margin-top: 18px;">
+    <div class="card-header"><h2>📈 Escenarios: hipoteca máxima según tipo y plazo</h2><span class="badge">probable</span></div>
+    <div class="table-wrap">
+      <table id="tablaEscenarios">
+        <thead><tr><th>Tipo</th><th>20 años</th><th>25 años</th><th>30 años</th><th>35 años</th></tr></thead>
+        <tbody id="cuerpoEscenarios"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="footnote">
+    <strong>🧾 Criterios:</strong> El esfuerzo se calcula sobre ingresos computables (nóminas + alquiler ponderado + otros). 
+    El precio máximo está limitado por ingresos, LTV y ahorro para entrada+gastos. 
+    Resultado orientativo: cada entidad aplica criterios propios. El Banco de España sugiere 30-35% de endeudamiento y hasta 80% LTV.
+  </div>
+</div>
+<script>
+  (function() {
+    function getVal(id) { return parseFloat(document.getElementById(id).value) || 0; }
+
+    function calcular() {
+      // --- lectura ---
+      const salario1 = getVal('salario1');
+      const salario2 = getVal('salario2');
+      const pagas1 = getVal('pagas1');
+      const pagas2 = getVal('pagas2');
+      const otrosIng = getVal('otrosIng');
+      const alquilerBruto = getVal('alquilerBruto');
+      const alquilerPct = getVal('alquilerPct');
+      const dividendos = getVal('dividendos');
+
+      const cuotaHipoteca = getVal('cuotaHipoteca');
+      const otrasCuotas = getVal('otrasCuotas');
+      const capitalPendiente = getVal('capitalPendiente');
+
+      const ahorroLiquido = getVal('ahorroLiquido');
+      const acciones = getVal('acciones');
+      const cripto = getVal('cripto');
+      const valorInmuebles = getVal('valorInmuebles');
+      const deudaInmuebles = getVal('deudaInmuebles');
+
+      const precioObjetivo = getVal('precioObjetivo');
+      const aportacionPropia = getVal('aportacionPropia');
+      const tipoInteres = getVal('tipoInteres') / 100;
+      const plazoNueva = getVal('plazoNueva');
+      const financiacionMax = getVal('financiacionMax') / 100;
+      const gastosPct = getVal('gastosPct') / 100;
+      const comisionPct = getVal('comisionPct') / 100;
+      const otrosGastos = getVal('otrosGastos');
+
+      const esfuerzoCons = getVal('esfuerzoCons') / 100;
+      const esfuerzoProb = getVal('esfuerzoProb') / 100;
+      const esfuerzoMax = getVal('esfuerzoMax') / 100;
+
+      // --- cálculos ---
+      // ingresos nomina mensual (considerando pagas)
+      const nominaMensual1 = salario1 * (pagas1 / 12);
+      const nominaMensual2 = salario2 * (pagas2 / 12);
+      const ingresosNomina = nominaMensual1 + nominaMensual2;
+      const alquilerComputable = alquilerBruto * (alquilerPct / 100);
+      const otrosComputables = otrosIng + (dividendos / 12);
+      const ingresosComputables = ingresosNomina + alquilerComputable + otrosComputables;
+
+      const deudaMensualActual = cuotaHipoteca + otrasCuotas;
+
+      const cuotaMaxCons = ingresosComputables * esfuerzoCons;
+      const cuotaMaxProb = ingresosComputables * esfuerzoProb;
+      const cuotaMaxMax = ingresosComputables * esfuerzoMax;
+
+      const cuotaDispCons = Math.max(0, cuotaMaxCons - deudaMensualActual);
+      const cuotaDispProb = Math.max(0, cuotaMaxProb - deudaMensualActual);
+      const cuotaDispMax = Math.max(0, cuotaMaxMax - deudaMensualActual);
+
+      const tasaMensual = tipoInteres / 12;
+      const nCuotas = plazoNueva * 12;
+
+      function hipotecaMaxima(cuotaDisponible) {
+        if (cuotaDisponible <= 0 || tasaMensual === 0) return 0;
+        // PV = C * (1 - (1+r)^-n) / r
+        const pv = cuotaDisponible * (1 - Math.pow(1 + tasaMensual, -nCuotas)) / tasaMensual;
+        return pv;
+      }
+
+      const hipMaxCons = hipotecaMaxima(cuotaDispCons);
+      const hipMaxProb = hipotecaMaxima(cuotaDispProb);
+      const hipMaxMax = hipotecaMaxima(cuotaDispMax);
+
+      const precioMaxCons = hipMaxCons / financiacionMax;
+      const precioMaxProb = hipMaxProb / financiacionMax;
+      const precioMaxMax = hipMaxMax / financiacionMax;
+
+      // limitación por ahorro + gastos
+      const gastosCompraPct = gastosPct + comisionPct;
+      const denominator = 1 - financiacionMax + gastosCompraPct;
+      const precioPorAhorro = denominator > 0 ? ahorroLiquido / denominator : Infinity;
+
+      const precioFinalCons = Math.min(precioMaxCons, precioPorAhorro);
+      const precioFinalProb = Math.min(precioMaxProb, precioPorAhorro);
+      const precioFinalMax = Math.min(precioMaxMax, precioPorAhorro);
+
+      // hipoteca necesaria para objetivo
+      const hipotecaNecesaria = Math.max(0, precioObjetivo - aportacionPropia);
+      let cuotaObjetivo = 0;
+      if (hipotecaNecesaria > 0 && tasaMensual > 0) {
+        cuotaObjetivo = hipotecaNecesaria * tasaMensual / (1 - Math.pow(1 + tasaMensual, -nCuotas));
+      }
+      const esfuerzoTotal = ingresosComputables > 0 ? (deudaMensualActual + cuotaObjetivo) / ingresosComputables : 0;
+      const ltvObjetivo = precioObjetivo > 0 ? hipotecaNecesaria / precioObjetivo : 0;
+
+      // patrimonio
+      const totalActivos = ahorroLiquido + acciones + cripto + valorInmuebles;
+      const totalDeuda = capitalPendiente + deudaInmuebles;
+      const patrimonioNeto = totalActivos - totalDeuda;
+
+      // --- actualizar DOM ---
+      document.getElementById('resIngresos').innerText = ingresosComputables.toFixed(2) + ' €';
+      document.getElementById('resCuota').innerText = cuotaObjetivo.toFixed(2) + ' €';
+      document.getElementById('resEsfuerzo').innerText = (esfuerzoTotal * 100).toFixed(1) + '%';
+      document.getElementById('resPrecioCons').innerText = Math.round(precioFinalCons).toLocaleString();
+      document.getElementById('resPrecioProb').innerText = Math.round(precioFinalProb).toLocaleString();
+      document.getElementById('resPrecioMax').innerText = Math.round(precioFinalMax).toLocaleString();
+      document.getElementById('resLTV').innerText = (ltvObjetivo * 100).toFixed(1) + '%';
+      document.getElementById('resHipotecaNecesaria').innerText = Math.round(hipotecaNecesaria).toLocaleString();
+      document.getElementById('resPatrimonio').innerText = Math.round(patrimonioNeto).toLocaleString();
+
+      // tabla escenarios (con cuotaDispProb)
+      const tipos = [0.0175, 0.02, 0.022, 0.025, 0.03, 0.035, 0.04];
+      const plazos = [20, 25, 30, 35];
+      const tbody = document.getElementById('cuerpoEscenarios');
+      tbody.innerHTML = '';
+      tipos.forEach(t => {
+        const tr = document.createElement('tr');
+        const tdTipo = document.createElement('td');
+        tdTipo.innerText = (t * 100).toFixed(2) + '%';
+        tr.appendChild(tdTipo);
+        plazos.forEach(plazo => {
+          const td = document.createElement('td');
+          const rMensual = t / 12;
+          const n = plazo * 12;
+          let valor = 0;
+          if (cuotaDispProb > 0 && rMensual > 0) {
+            valor = cuotaDispProb * (1 - Math.pow(1 + rMensual, -n)) / rMensual;
+          }
+          td.innerText = Math.round(valor).toLocaleString();
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    document.getElementById('calcBtn').addEventListener('click', calcular);
+    // inicializar
+    window.addEventListener('load', calcular);
+  })();
+</script>
+</body>
+</html>
