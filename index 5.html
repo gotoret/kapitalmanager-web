@@ -2975,9 +2975,44 @@ function renderAnalysis360() {
   const fd = r.fundamentals || {};
   const m = r.metrics || {};
   const scores = r.scores || {};
-  const price = r.priceHistory?.priceItems?.length ? r.priceHistory.priceItems[r.priceHistory.priceItems.length-1].close : null;
-  const priceItems = r.priceHistory?.priceItems || [];
-  const week52 = priceItems.length ? { lo: Math.min(...priceItems.slice(-252).map(p=>p.close)), hi: Math.max(...priceItems.slice(-252).map(p=>p.close)) } : null;
+const rawPriceItems = r.priceHistory?.priceItems || [];
+
+const priceItems = rawPriceItems
+  .map(p => ({
+    ...p,
+    date: p.date instanceof Date ? p.date : new Date(p.date),
+    close: Number(p.close)
+  }))
+  .filter(p =>
+    Number.isFinite(p.close) &&
+    !isNaN(p.date.getTime())
+  )
+  .sort((a, b) => a.date - b.date);
+
+const price = priceItems.length
+  ? priceItems[priceItems.length - 1].close
+  : null;
+
+// Usamos las fechas reales, no el número de muestras.
+// Así funciona igual con históricos diarios, semanales o mensuales.
+const latestDate = priceItems.length
+  ? priceItems[priceItems.length - 1].date
+  : null;
+
+const cutoffDate = latestDate
+  ? new Date(latestDate.getTime() - 52 * 7 * 24 * 60 * 60 * 1000)
+  : null;
+
+const last52Weeks = cutoffDate
+  ? priceItems.filter(p => p.date >= cutoffDate)
+  : [];
+
+const week52 = last52Weeks.length
+  ? {
+      lo: Math.min(...last52Weeks.map(p => p.close)),
+      hi: Math.max(...last52Weeks.map(p => p.close))
+    }
+  : null;
 
   // ── 1. Resumen ejecutivo ──
   const mod1 = `<div class="card" style="margin-bottom:12px">
