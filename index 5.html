@@ -4290,6 +4290,14 @@ function renderDividends() {
         <span style="font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.3px">${l}:</span>
         <span style="font-size:16px;font-weight:800;color:${c}">${fmtEUR(v)}</span>
       </div>`).join("")}
+            <div style="display:flex;align-items:baseline;gap:5px;white-space:nowrap;flex-shrink:0">
+        <span style="font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.3px">
+          Rend. dividendos:
+        </span>
+        <span style="font-size:16px;font-weight:800;color:#7c3aed">
+          ${rendimientoDividendosCartera.toFixed(2)}%
+        </span>
+      </div>
     </div>
   </div>`;
 
