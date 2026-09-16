@@ -508,6 +508,7 @@ const save = () => {
   ls.set("km_dividend_cash_used", state.dividendCashUsed);
   ls.set("km_goal_config", state.goalConfig);
   ls.set("km_transactions", state.transactions);
+  saveUiState();
   if (state.authUserId) saveCloud();
 };
 
@@ -517,6 +518,83 @@ const saveCaches = () => {
   ls.set("km_fxCache", state.fxCache);
   ls.set("km_yieldCache", state.yieldCache);
 };
+
+// Estado de la interfaz: conserva la pestaña, orden, filtros y últimos
+// valores introducidos sin mezclarlo con los datos de la cartera.
+function uiStateStorageKey() {
+  return `km_ui_state_${state.authUserId || "local"}`;
+}
+
+function saveUiState() {
+  try {
+    const radar = state.radar || {};
+    const radarFilters = {};
+    Object.keys(radar).forEach(k => {
+      if (!k.startsWith("_")) radarFilters[k] = radar[k];
+    });
+    ls.set(uiStateStorageKey(), {
+      activeTab: Number.isInteger(state.activeTab) ? state.activeTab : 0,
+      selectedTicker: state.selectedTicker || null,
+      sortCol: state.sortCol || "",
+      sortDir: state.sortDir || 1,
+      portFilter: state._portFilter || "",
+      txFilter: state._txFilter || "",
+      txSort: state._txSort || "date",
+      txDir: state._txDir || "desc",
+      divSort: state._divSort || null,
+      divEsperadosSort: state._divEsperadosSort || null,
+      divCalendarVisible: !!state._divCalendarVisible,
+      divChartTab: state._divChartTab || 0,
+      divYearSel: state._divYearSel ?? null,
+      divEsperadosCollapsed: !!state._divEsperadosCollapsed,
+      divHistorialCollapsed: !!state._divHistorialCollapsed,
+      priceChartPeriod: state._priceChartPeriod || "1A",
+      chartRange: state._chartRange || {},
+      valTicker: state._valTicker || "",
+      valTab: state._valTab || 0,
+      goalConfig: state.goalConfig || {},
+      radar: radarFilters
+    });
+  } catch (e) {
+    console.warn("No se pudo guardar el estado de la interfaz:", e);
+  }
+}
+
+function restoreUiState() {
+  try {
+    const saved = ls.get(uiStateStorageKey(), null);
+    if (!saved || typeof saved !== "object") return;
+    if (Number.isInteger(saved.activeTab) && saved.activeTab >= 0 && saved.activeTab <= 9) {
+      state.activeTab = saved.activeTab;
+    }
+    if (saved.selectedTicker) state.selectedTicker = saved.selectedTicker;
+    if (saved.sortCol) state.sortCol = saved.sortCol;
+    if (saved.sortDir === 1 || saved.sortDir === -1) state.sortDir = saved.sortDir;
+    state._portFilter = saved.portFilter || "";
+    state._txFilter = saved.txFilter || "";
+    if (saved.txSort) state._txSort = saved.txSort;
+    if (saved.txDir) state._txDir = saved.txDir;
+    if (saved.divSort) state._divSort = { ...state._divSort, ...saved.divSort };
+    if (saved.divEsperadosSort) state._divEsperadosSort = { ...state._divEsperadosSort, ...saved.divEsperadosSort };
+    state._divCalendarVisible = !!saved.divCalendarVisible;
+    state._divChartTab = saved.divChartTab || 0;
+    if (saved.divYearSel != null) state._divYearSel = saved.divYearSel;
+    state._divEsperadosCollapsed = !!saved.divEsperadosCollapsed;
+    state._divHistorialCollapsed = !!saved.divHistorialCollapsed;
+    state._priceChartPeriod = saved.priceChartPeriod || "1A";
+    state._chartRange = saved.chartRange || {};
+    state._valTicker = saved.valTicker || "";
+    state._valTab = saved.valTab || 0;
+    if (saved.goalConfig && typeof saved.goalConfig === "object") {
+      state.goalConfig = { ...state.goalConfig, ...saved.goalConfig };
+    }
+    if (saved.radar && typeof saved.radar === "object") {
+      state.radar = { ...state.radar, ...saved.radar };
+    }
+  } catch (e) {
+    console.warn("No se pudo restaurar el estado de la interfaz:", e);
+  }
+}
 
 
 function totalDividendosCobradosEUR() {
@@ -1730,6 +1808,28 @@ async function fetchYahooSearch(query) {
   return [];
 }
 
+// Perfil de empresa (ISIN + sector) vía FMP, ruta legacy /api/v3/ (misma
+// familia que /api/v3/quote/, ya confirmada como gratuita para datos
+// básicos — a diferencia de /ratios-ttm/, que en este plan es de pago).
+// Si no hay clave FMP o la llamada falla, se usa TICKER_SECTOR como
+// respaldo instantáneo solo para el sector (el ISIN se deja vacío, nunca
+// inventado).
+async function fetchTickerProfile(ticker) {
+  const fallback = { isin: null, sector: TICKER_SECTOR[ticker] || null };
+  if (!state.fmpKey) return fallback;
+  try {
+    const res = await fetch(`https://financialmodelingprep.com/api/v3/profile/${encodeURIComponent(ticker)}?apikey=${state.fmpKey}`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return fallback;
+    const arr = await res.json();
+    const p = Array.isArray(arr) ? arr[0] : null;
+    if (!p) return fallback;
+    return { isin: p.isin || null, sector: p.sector || fallback.sector };
+  } catch (e) {
+    console.warn(`fetchTickerProfile(${ticker}) falló:`, e?.message || e);
+    return fallback;
+  }
+}
+
 async function fetchFXRates() {
   const pairs = ["EURUSD=X","EURGBP=X","EURJPY=X","EURCHF=X","EURCAD=X","EURAUD=X"];
   for (const pair of pairs) {
@@ -2509,6 +2609,44 @@ function confirmImportBroker() {
 // ─────────────────────────────────────────────
 // RENDER HEADER
 // ─────────────────────────────────────────────
+function fitHeaderMetricText() {
+  document.querySelectorAll("#metrics-grid .portfolio-kpi").forEach(card => {
+    const label = card.querySelector(".metric-label");
+    const value = card.querySelector(".metric-value");
+
+    [
+      { el: label, min: 6.5 },
+      { el: value, min: 8 }
+    ].forEach(({el, min}) => {
+      if (!el) return;
+
+      if (!el.dataset.fitBaseSize) {
+        el.dataset.fitBaseSize = parseFloat(getComputedStyle(el).fontSize) || 16;
+      }
+
+      const baseSize = parseFloat(el.dataset.fitBaseSize) || 16;
+      let size = baseSize;
+
+      el.style.whiteSpace = "nowrap";
+      el.style.lineHeight = "1.05";
+      el.style.fontSize = `${size}px`;
+
+      while (el.scrollWidth > el.clientWidth && size > min) {
+        size = Math.max(min, size - 0.25);
+        el.style.fontSize = `${size}px`;
+      }
+
+      el.style.overflow = "hidden";
+      el.style.textOverflow = "clip";
+    });
+  });
+
+  if (!fitHeaderMetricText._resizeBound) {
+    window.addEventListener("resize", fitHeaderMetricText);
+    fitHeaderMetricText._resizeBound = true;
+  }
+}
+
 function renderHeader() {
   try {
   const totals = state.positions.reduce((acc,p)=>{
@@ -2524,11 +2662,11 @@ function renderHeader() {
   const divCash = dividendCashAvailable();
 
   document.getElementById("metrics-grid").innerHTML = `
-    <div class="metric-card" style="border-left:3px solid #2563eb"><div class="metric-label">INVERTIDO</div><div class="metric-value" style="color:#2563eb">${fmtEUR(totals.inv)}</div></div>
-    <div class="metric-card" style="border-left:3px solid #0284c7"><div class="metric-label">VALOR ACTUAL</div><div class="metric-value" style="color:#0284c7">${fmtEUR(totals.cur)}</div></div>
-    <div class="metric-card" style="border-left:3px solid ${pc}"><div class="metric-label">GANANCIA/PÉRDIDA</div><div class="metric-value" style="color:${pc}">${pnl>=0?"+":""}${fmtEUR(Math.abs(pnl))}</div></div>
-    <div class="metric-card" style="border-left:3px solid ${pc}"><div class="metric-label">RENTABILIDAD</div><div class="metric-value" style="color:${pc}">${fmtPct(pct)}</div></div>
-    <div class="metric-card" style="border-left:3px solid #16a34a;cursor:pointer" onclick="openDividendCashModal()" title="Dinero acumulado en dividendos cobrados, disponible para reinvertir"><div class="metric-label">💵 CAJA DIVIDENDOS ℹ️</div><div class="metric-value" style="color:#16a34a">${fmtEUR(divCash)}</div></div>
+    <div class="metric-card portfolio-kpi" style="border-left:3px solid #2563eb;min-width:0;overflow:hidden"><div class="metric-label">INVERTIDO</div><div class="metric-value" style="color:#2563eb">${fmtEUR(totals.inv)}</div></div>
+    <div class="metric-card portfolio-kpi" style="border-left:3px solid #0284c7;min-width:0;overflow:hidden"><div class="metric-label">VALOR ACTUAL</div><div class="metric-value" style="color:#0284c7">${fmtEUR(totals.cur)}</div></div>
+    <div class="metric-card portfolio-kpi" style="border-left:3px solid ${pc};min-width:0;overflow:hidden"><div class="metric-label">GANANCIA/PÉRDIDA</div><div class="metric-value" style="color:${pc}">${pnl>=0?"+":""}${fmtEUR(Math.abs(pnl))}</div></div>
+    <div class="metric-card portfolio-kpi" style="border-left:3px solid ${pc};min-width:0;overflow:hidden"><div class="metric-label">RENTABILIDAD</div><div class="metric-value" style="color:${pc}">${fmtPct(pct)}</div></div>
+    <div class="metric-card portfolio-kpi" style="border-left:3px solid #16a34a;cursor:pointer;min-width:0;overflow:hidden" onclick="openDividendCashModal()" title="Dinero acumulado en dividendos cobrados, disponible para reinvertir"><div class="metric-label">💵 CAJA DIVIDENDOS ℹ️</div><div class="metric-value" style="color:#16a34a">${fmtEUR(divCash)}</div></div>
     <div class="metric-card" style="border-left:3px solid #7c3aed;padding:8px 10px">
       <div style="display:flex;justify-content:space-between;align-items:baseline">
         <div class="metric-label" style="margin-bottom:0">POSICIONES</div>
@@ -2541,6 +2679,7 @@ function renderHeader() {
       </div>
     </div>
   `;
+  fitHeaderMetricText();
 
   const badgeEl = document.getElementById("pos-alert-badge");
   if (badgeEl) badgeEl.innerHTML = "";
@@ -2572,6 +2711,7 @@ function switchTab(i) { state.activeTab=i; state.selectedTicker=null; renderTabs
 
 function renderActiveTab() {
   const el = document.getElementById("content");
+  saveUiState();
   // Se guarda qué campo tenía el foco (y la posición del cursor) antes de
   // repintar, porque el repintado reemplaza todo el HTML y por tanto destruye
   // y recrea los inputs — sin esto, cualquier campo con oninput pierde el
@@ -2718,31 +2858,68 @@ function openTWRModal() {
 }
 
 // ── Dashboard de Salud de la Cartera ──
-// A diferencia de la correlación (útil aunque falten datos), estos
-// indicadores solo tienen sentido si cubren la cartera casi entera, así que
-// aquí SÍ se cargan de forma activa todos los históricos que falten, en vez
-// de esperar a que el usuario vaya visitando fichas una a una.
+// Sharpe, Beta y Max Drawdown se calculan con rentabilidades mensuales.
+// Una respuesta con solo 2-3 puntos no sirve para estos indicadores, aunque
+// el objeto priceHistory exista, así que exigimos al menos 13 observaciones
+// mensuales válidas por posición.
+const HEALTH_MIN_PRICE_POINTS = 13;
+
+function hasUsableHealthHistory(priceHistory) {
+  const items = priceHistory?.priceItems;
+  if (!Array.isArray(items)) return false;
+  const valid = items.filter(p => {
+    const dt = p?.date instanceof Date ? p.date : new Date(p?.date);
+    return !isNaN(dt.getTime()) && Number.isFinite(+p.close) && +p.close > 0;
+  });
+  return valid.length >= HEALTH_MIN_PRICE_POINTS;
+}
+
+// Carga los históricos que falten con varias rondas y poca concurrencia.
+// Los proxies públicos de Yahoo suelen devolver 429 si se lanzan 5-10
+// peticiones a la vez; eso era lo que dejaba la cartera en 5/32 posiciones.
 async function loadPortfolioHealthData() {
   if (state._healthLoading) return;
   state._healthLoading = true;
   state._healthProgress = { done: 0, total: 0 };
   renderActiveTab();
 
-  const tickers = state.positions.map(p => p.ticker).filter(Boolean);
-  const missing = tickers.filter(t => !state._portfolioCharts.companyData?.[t]?.priceHistory);
-  state._healthProgress.total = missing.length + 1; // +1 por el índice S&P 500
+  const tickers = [...new Set(state.positions.map(p => p.ticker).filter(Boolean))];
+  const initialMissing = tickers.filter(t =>
+    !hasUsableHealthHistory(state._portfolioCharts.companyData?.[t]?.priceHistory)
+  );
+  state._healthProgress.total = initialMissing.length + 1; // +1 por el índice
 
-  const CONCURRENCY = 5;
-  for (let i = 0; i < missing.length; i += CONCURRENCY) {
-    const batch = missing.slice(i, i + CONCURRENCY);
-    await Promise.allSettled(batch.map(t => loadCompanyChartsData(t, true)));
-    state._healthProgress.done += batch.length;
-    renderActiveTab();
+  // Dos peticiones simultáneas evitan el rate-limit de los proxies y tres
+  // rondas permiten recuperar fallos transitorios sin bloquear la pantalla.
+  const CONCURRENCY = 2;
+  const MAX_ROUNDS = 3;
+  let pending = [...initialMissing];
+
+  for (let round = 0; round < MAX_ROUNDS && pending.length; round++) {
+    for (let i = 0; i < pending.length; i += CONCURRENCY) {
+      const batch = pending.slice(i, i + CONCURRENCY);
+      await Promise.allSettled(batch.map(t => loadCompanyChartsData(t, true)));
+      state._healthProgress.done = tickers.filter(t =>
+        hasUsableHealthHistory(state._portfolioCharts.companyData?.[t]?.priceHistory)
+      ).length;
+      renderActiveTab();
+      if (i + CONCURRENCY < pending.length) await sleep(700);
+    }
+
+    pending = tickers.filter(t =>
+      !hasUsableHealthHistory(state._portfolioCharts.companyData?.[t]?.priceHistory)
+    );
+    if (pending.length && round < MAX_ROUNDS - 1) await sleep(1800);
   }
-  if (!state._portfolioCharts.indexData?.["^GSPC"]?.priceHistory) {
-    await loadIndexData("^GSPC");
-  }
-  state._healthProgress.done = state._healthProgress.total;
+
+  const indexReady = hasUsableHealthHistory(
+    state._portfolioCharts.indexData?.["^GSPC"]?.priceHistory
+  );
+  if (!indexReady) await loadIndexData("^GSPC", true);
+
+  state._healthProgress.done = tickers.filter(t =>
+    hasUsableHealthHistory(state._portfolioCharts.companyData?.[t]?.priceHistory)
+  ).length;
   state._healthLoading = false;
   renderActiveTab();
 }
@@ -2758,15 +2935,22 @@ function renderPortfolioHealthCard() {
   const effectivePositions = hhi > 0 ? +(1/hhi).toFixed(1) : 0;
   const diversifLabel = hhi > 0.15 ? { txt: "Concentrada", color: "#dc2626" } : hhi > 0.08 ? { txt: "Moderada", color: "#f59e0b" } : { txt: "Bien diversificada", color: "#16a34a" };
 
-  const cachedCount = tickers.filter(t => state._portfolioCharts.companyData?.[t]?.priceHistory).length;
+  const cachedCount = tickers.filter(t =>
+    hasUsableHealthHistory(state._portfolioCharts.companyData?.[t]?.priceHistory)
+  ).length;
   const coveragePct = Math.round((cachedCount / tickers.length) * 100);
-  // Con carteras grandes casi nunca se consigue el histórico de los 31
-  // tickers a la vez (algún proxy/ticker siempre falla), así que exigir el
-  // 100% dejaba esta tarjeta bloqueada permanentemente. Basta con la mitad
-  // de las posiciones o 5, lo que sea mayor, para dar una estimación útil;
-  // el cálculo de abajo ya renormaliza pesos mes a mes con los tickers
-  // disponibles, así que es seguro operar con cobertura parcial.
-  const MIN_NEEDED = Math.min(tickers.length, Math.max(5, Math.ceil(tickers.length / 2)));
+  // Para que la salud represente la cartera completa no mostramos Sharpe,
+  // Beta ni Drawdown hasta tener histórico válido de todas las posiciones.
+  const MIN_NEEDED = tickers.length;
+  const indexReady = hasUsableHealthHistory(
+    state._portfolioCharts.indexData?.["^GSPC"]?.priceHistory
+  );
+
+  if ((!indexReady || cachedCount < tickers.length) &&
+      !state._healthLoading && !state._healthAutoStarted) {
+    state._healthAutoStarted = true;
+    setTimeout(() => loadPortfolioHealthData(), 80);
+  }
 
   let riskMetricsHtml;
   if (state._healthLoading) {
@@ -3097,7 +3281,7 @@ function printAnalysis360() {
 }
 
 function renderPortfolio() {
-  const filter = (document.getElementById("port-filter")||{}).value||"";
+  const filter = (document.getElementById("port-filter")||{}).value ?? state._portFilter ?? "";
   let rows = state.positions.filter(p=>
     p.ticker.toLowerCase().includes(filter.toLowerCase())||
     (p.name||"").toLowerCase().includes(filter.toLowerCase())||
@@ -3111,10 +3295,24 @@ function renderPortfolio() {
     const curV=cpEUR!==null?p.shares*cpEUR:null;
     const pnl=curV!==null?curV-inv:null;
     const di=state.divInfo.find(d=>d.ticker===p.ticker);
-    return {ticker:p.ticker,empresa:p.name||"",acciones:p.shares,coste:posToEUR(p.avg_cost,p),precio:cpEUR||0,valor:curV||inv,pnl:pnl||0,pct:pnl&&inv?pnl/inv*100:0,yield:(di?.div_yield||0)*100,sector:p.sector||""}[col]||0;
+    return {
+      ticker:p.ticker, empresa:p.name||"", acciones:p.shares,
+      coste:posToEUR(p.avg_cost,p), precio:cpEUR||0,
+      cambio:state.priceChangeCache[p.ticker] ?? 0,
+      valor:curV||inv, pnl:pnl||0, pct:pnl&&inv?pnl/inv*100:0,
+      yield:(di?.div_yield||0)*100, sector:p.sector||""
+    }[col] ?? 0;
   };
 
-  if (state.sortCol) rows = [...rows].sort((a,b)=>state.sortDir*(getV(a,state.sortCol)<getV(b,state.sortCol)?-1:1));
+  if (state.sortCol) rows = [...rows].sort((a,b)=>{
+    const av = getV(a, state.sortCol);
+    const bv = getV(b, state.sortCol);
+    if (av === bv) return 0;
+    if (typeof av === "string" || typeof bv === "string") {
+      return state.sortDir * String(av).localeCompare(String(bv), "es", { sensitivity: "base" });
+    }
+    return state.sortDir * (av < bv ? -1 : 1);
+  });
 
   const cols = [
     {k:"ticker",l:"Ticker"},{k:"empresa",l:"Empresa"},{k:"acciones",l:"Acc.",al:"center"},
@@ -3215,7 +3413,7 @@ function renderPortfolio() {
   <button class="btn" style="font-size:15px;padding:5px 9px;line-height:1" onclick="openSnapshotCartera(this)" title="Snapshot — Informe visual de cartera">📸</button>
   <button class="btn" style="font-size:15px;padding:5px 9px;line-height:1" onclick="openTWRModal()" title="Rentabilidad ponderada por tiempo (Dietz Modificado)">📊</button>
           <div style="flex:1"></div>
-          <input id="port-filter" class="inp-sm" placeholder="🔍 Filtrar..." style="width:150px;font-size:11px" value="${esc(filter)}" oninput="renderActiveTab()">
+           <input id="port-filter" class="inp-sm" placeholder="🔍 Filtrar..." style="width:150px;font-size:11px" value="${esc(filter)}" oninput="state._portFilter=this.value;saveUiState();renderActiveTab()">
           <button class="btn-danger" style="margin-left:6px;font-size:11px;padding:5px 10px" onclick="deleteCartera()" title="Elimina todas las posiciones">🗑️ Vaciar</button>
         </div>
         <div style="flex:1;overflow:auto">
@@ -4221,6 +4419,16 @@ function renderDividends() {
     return s + toEUR((d.annual_income||0)*(1-ret), d.currency||"EUR");
   },0);
 
+  // Rendimiento neto de dividendos sobre el valor actual de la cartera
+  const valorActualCartera = state.positions.reduce(
+    (s, p) => s + posValEUR(p),
+    0
+  );
+
+  const rendimientoDividendosCartera = valorActualCartera > 0
+    ? (totalNeto / valorActualCartera) * 100
+    : 0;
+
   // ── Header en UNA sola línea ──
   const stickyCards = `<div style="position:sticky;top:0;z-index:20;background:#fff;padding:10px 14px;margin:-14px -14px 14px -14px;box-shadow:0 2px 8px #0001">
     <div style="display:flex;flex-wrap:nowrap;gap:18px;align-items:baseline;overflow-x:auto">
@@ -4233,6 +4441,10 @@ function renderDividends() {
         <span style="font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.3px">${l}:</span>
         <span style="font-size:16px;font-weight:800;color:${c}">${fmtEUR(v)}</span>
       </div>`).join("")}
+      <div style="display:flex;align-items:baseline;gap:5px;white-space:nowrap;flex-shrink:0">
+        <span style="font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.3px">Rend. dividendos:</span>
+        <span style="font-size:16px;font-weight:800;color:#7c3aed">${rendimientoDividendosCartera.toFixed(2)}%</span>
+      </div>
     </div>
   </div>`;
 
@@ -4507,12 +4719,10 @@ function txSort(col) {
 }
 
 function openAddTxManual() {
-  const tickers = [...new Set([...state.positions.map(p=>p.ticker), ...state.transactions.map(t=>t.ticker)])].sort();
   openModal(`
     <h3>➕ Nueva transacción</h3>
     <div class="grid2">
-      <div class="field"><label>Ticker</label><input id="etx-ticker" class="inp" list="etx-ticker-list" placeholder="Ej: IBE.MC">
-        <datalist id="etx-ticker-list">${tickers.map(t=>`<option>${t}</option>`).join("")}</datalist>
+      <div class="field"><label>Ticker</label><input id="etx-ticker" class="inp" placeholder="Ej: IBE.MC" autocomplete="off">
       </div>
       <div class="field"><label>Tipo</label>
         <select id="etx-type" class="inp">
@@ -4539,17 +4749,16 @@ function openAddTxManual() {
       <button class="btn-gray" onclick="closeModal()">Cancelar</button>
       <button class="btn" onclick="saveTxModal(null)">💾 Guardar</button>
     </div>`);
+  setupAutocomplete("etx-ticker");
 }
 
 function openEditTransaction(id) {
   const t = state.transactions.find(tx=>tx.id===id);
   if (!t) return;
-  const tickers = [...new Set([...state.positions.map(p=>p.ticker), ...state.transactions.map(t=>t.ticker)])].sort();
   openModal(`
     <h3>✏️ Editar transacción</h3>
     <div class="grid2">
-      <div class="field"><label>Ticker</label><input id="etx-ticker" class="inp" value="${esc(t.ticker)}" list="etx-ticker-list">
-        <datalist id="etx-ticker-list">${tickers.map(tk=>`<option>${tk}</option>`).join("")}</datalist>
+      <div class="field"><label>Ticker</label><input id="etx-ticker" class="inp" value="${esc(t.ticker)}" autocomplete="off">
       </div>
       <div class="field"><label>Tipo</label>
         <select id="etx-type" class="inp">
@@ -4576,6 +4785,7 @@ function openEditTransaction(id) {
       <button class="btn-gray" onclick="closeModal()">Cancelar</button>
       <button class="btn" onclick="saveTxModal(${id})">💾 Guardar</button>
     </div>`);
+  setupAutocomplete("etx-ticker");
 }
 
 function saveTxModal(id) {
@@ -4664,6 +4874,7 @@ function deleteTransaction(id) {
 // TAB 4 — GRÁFICOS
 // ─────────────────────────────────────────────
 const TICKER_DOMAIN = {
+  // ── España (.MC) ──
   "ACS.MC":"acs.es","ACX.MC":"acerinox.com","IBE.MC":"iberdrola.com",
   "REP.MC":"repsol.com","MAP.MC":"mapfre.com","TEF.MC":"telefonica.com",
   "ENG.MC":"enagas.es","LOG.MC":"logista.com","MCM.MC":"miquelycostas.com",
@@ -4673,33 +4884,301 @@ const TICKER_DOMAIN = {
   "GRF.MC":"grifols.com","SAB.MC":"bancsabadell.com","SAN.MC":"santander.com",
   "BBVA.MC":"bbva.com","ITX.MC":"inditex.com","FER.MC":"ferrovial.com",
   "ANA.MC":"acciona.com","CLNX.MC":"cellnex.com","MEL.MC":"melia.com",
+  "BKT.MC":"bankinter.com","CABK.MC":"caixabank.com","AENA.MC":"aena.es",
+  "COL.MC":"inmobiliariacolon.com","FLU.MC":"fluidra.com","IAG.MC":"iag.com",
+  "IDR.MC":"idrsolutions.com","LIN.MC":"lindt.com","MRL.MC":"merlinproperties.com",
+  "PHM.MC":"pharmamar.com","RJF.MC":"raiffeisen.com","SLR.MC":"solaria.es",
+  "UNI.MC":"unicaja.es","VWS.MC":"vestas.com",
+  // ── Reino Unido (.L) ──
+  "ULVR.L":"unilever.com","SHEL.L":"shell.com","BP.L":"bp.com",
+  "AZN.L":"astrazeneca.com","GSK.L":"gsk.com","VOD.L":"vodafone.com",
+  "HSBA.L":"hsbc.com","RIO.L":"riotinto.com","DGE.L":"diageo.com",
+  "BATS.L":"bat.com","LLOY.L":"lloydsbanking.com","BARC.L":"barclays.com",
+  "NWG.L":"natwestgroup.com","TSCO.L":"tesco.com","AAL.L":"angloamerican.com",
+  "GLEN.L":"glencore.com","REL.L":"relx.com","CPG.L":"compass-group.com",
+  "CRH.L":"crh.com","SN.L":"smith-nephew.com","EXPN.L":"experian.com",
+  "IMB.L":"imperialbrandsplc.com","PRU.L":"prudentialplc.com","SGE.L":"sage.com",
+  "SPX.L":"spiraxsarco.com","SSE.L":"sse.com","WPP.L":"wpp.com",
+  // ── EE.UU. (mayores) ──
   "MMM":"3m.com","KO":"coca-cola.com","PG":"pg.com","JNJ":"jnj.com",
   "VZ":"verizon.com","MO":"altria.com","PFE":"pfizer.com","WPC":"wpcarey.com",
   "CVS":"cvshealth.com","TROW":"troweprice.com","BEN":"franklinresources.com",
   "NWN":"nwnatural.com","UVV":"universalcorp.com","KHC":"kraftheinzcompany.com",
-  "BTI":"bat.com","BATS.L":"bat.com","T":"att.com","XOM":"exxonmobil.com",
+  "BTI":"bat.com","T":"att.com","XOM":"exxonmobil.com",
   "MSFT":"microsoft.com","AAPL":"apple.com","GOOGL":"google.com","AMZN":"amazon.com",
   "JPM":"jpmorganchase.com","BAC":"bankofamerica.com","WMT":"walmart.com",
   "HD":"homedepot.com","DIS":"disney.com","V":"visa.com","MA":"mastercard.com",
   "ABBV":"abbvie.com","MRK":"merck.com","LMT":"lockheedmartin.com",
   "RTX":"rtx.com","GE":"ge.com","CAT":"caterpillar.com","UPS":"ups.com",
   "FDX":"fedex.com","NEE":"nexteraenergy.com","O":"realtyincome.com",
-  "ENB":"enbridge.com","ULVR.L":"unilever.com","SHEL.L":"shell.com",
-  "BP.L":"bp.com","AZN.L":"astrazeneca.com","GSK.L":"gsk.com",
-  "VOD.L":"vodafone.com","HSBA.L":"hsbc.com","RIO.L":"riotinto.com",
-  "DGE.L":"diageo.com",
+  "ENB":"enbridge.com","INTC":"intel.com","NVDA":"nvidia.com","TSLA":"tesla.com",
+  "META":"meta.com","NFLX":"netflix.com","ADBE":"adobe.com","CRM":"salesforce.com",
+  "PYPL":"paypal.com","UBER":"uber.com","ABNB":"airbnb.com","COIN":"coinbase.com",
+  "PLTR":"palantir.com","AMD":"amd.com","QCOM":"qualcomm.com","AVGO":"broadcom.com",
+  "TXN":"ti.com","LRCX":"lamresearch.com","KLAC":"kla.com","AMAT":"appliedmaterials.com",
+  "MU":"micron.com","SNOW":"snowflake.com","ZM":"zoom.us","ROKU":"roku.com",
+  "SQ":"block.xyz","SHOP":"shopify.com","SPOT":"spotify.com","CRWD":"crowdstrike.com",
+  "NET":"cloudflare.com","DDOG":"datadoghq.com","OKTA":"okta.com","TEAM":"atlassian.com",
+  "NOW":"servicenow.com","VEEV":"veeva.com","ZTS":"zoetis.com","ILMN":"illumina.com",
+  "MRNA":"modernatx.com","BIIB":"biogen.com","GILD":"gilead.com","REGN":"regeneron.com",
+  "VRTX":"vertexpharma.com","ALNY":"alnylam.com","ISRG":"intuitive.com",
+  "UNH":"unitedhealth.com","ELV":"elevancehealth.com","CI":"cigna.com","HUM":"humana.com",
+  "ANTM":"anthem.com","PGR":"progressive.com","TRV":"travelers.com",
+  "ALL":"allstate.com","AIG":"aig.com","MET":"metlife.com",
+  "BRK-B":"berkshirehathaway.com","BRK.A":"berkshirehathaway.com",
+  "LLY":"lilly.com","NVO":"novonordisk.com","TMO":"thermofisher.com",
+  "DHR":"danahar.com","ABT":"abbott.com","BMY":"bms.com","SYK":"stryker.com",
+  "BDX":"bd.com","EW":"edwards.com","HCA":"hcahealthcare.com",
+  "GS":"goldmansachs.com","MS":"morganstanley.com","SCHW":"schwab.com",
+  "BLK":"blackrock.com","C":"citigroup.com","WFC":"wellsfargo.com",
+  "USB":"usbank.com","PNC":"pnc.com","TFC":"truist.com","COF":"capitalone.com",
+  "AXP":"americanexpress.com","DFS":"discover.com","MCO":"moodys.com","SPGI":"spglobal.com",
+  "ICE":"intercontinentalexchange.com","CME":"cmegroup.com","NDAQ":"nasdaq.com",
+  "KKR":"kkr.com","BX":"blackstone.com","APO":"apollo.com","CG":"carlyle.com",
+  "NKE":"nike.com","LULU":"lululemon.com","TJX":"tjmaxx.com","ROST":"rossstores.com",
+  "COST":"costco.com","TGT":"target.com","LOW":"lowes.com","DG":"dollargeneral.com",
+  "DLTR":"dollartree.com","AZO":"autozone.com","ORLY":"oreillyauto.com",
+  "MCD":"mcdonalds.com","SBUX":"starbucks.com","CMG":"chipotle.com","YUM":"yum.com",
+  "DPZ":"dominos.com","DRI":"darden.com","TXRH":"texasroadhouse.com",
+  "PEP":"pepsico.com","MDLZ":"mondelezinternational.com","GIS":"generalmills.com",
+  "K":"kellanova.com","CPB":"campbellsoup.com","HSY":"hersheys.com","MKC":"mccormick.com",
+  "CAG":"conagrabrands.com","SJM":"jmsmucker.com","BF-B":"brown-forman.com",
+  "STZ":"constellationbrands.com","MNST":"monsterbevcorp.com","KDP":"keurigdrpepper.com",
+  "CL":"colgatepalmolive.com","KMB":"kimberly-clark.com","CHD":"churchdwight.com",
+  "EL":"estee-lauder.com","ORCL":"oracle.com","IBM":"ibm.com","SAP":"sap.com",
+  "ADP":"adp.com","FIS":"fisglobal.com","GPN":"globalpayments.com",
+  "FI":"fiserv.com","PAYX":"paychex.com","CTSH":"cognizant.com","INFY":"infosys.com",
+  "ACN":"accenture.com","WIT":"wipro.com","HCLTECH":"hcltech.com","TCS":"tcs.com",
+  "BA":"boeing.com","GD":"generaldynamics.com","NOC":"northropgrumman.com",
+  "HII":"huntingtoningalls.com","TDG":"transdigm.com","HEI":"heico.com",
+  "TXT":"textron.com","HWM":"howmet.com","PCAR":"paccar.com",
+  "F":"ford.com","GM":"gm.com","STLA":"stellantis.com","TM":"toyota.com",
+  "HMC":"honda.com","HYMTF":"hyundai.com","RACE":"ferrari.com",
+  "CSX":"csx.com","UNP":"up.com","NSC":"nscorp.com","CP":"cpr.ca",
+  "ODFL":"odfl.com","FWONK":"formula1.com","LYV":"livenation.com",
+  "MAR":"marriott.com","HLT":"hilton.com","IHG":"ihg.com","WH":"wyndhamhotels.com",
+  "RCL":"royalcaribbean.com","CCL":"carnival.com","NCLH":"ncl.com",
+  "DAL":"delta.com","UAL":"united.com","AAL":"aa.com","LUV":"southwest.com",
+  "ALK":"alaskaair.com","JBLU":"jetblue.com",
+  "PSA":"publicstorage.com","EXR":"extraspace.com","CUBE":"cubesmart.com",
+  "EQR":"equityapartments.com","AVB":"avalonbay.com","UDR":"udr.com",
+  "ESS":"essexproperty.com","CPT":"camdenliving.com","AIV":"apartmentinv.com",
+  "MAA":"maac.com","BXP":"bostonproperties.com","VTR":"ventasreit.com",
+  "WELL":"welltower.com","HCP":"hcp.com","DOC":"physiciansrealty.com",
+  "MPW":"medicalproperties.com","CCI":"crowncastle.com","AMT":"americantower.com",
+  "SBAC":"sba.com","DLR":"digitalrealty.com","EQIX":"equinix.com",
+  "CYBR":"cyberark.com","FTNT":"fortinet.com","PANW":"paloaltonetworks.com",
+  "CHKP":"checkpoint.com","S":"sentinelone.com","GEN":"gendigital.com",
+  "ETN":"eaton.com","EMR":"emerson.com","ROK":"rockwellautomation.com",
+  "HON":"honeywell.com","PH":"parker.com","ITW":"itw.com",
+  "DOV":"dovercorp.com","TT":"trane.com","CMI":"cummins.com",
+  "DE":"deere.com","AGCO":"agcocorp.com","CNH":"cnhindustrial.com",
+  "NEM":"newmont.com","GOLD":"barrick.com","FNV":"franconevada.com","WPM":"wheatonprecious.com",
+  "FCX":"fcx.com","SCCO":"southerncoppercorp.com","TECK":"teck.com","VALE":"vale.com",
+  "RIO":"riotinto.com","BHP":"bhp.com","MT":"arcelormittal.com","STLD":"steeldynamics.com",
+  "NUE":"nucor.com","CLF":"clevelandcliffs.com","X":"ussteel.com",
+  "LIN":"linde.com","APD":"airproducts.com","SHW":"sherwin-williams.com",
+  "PPG":"ppg.com","ECL":"ecolab.com","ALB":"albemarle.com","SQM":"sqm.com",
+  "MOS":"mosaicco.com","CF":"cfindustries.com","NTR":"nutrien.com",
+  "DOW":"dow.com","LYB":"lyondellbasell.com","WLK":"westlake.com",
+  "CE":"celanese.com","EMN":"eastman.com","IFF":"iff.com","GEV":"gevernova.com",
+  "VST":"vistra.com","NRG":"nrg.com","AES":"aes.com","CEG":"constellationenergy.com",
+  // ── ETFs populares ──
+  "VOO":"vanguard.com","VTI":"vanguard.com","VYM":"vanguard.com","VIG":"vanguard.com",
+  "SCHD":"schwab.com","QQQ":"invesco.com","SPY":"ssga.com","IVV":"ishares.com",
+  "VEA":"vanguard.com","VWO":"vanguard.com","VXUS":"vanguard.com","BND":"vanguard.com",
+  "AGG":"ishares.com","TLT":"ishares.com","IEF":"ishares.com","SHY":"ishares.com",
+  "LQD":"ishares.com","HYG":"ishares.com","BKLN":"invesco.com",
+  // ── Canadá / Otros ──
+  "ENB":"enbridge.com","TRP":"tcenergy.com","PPL":"pembina.com","KEY":"keyera.com",
+  "CNQ":"cnrl.com","IMO":"imperialoil.ca","SU":"suncor.com",
+  "BNS":"scotiabank.com","TD":"td.com","RY":"rbc.com","CM":"cibc.com",
+  "BMO":"bmo.com","NA":"nbc.ca","SLF":"sunlife.com","MFC":"manulife.com",
+  "GIB-A":"cgi.com","CSU":"constellationsoftware.com",
+  // ── Europa (sin sufijo o con otros) ──
+  "ASML":"asml.com","SAP":"sap.com","SIE.DE":"siemens.com","ALV.DE":"allianz.com",
+  "DTE.DE":"telekom.com","BAS.DE":"basf.com","BAYN.DE":"bayer.com","HEN3.DE":"henkel.com",
+  "ADS.DE":"adidas-group.com","BEI.DE":"beiersdorf.com","FRE.DE":"fresenius.com",
+  "MRK.DE":"merckgroup.com","MTX.DE":"mtu.de","RWE.DE":"rwe.com","VNA.DE":"vonovia.de",
+  "AIR.PA":"airbus.com","OR.PA":"loreal.com","MC.PA":"lvmh.com","SAN.PA":"sanofi.com",
+  "TTE.PA":"totalenergies.com","SU.PA":"schneider-electric.com","EL.PA":"essilorluxottica.com",
+  "AI.PA":"airliquide.com","BNP.PA":"bnpparibas.com","CS.PA":"axa.com","DG.PA":"vinci.com",
+  "CAP.PA":"capgemini.com","KER.PA":"kering.com","HO.PA":"thalesgroup.com",
+  "DSY.PA":"dassault-systemes.com","STM.PA":"st.com","ENGI.PA":"engie.com",
+  "URW.PA":"unibail-rodamco-westfield.com","WLN.PA":"worldline.com","RMS.PA":"hermes.com",
+  "INGA.AS":"ing.com","ASML.AS":"asml.com","UNA.AS":"unilever.com","HEIA.AS":"heineken.com",
+  "PHIA.AS":"philips.com","AD.AS":"aholddelhaize.com","REN.AS":"renaultgroup.com",
+  "IMCD.AS":"imcdgroup.com","ARGX":"argenx.com","GBLB":"groupebruxelleslambert.com",
+  "UCB":"ucb.com","ABI":"ab-inbev.com","SOLB":"solvay.com","GIMV":"gimv.com",
+  "ISP.MI":"intesasanpaolo.com","UCG.MI":"unicreditgroup.eu","ENEL.MI":"enel.com",
+  "ENI.MI":"eni.com","STM.MI":"st.com","TRN.MI":"terna.it","SRG.MI":"snam.it",
+  "ATL.MI":"atlantia.it","AZM.MI":"azimut.it","CPR.MI":"campari.com","DIA.MI":"diasorin.com",
+  "REC.MI":"recordati.com","MONC.MI":"moncler.com","PRY.MI":"prysmian.com",
+  "LUX.MI":"luxottica.com","HER.MI":"hera.it","IG.MI":"igd.it","INW.MI":"inwit.it",
+  "NEXI.MI":"nexi.it","PIRC.MI":"pirelli.com","PSG.MI":"posteitaliane.it",
+  "TIT.MI":"telecomitalia.com","UNI.MI":"unipolsai.com","A2A.MI":"a2a.eu",
+  "BAMI.MI":"bancabpm.it","BMPS.MI":"mps.it","BPE.MI":"bper.it","CRE.MI":"credem.it",
+  "FBK.MI":"finecobank.com","MB.MI":"mediobanca.com",
+  // ── Suiza ──
+  "NESN.SW":"nestle.com","ROG.SW":"roche.com","ZURN.SW":"zurich.com","ABBN.SW":"abb.com",
+  "NOVN.SW":"novartis.com","UBSG.SW":"ubs.com","CSGN.SW":"credit-suisse.com",
+  "LONN.SW":"lonza.com","SGSN.SW":"sgs.com","GIVN.SW":"givaudan.com",
+  "SIKA.SW":"sika.com","ALC.SW":"alcon.com","TEMN.SW":"temenos.com",
+  "CFR.SW":"richemont.com","UHR.SW":"swatchgroup.com","GEBN.SW":"geberit.com",
+  "PGHN.SW":"partnersgroup.com","SCHN.SW":"schindler.com","STMN.SW":"straumann.com",
+  "VATN.SW":"vatgroup.com","BARN.SW":"barry-callebaut.com","LISP.SW":"lindt.com",
+  // ── Escandinavia ──
+  "VOLV-B.ST":"volvo.com","ERIC-B.ST":"ericsson.com","SAND.ST":"sandvik.com",
+  "ATCO-B.ST":"atlascopco.com","ASSA-B.ST":"assaabloy.com","SEB-A.ST":"sebgroup.com",
+  "SHB-A.ST":"handelsbanken.com","SWED-A.ST":"swedbank.com","SKA-B.ST":"skanska.com",
+  "SKF-B.ST":"skf.com","ALFA.ST":"alfa.com","BOL.ST":"boliden.com","ELUX-B.ST":"electrolux.com",
+  "ESSITY-B.ST":"essity.com","GETI-B.ST":"getinge.com","HEXA-B.ST":"hexagon.com",
+  "HMB.ST":"hm.com","INVE-B.ST":"investorab.com","KINV-B.ST":"kinnevik.com",
+  "LOOMIS.ST":"loomis.com","NDA-SE.ST":"nordea.com","SAGA-B.ST":"sagax.com",
+  "SBB-B.ST":"samhallsbyggnadsbolaget.se","SCA-B.ST":"sca.com","SINCH.ST":"sinch.com",
+  "SSAB-A.ST":"ssab.com","TEL2-B.ST":"tele2.com","TELIA.ST":"telia.com",
+  "THULE.ST":"thule.com","TREL-B.ST":"trelleborg.com","VIT-B.ST":"vitecsoftware.com",
+  "WALL-B.ST":"wallenstam.se","NOKIA.HE":"nokia.com","NESTE.HE":"neste.com",
+  "UPM.HE":"upm.com","KESKO.HE":"kesko.fi","METSO.HE":"metso.com","WRT1V.HE":"wartsila.com",
+  "ORNBV.HE":"orion.fi","FORTUM.HE":"fortum.com","SAMPO.HE":"sampo.com",
+  "KNORR-B.ST":"knorr-bremse.com","PNDORA.CO":"pandora.net","MAERSK-B.CO":"maersk.com",
+  "DANSKE.CO":"danskebank.com","NDA-DK.CO":"nordea.com","CARL-B.CO":"carlsberg.com",
+  "COLOB.CO":"coloplast.com","DEMANT.CO":"demant.com","DSV.CO":"dsv.com",
+  "FLS.CO":"flsmidth.com","GN.CO":"gn.com","ISS.CO":"issworld.com",
+  "JYSK.CO":"jysk.com","NOVO-B.CO":"novonordisk.com","NZYM-B.CO":"novozymes.com",
+  "ORSTED.CO":"orsted.com","ROCK-B.CO":"rockwool.com",
+  "TRYG.CO":"tryg.com","VWS.CO":"vestas.com","ZEAL.CO":"zealandpharma.com",
+  // ── Japón ──
+  "7203.T":"toyota.com","6758.T":"sony.com","6861.T":"keyence.com","9984.T":"softbank.jp",
+  "8306.T":"mufg.jp","8316.T":"sumitomomitsui.com","8411.T":"mizuhogroup.com",
+  "8035.T":"tokyo-electron.co.jp","6954.T":"fanuc.co.jp","4063.T":"shin-etsu.co.jp",
+  "4502.T":"takeda.com","4568.T":"daiichisankyo.co.jp","4911.T":"shionogi.co.jp",
+  "9432.T":"ntt.co.jp","9433.T":"kddi.com","9434.T":"softbank.jp",
+  "9437.T":"nttdocomo.co.jp","9613.T":"nttdata.com","9983.T":"fastretailing.com",
+  "2914.T":"jt.com","2502.T":"asahigroupholdings.com","2501.T":"sapporoholdings.com",
+  // ── Australia ──
+  "CBA.AX":"commbank.com.au","BHP.AX":"bhp.com","WBC.AX":"westpac.com.au",
+  "NAB.AX":"nab.com.au","ANZ.AX":"anz.com","MQG.AX":"macquarie.com",
+  "WES.AX":"wesfarmers.com.au","WOW.AX":"woolworths.com.au","TLS.AX":"telstra.com.au",
+  "GMG.AX":"goodman.com","RIO.AX":"riotinto.com","FMG.AX":"fortescue.com",
+  "CSL.AX":"csl.com.au","ALL.AX":"a2milk.com.au","COL.AX":"colesgroup.com.au",
+  "REA.AX":"realestate.com.au","XRO.AX":"xero.com","WTC.AX":"wisetechglobal.com",
+  "CAR.AX":"carsales.com.au","CPU.AX":"computershare.com",
+  "S32.AX":"south32.net","MIN.AX":"mineralresources.com.au","PLS.AX":"pilbaraminerals.com.au",
+  "LYC.AX":"lynascorp.com","IGO.AX":"igo.com.au","EVN.AX":"evolutionmining.com.au",
+  "NCM.AX":"newcrest.com.au","NST.AX":"northernstar.com.au","WGX.AX":"westgold.com.au",
+  "CHN.AX":"chalice.com.au","DEG.AX":"degrussa.com.au","PRU.AX":"perseusmining.com",
+  "SLR.AX":"silverlakeresources.com.au","RSG.AX":"resolutemining.com",
+  // ── Otros populares ──
+  "BABA":"alibabagroup.com","TCEHY":"tencent.com","JD":"jd.com","PDD":"pdd.com",
+  "NIO":"nio.com","XPEV":"xpeng.com","LI":"lixiang.com","BYDDF":"byd.com",
+  "TSM":"tsmc.com",
+  // ── Ampliación verificada (59 tickers nuevos, sin duplicar el mapa existente) ──
+  "000660.KS":"skhynix.com",
+  "005930.KS":"samsung.com",
+  "035420.KS":"navercorp.com",
+  "6501.T":"hitachi.com",
+  "7267.T":"honda.com",
+  "ABI.BR":"ab-inbev.com",
+  "ADSK":"autodesk.com",
+  "AJG":"ajg.com",
+  "ALGN":"aligntech.com",
+  "AME":"ametek.com",
+  "ANET":"arista.com",
+  "AON":"aon.com",
+  "ATCO-A.ST":"atlascopco.com",
+  "BAM.TO":"brookfield.com",
+  "BIDU":"ir.baidu.com",
+  "BK":"bnymellon.com",
+  "BMW.DE":"bmwgroup.com",
+  "BRK.B":"berkshirehathaway.com",
+  "CB":"chubb.com",
+  "CDNS":"cadence.com",
+  "CHWY":"chewy.com",
+  "CNQ.TO":"cnrl.com",
+  "CROX":"crocs.com",
+  "DECK":"deckers.com",
+  "DOCU":"docusign.com",
+  "DXCM":"dexcom.com",
+  "EBAY":"ebay.com",
+  "ENB.TO":"enbridge.com",
+  "EQNR.OL":"equinor.com",
+  "ETSY":"etsy.com",
+  "GOOG":"abc.xyz",
+  "HDB":"hdfcbank.com",
+  "HIG":"thehartford.com",
+  "HM-B.ST":"hm.com",
+  "IDXX":"idexx.com",
+  "INTU":"intuit.com",
+  "MMC":"marshmclennan.com",
+  "MRVL":"marvell.com",
+  "MSI":"motorolasolutions.com",
+  "NG.L":"nationalgrid.com",
+  "NTES":"netease.com",
+  "NTRS":"northerntrust.com",
+  "PINS":"pinterest.com",
+  "RACE.MI":"ferrari.com",
+  "RJF":"raymondjames.com",
+  "RY.TO":"rbc.com",
+  "SHOP.TO":"shopify.com",
+  "SNAP":"snap.com",
+  "SNPS":"synopsys.com",
+  "STT":"statestreet.com",
+  "TD.TO":"td.com",
+  "TWLO":"twilio.com",
+  "ULTA":"ulta.com",
+  "VOW3.DE":"volkswagenag.com",
+  "W":"wayfair.com",
+  "WDAY":"workday.com",
+  "WTW":"wtwco.com",
+  "YETI":"yeti.com",
+  "ZS":"zscaler.com",
 };
+
+// Heurística de dominio más lista para tickers fuera del mapa manual: quita
+// tanto el sufijo de bolsa (.MC, .L, .DE...) como el de clase de acción
+// (BRK.B, MOLI-A...), que la versión anterior no separaba. No hay garantía
+// de acierto para empresas pequeñas o poco conocidas — por eso la cascada de
+// abajo prueba varias fuentes y termina en un fallback que SIEMPRE funciona
+// (UI Avatars), en vez de depender de adivinar bien el dominio.
+function guessDomain(ticker) {
+  let base = ticker.replace(/\.(MC|L|PA|DE|AS|MI|SW|ST|CO|OL|HE|BR|VI|WA|PR|AT|IR|SG|KS|KQ|T|HK|TW|SS|SZ|AX|TO|V|NE|SA|MX)$/i, "");
+  base = base.replace(/[-.](A|B|C|K)$/i, ""); // BRK.B → BRK, MOLI-A → MOLI
+  return base.toLowerCase() + ".com";
+}
 
 function logoImg(ticker, name, size=28) {
   const abbr = ticker.replace(/\.(MC|L|PA|DE|AS|MI|SW)$/i,"").slice(0,4).toUpperCase();
   const colors = ["#2563eb","#16a34a","#dc2626","#d97706","#7c3aed","#0891b2","#be185d","#065f46"];
   const color = colors[abbr.charCodeAt(0) % colors.length];
-  const domain = TICKER_DOMAIN[ticker] ||
-    ticker.replace(/\.(MC|L|PA|DE|AS|MI|SW)$/i,"").toLowerCase() + ".com";
+  const domain = TICKER_DOMAIN[ticker] || guessDomain(ticker);
   const s = size, fs = Math.round(s * 0.34);
-  const url = `https://icon.horse/icon/${domain}`;
+  const initials = encodeURIComponent(abbr.slice(0,2));
+  const avatarColor = color.replace("#","");
+
+  // Cascada de fuentes de logo (la primera que cargue se queda). Se añaden
+  // el bucket alternativo de Clearbit (a veces resuelve dominios que el
+  // endpoint principal no encuentra) y UI Avatars al final: es el único
+  // eslabón que SIEMPRE devuelve una imagen válida, porque no depende de
+  // que el dominio adivinado sea correcto — solo dibuja las iniciales.
+  const urls = [
+    `https://logo.clearbit.com/${domain}`,
+    `https://s3.amazonaws.com/logo.clearbit.com/${domain}`,
+    `https://www.google.com/s2/favicons?domain=${domain}&sz=128`,
+    `https://icon.horse/icon/${domain}`,
+    `https://t0.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`,
+    `https://ui-avatars.com/api/?name=${initials}&background=${avatarColor}&color=fff&size=128&bold=true&format=png`
+  ];
+
+  const onerr = "this.style.display='none';let n=this.nextElementSibling;if(n){if(n.tagName==='IMG')n.style.display='block';else n.style.display='flex';}";
+
+  const imgs = urls.map((url, i) => {
+    const display = i === 0 ? 'block' : 'none';
+    return `<img src="${url}" width="${s}" height="${s}" style="object-fit:contain;display:${display}" onerror="${onerr}"/>`;
+  }).join('');
+
   return `<div style="width:${s}px;height:${s}px;border-radius:50%;overflow:hidden;background:#fff;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1.5px solid #e2e8f0;box-shadow:0 1px 3px #0001" title="${esc(name||ticker)}">
-    <img src="${url}" width="${s}" height="${s}" style="object-fit:contain;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/>
+    ${imgs}
     <span style="display:none;font-size:${fs}px;font-weight:800;color:${color};line-height:1;width:100%;height:100%;align-items:center;justify-content:center;text-align:center">${abbr.slice(0,3)}</span>
   </div>`;
 }
@@ -4799,6 +5278,7 @@ function renderPortfolioChartsBody(tickers) {
   const sectorBreakdown = calculateAllocationBreakdown(activePositions, p => p.sector || 'Otros');
   const currencyBreakdown = calculateAllocationBreakdown(activePositions, p => p.currency || 'EUR');
   const companyBreakdown = calculateAllocationBreakdown(activePositions, p => p.ticker, 8);
+  const sectorPerformance = calculateSectorPerformance(activePositions);
 
   return `
       <div class="charts-donut-row">
@@ -4814,6 +5294,14 @@ function renderPortfolioChartsBody(tickers) {
           <h4>🏢 Por Empresa</h4>
           ${buildDonutChartSVG(companyBreakdown, { unitLabel: 'posiciones', centerValue: activePositions.length })}
         </div>
+      </div>
+
+      <div class="chart-card" style="margin-bottom:14px">
+        <h4>📊 Ganancias y pérdidas por sector</h4>
+        <div style="font-size:10px;color:#94a3b8;margin-bottom:10px">
+          Porcentaje de variación de cada sector respecto al capital invertido.
+        </div>
+        ${buildSectorPerformanceChart(sectorPerformance)}
       </div>
 
       <div class="charts-grid-main">
@@ -5105,9 +5593,11 @@ function toggleIndexComparison(ticker) {
   renderActiveTab();
 }
 
-async function loadIndexData(indexSymbol) {
+async function loadIndexData(indexSymbol, force = false) {
   if (!state._portfolioCharts.indexData) state._portfolioCharts.indexData = {};
-  if (state._portfolioCharts.indexData[indexSymbol]?.loading || state._portfolioCharts.indexData[indexSymbol]?.priceHistory) return;
+  const existing = state._portfolioCharts.indexData[indexSymbol];
+  if (existing?.loading) return;
+  if (!force && hasUsableHealthHistory(existing?.priceHistory)) return;
   state._portfolioCharts.indexData[indexSymbol] = { loading: true };
   try {
     const priceHistory = await fetchPriceAndDividendHistory(indexSymbol);
@@ -5276,7 +5766,7 @@ async function loadCompanyChartsData(ticker, skipFundamentals = false) {
     new Promise((_, rej) => setTimeout(() => rej(new Error("timeout global")), ms))
   ]);
   const [priceResult, fundResult] = await Promise.allSettled([
-    withTimeout(fetchPriceAndDividendHistory(ticker), 25000),
+    withTimeout(fetchPriceAndDividendHistory(ticker), 45000),
     skipFundamentals ? Promise.resolve(prevFundamentals) : withTimeout(fetchFundamentals(ticker), 25000)
   ]);
   const priceHistory = priceResult.status === "fulfilled" ? priceResult.value : null;
@@ -5386,7 +5876,7 @@ async function fetchPriceAndDividendHistory(ticker) {
   if (state._chartCache?.[cacheKey] && state._chartCache[cacheKey] !== "loading") {
     // Reutilizar datos de precio ya cargados
     const cached = state._chartCache[cacheKey];
-    if (Array.isArray(cached) && cached.length > 2) {
+    if (Array.isArray(cached) && cached.length >= HEALTH_MIN_PRICE_POINTS) {
       const priceItems = cached.map((p, i) => {
         const W = 12;
         let sma = null;
@@ -5417,7 +5907,7 @@ async function fetchPriceAndDividendHistory(ticker) {
   ];
   for (const url of proxies) {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      const res = await fetch(url, { signal: AbortSignal.timeout(7000) });
       if (!res.ok) continue;
       const json = await res.json();
       const result = json?.chart?.result?.[0];
@@ -5519,6 +6009,62 @@ function calculateAllocationBreakdown(positions, keyFn, maxSlices = 10) {
     entries = [...head, ['Otras', restTotal]];
   }
   return entries.map(([label, value]) => ({ label, value }));
+}
+
+function calculateSectorPerformance(positions) {
+  const groups = {};
+  positions.forEach(p => {
+    const sector = String(p.sector || 'Otros').trim() || 'Otros';
+    const invested = Math.max(0, +posInvEUR(p) || 0);
+    const current = Math.max(0, +posValEUR(p) || 0);
+    if (!groups[sector]) groups[sector] = { invested: 0, current: 0 };
+    groups[sector].invested += invested;
+    groups[sector].current += current;
+  });
+
+  return Object.entries(groups)
+    .map(([label, data]) => ({
+      label,
+      invested: data.invested,
+      current: data.current,
+      pct: data.invested > 0
+        ? ((data.current - data.invested) / data.invested) * 100
+        : 0
+    }))
+    .filter(item => item.invested > 0)
+    .sort((a, b) => b.pct - a.pct);
+}
+
+function buildSectorPerformanceChart(items) {
+  if (!items?.length) return `<div class="no-data-msg">Sin datos de sectores</div>`;
+
+  const maxAbs = Math.max(1, ...items.map(item => Math.abs(item.pct)));
+  const rows = items.map(item => {
+    const positive = item.pct >= 0;
+    const color = positive ? "#16a34a" : "#dc2626";
+    const width = Math.max(2, Math.min(50, Math.abs(item.pct) / maxAbs * 50));
+    const left = positive ? 50 : 50 - width;
+    const pctText = `${positive ? "+" : ""}${item.pct.toFixed(1)}%`;
+
+    return `<div style="display:grid;grid-template-columns:minmax(86px,1fr) minmax(130px,2.5fr) 58px;gap:8px;align-items:center;margin:8px 0">
+      <div style="font-size:10px;color:#475569;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(item.label)}">${esc(item.label)}</div>
+      <div style="height:18px;background:#f8fafc;border-radius:4px;position:relative;overflow:hidden">
+        <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:#cbd5e1;z-index:2"></div>
+        <div style="position:absolute;left:${left}%;top:2px;height:14px;width:${width}%;background:${color};border-radius:3px;opacity:.85"></div>
+      </div>
+      <div style="font-size:11px;color:${color};font-weight:800;text-align:right;white-space:nowrap">${pctText}</div>
+    </div>`;
+  }).join("");
+
+  return `<div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 8px;font-size:10px;color:#94a3b8">
+      <span>pérdidas</span><span>ganancias</span>
+    </div>
+    ${rows}
+    <div style="font-size:9px;color:#94a3b8;margin-top:10px">
+      Rentabilidad por sector = (valor actual − capital invertido) / capital invertido.
+    </div>
+  </div>`;
 }
 
 function calculatePortfolioHistory(tickers, period) {
@@ -6169,9 +6715,9 @@ function renderGoals() {
       <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:14px;align-items:flex-end">
         ${[["Crec. div. (%/año)","g-dg",dg,0,30],["Revalor. (%/año)","g-pg",pg,0,30],["Aport. anual (€)","g-contrib",contrib,0,500000],["Años","g-yrs",yrs,1,50],["Yield div. (%)","g-dy",dy,0,30]].map(([lbl,id,val,mn,mx])=>`
           <div><div style="font-size:11px;color:#475569;font-weight:600;margin-bottom:4px">${lbl}</div>
-          <input type="number" id="${id}" class="inp-sm" value="${val}" min="${mn}" max="${mx}" style="width:100px"></div>`).join("")}
+          <input type="number" id="${id}" class="inp-sm" value="${val}" min="${mn}" max="${mx}" style="width:100px" oninput="saveGoalConfig()"></div>`).join("")}
         <label style="font-size:11px;color:#475569;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">
-          <input type="checkbox" id="g-reinvest" ${reinvest?"checked":""} style="width:13px;height:13px"> Reinvertir dividendos
+          <input type="checkbox" id="g-reinvest" ${reinvest?"checked":""} onchange="saveGoalConfig()" style="width:13px;height:13px"> Reinvertir dividendos
         </label>
         <button class="btn" onclick="calcProjection()">📊 Calcular</button>
       </div>
@@ -6358,9 +6904,10 @@ const SECTOR_VALUATION_MAP = {
   }
 };
 
-function resolveSectorProfile(ticker, name) {
+function resolveSectorProfile(ticker, name, reportedSector = "") {
   const t = (ticker || "").toUpperCase();
   const n = (name || "").toUpperCase();
+  const s = (reportedSector || "").toUpperCase();
 
   if (n.includes("BANK") || n.includes("BANCO") || n.includes("CAIXA") || n.includes("SABADELL") || ["SAN.MC","BBVA.MC","CABK.MC","BKT.MC","SAB.MC","JPM","BAC","C","WFC","HSBA.L"].includes(t))
     return SECTOR_VALUATION_MAP["Banca"];
@@ -6402,10 +6949,27 @@ function resolveSectorProfile(ticker, name) {
     return SECTOR_VALUATION_MAP["Construcción"];
   if (n.includes("LOGISTICS") || n.includes("LOGISTA") || n.includes("UPS") || n.includes("FEDEX") || n.includes("DSV") || ["LOG.MC","UPS","FDX","DSV.CO","KNIN.SW","DHL.DE"].includes(t))
     return SECTOR_VALUATION_MAP["Logística y transporte"];
-  if (n.includes("HOTEL") || n.includes("TOURISM") || n.includes("MELIA") || n.includes("MARRIOTT") || n.includes("HILTON") || ["MEL.MC","MAR","HLT","IHG","H","WH"].includes(t))
+  if (n.includes("RESTAUR") || n.includes("MCDONALD") || n.includes("MELIA") || n.includes("MARRIOTT") || n.includes("HILTON") || n.includes("HOTEL") || n.includes("TOURISM") || ["MCD","MEL.MC","MAR","HLT","IHG","H","WH"].includes(t))
     return SECTOR_VALUATION_MAP["Hostelería y turismo"];
   if (n.includes("SERVICES") || n.includes("CONSULTING") || n.includes("ACCENTURE") || n.includes("CAPGEMINI") || ["ACN","CAP.PA","INFO","CTSH","GIB"].includes(t))
     return SECTOR_VALUATION_MAP["Servicios empresariales"];
+
+  // Cuando el valor no está en cartera no tenemos nombre/sector local. En
+  // ese caso usamos el sector obtenido previamente desde Yahoo/FMP para
+  // elegir el método específico.
+  if (s.includes("BANK") || s.includes("FINANCIAL")) return SECTOR_VALUATION_MAP["Banca"];
+  if (s.includes("INSURANCE")) return SECTOR_VALUATION_MAP["Seguros"];
+  if (s.includes("REAL ESTATE") || s.includes("REIT")) return SECTOR_VALUATION_MAP["REITs / inmobiliario cotizado"];
+  if (s.includes("OIL") || s.includes("GAS") || s.includes("ENERGY")) return SECTOR_VALUATION_MAP["Petróleo y gas integrado"];
+  if (s.includes("MINING") || s.includes("MATERIAL")) return SECTOR_VALUATION_MAP["Minería y metales"];
+  if (s.includes("UTILITY")) return SECTOR_VALUATION_MAP["Utilities/energía regulada"];
+  if (s.includes("TELECOM") || s.includes("COMMUNICATION")) return SECTOR_VALUATION_MAP["Telecomunicaciones"];
+  if (s.includes("TECHNOLOGY") || s.includes("SOFTWARE") || s.includes("SEMICONDUCTOR")) return SECTOR_VALUATION_MAP["Tecnología/software (SaaS)"];
+  if (s.includes("HEALTH") || s.includes("PHARMA") || s.includes("MEDICAL")) return SECTOR_VALUATION_MAP["Salud (hospitales, equipos médicos)"];
+  if (s.includes("INDUSTR")) return SECTOR_VALUATION_MAP["Industria y manufactura"];
+  if (s.includes("CONSUMER DEFENSIVE") || s.includes("FOOD") || s.includes("BEVERAGE")) return SECTOR_VALUATION_MAP["Alimentación y bebidas"];
+  if (s.includes("CONSUMER CYCLICAL") || s.includes("RETAIL")) return SECTOR_VALUATION_MAP["Retail y consumo"];
+  if (s.includes("RESTAUR") || s.includes("HOSPITALITY") || s.includes("HOTEL") || s.includes("TRAVEL") || s.includes("LEISURE")) return SECTOR_VALUATION_MAP["Hostelería y turismo"];
 
   const appSector = guessSectorFromNameOrTicker(ticker, name);
   const fallbackMap = {
@@ -6424,28 +6988,85 @@ function resolveSectorProfile(ticker, name) {
   return fk ? SECTOR_VALUATION_MAP[fk] : null;
 }
 
+async function discoverTickerSector(ticker, pos = null) {
+  const localName = pos?.name || "";
+  const localSector = pos?.sector || (typeof TICKER_SECTOR !== "undefined" ? TICKER_SECTOR[ticker] : "") || "";
+  if (resolveSectorProfile(ticker, localName, localSector)) {
+    return { name: localName, sector: localSector, source: "local" };
+  }
+
+  // Primero intentamos el perfil de empresa, que solo devuelve metadatos
+  // (nombre/sector) y no ejecuta ninguna valoración.
+  try {
+    const fmpProfile = await fetchTickerProfile(ticker);
+    if (fmpProfile?.sector) {
+      return { name: localName, sector: fmpProfile.sector, source: "fmp" };
+    }
+  } catch (e) {
+    console.warn("No se pudo obtener el perfil FMP de", ticker, e);
+  }
+
+  // Respaldo sin clave FMP: assetProfile de Yahoo Finance mediante proxies.
+  const yahooProfileUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=assetProfile,price`;
+  const yahooUrls = [
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yahooProfileUrl)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooProfileUrl)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(yahooProfileUrl)}`
+  ];
+  for (const url of yahooUrls) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(7000) });
+      if (!res.ok) continue;
+      const json = await res.json();
+      const result = json?.quoteSummary?.result?.[0];
+      const asset = result?.assetProfile || {};
+      const price = result?.price || {};
+      const sector = asset.sector || asset.industry || "";
+      const name = price.longName || price.shortName || localName;
+      if (sector || name) return { name, sector, source: "yahoo" };
+    } catch (e) {
+      // probar el siguiente proxy
+    }
+  }
+  return { name: localName, sector: localSector, source: "fallback" };
+}
+
 async function analyzeBySector() {
   const input = document.getElementById("val-ticker");
   const ticker = (input?.value || "").trim().toUpperCase().split(" ")[0];
   if (!ticker) { alert("Introduce un ticker primero"); return; }
 
   const pos = state.positions.find(p => p.ticker === ticker);
-  const profile = resolveSectorProfile(ticker, pos?.name || "");
+  const knownProfile = resolveSectorProfile(ticker, pos?.name || "", pos?.sector || "");
 
-  if (!profile) {
-    alert("No se pudo determinar el sector de " + ticker + ". Añádela a tu cartera con el sector correcto o usa el análisis general.");
-    return;
-  }
-
-  state._valSectorProfile = profile;
+  state._valSectorProfile = knownProfile;
   state._valSectorTicker = ticker;
   state._valSectorLoading = true;
   state._valSectorError = "";
   state._valSectorResult = null;
+  state._valResult = null;
+  state._valError = "";
   renderActiveTab();
 
   try {
-    const { data, error } = await supabaseClient.functions.invoke('valuation', { body: { ticker } });
+    // Paso 1: determinar el sector antes de pedir cualquier valoración.
+    const discovered = await discoverTickerSector(ticker, pos);
+    const profile = resolveSectorProfile(ticker, discovered.name, discovered.sector);
+    if (!profile) {
+      throw new Error(`No se pudo determinar automáticamente el sector de ${ticker} (${discovered.sector || "sin sector devuelto"}). Puedes usar el análisis general.`);
+    }
+    state._valSectorProfile = profile;
+    renderActiveTab();
+
+    // Paso 2: enviar el análisis con el sector y método ya seleccionados.
+    const { data, error } = await supabaseClient.functions.invoke('valuation', {
+      body: {
+        ticker,
+        sector: discovered.sector || "",
+        sectorMethod: profile.method,
+        sectorAnalysis: true
+      }
+    });
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
     state._valSectorResult = data;
@@ -6755,7 +7376,7 @@ function renderValuation() {
   // ── Resultado de análisis por sector ──
   const sectorResultHtml = (() => {
     if (state._valSectorLoading) {
-      return `<div class="card" style="margin-bottom:12px"><div style="padding:20px;text-align:center"><div class="spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto 8px"></div><div style="font-size:12px;color:#64748b">Analizando ${esc(state._valSectorTicker)} según sector...</div></div></div>`;
+      return `<div class="card" style="margin-bottom:12px"><div style="padding:20px;text-align:center"><div class="spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto 8px"></div><div style="font-size:12px;color:#64748b">Detectando sector y preparando el análisis de ${esc(state._valSectorTicker)}...</div></div></div>`;
     }
     if (state._valSectorError) {
       return `<div class="card" style="margin-bottom:12px;background:#fef2f2"><div style="padding:12px;color:#991b1b;font-size:12px">⚠️ ${esc(state._valSectorError)}</div></div>`;
@@ -6774,7 +7395,33 @@ function renderValuation() {
     const scoreColor = !hasScore ? "#94a3b8" : score >= 70 ? "#16a34a" : score >= 40 ? "#f59e0b" : "#dc2626";
     const verdict = !hasScore ? "Sin datos suficientes" : score >= 70 ? "✅ Atractivo según sector" : score >= 40 ? "🟡 Precio neutro para el sector" : "🔴 Caro respecto a sector";
 
-    return `
+    // Tarjeta de empresa (reutilizada del análisis normal)
+    const companyCard = (() => {
+      const m = sr.metrics || {};
+      const price = sr.priceHistory?.priceItems?.length ? sr.priceHistory.priceItems[sr.priceHistory.priceItems.length-1].close : null;
+      return `
+      <div class="card" style="margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          ${logoImg(sr.ticker || state._valSectorTicker, sr.name || state._valSectorTicker, 36)}
+          <div>
+            <div style="font-size:16px;font-weight:800;color:#1e293b">${esc(sr.name || state._valSectorTicker)}</div>
+            <div style="font-size:11px;color:#94a3b8">${esc(sr.ticker || state._valSectorTicker)}${sr.sector ? " · " + esc(sr.sector) : ""}</div>
+          </div>
+        </div>
+        ${sr.description ? `<div style="font-size:12px;color:#334155;line-height:1.5;margin-bottom:10px">${esc(sr.description)}</div>` : ""}
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px">
+          ${m.PER_fwd != null ? `<div><div style="font-size:9px;color:#64748b;font-weight:600">PER (fwd)</div><div style="font-size:13px;font-weight:700">${m.PER_fwd}</div></div>` : ""}
+          ${m.EV_EBITDA != null ? `<div><div style="font-size:9px;color:#64748b;font-weight:600">EV/EBITDA</div><div style="font-size:13px;font-weight:700">${m.EV_EBITDA}</div></div>` : ""}
+          ${m.FCF_yield != null ? `<div><div style="font-size:9px;color:#64748b;font-weight:600">FCF yield %</div><div style="font-size:13px;font-weight:700">${m.FCF_yield}%</div></div>` : ""}
+          ${m.ROIC != null ? `<div><div style="font-size:9px;color:#64748b;font-weight:600">ROIC %</div><div style="font-size:13px;font-weight:700">${m.ROIC}%</div></div>` : ""}
+          ${m.Deuda_EBITDA != null ? `<div><div style="font-size:9px;color:#64748b;font-weight:600">Deuda/EBITDA</div><div style="font-size:13px;font-weight:700">${m.Deuda_EBITDA}x</div></div>` : ""}
+          ${m.Yield_pct != null ? `<div><div style="font-size:9px;color:#64748b;font-weight:600">Yield div.</div><div style="font-size:13px;font-weight:700">${m.Yield_pct}%</div></div>` : ""}
+          ${price != null ? `<div><div style="font-size:9px;color:#64748b;font-weight:600">Precio</div><div style="font-size:13px;font-weight:700">${fmtEUR(price)}</div></div>` : ""}
+        </div>
+      </div>`;
+    })();
+
+    return companyCard + `
       <div class="card" style="margin-bottom:12px;border-left:4px solid #7c3aed">
         <h4 style="font-size:13px;font-weight:700;color:#7c3aed;margin-bottom:8px">🏭 Valoración por sector — ${esc(profile.methodLabel)}</h4>
         <div style="background:#faf5ff;border-radius:8px;padding:10px 12px;margin-bottom:10px">
@@ -6828,7 +7475,7 @@ function renderValuation() {
       <h4 style="font-size:14px;font-weight:700;color:#1d4ed8;margin-bottom:10px">📐 Análisis de Valoración</h4>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <div class="ac-wrap" style="flex:1;max-width:340px">
-          <input id="val-ticker" class="inp-sm" placeholder="Empresa o ticker: Iberdrola, GOOGL, KO..." style="width:100%;background:#fff" value="${esc(ticker)}" onkeydown="if(event.key==='Enter')analyzeValuation()">
+          <input id="val-ticker" class="inp-sm" placeholder="Empresa o ticker: Iberdrola, GOOGL, KO..." style="width:100%;background:#fff" value="${esc(ticker)}" oninput="state._valTicker=this.value.toUpperCase();saveUiState()" onkeydown="if(event.key==='Enter')analyzeValuation()">
         </div>
         <button class="btn" onclick="analyzeValuation()" ${loading?"disabled":""} style="padding:6px 16px">${loading?`<span class="spinner"></span> Analizando${state._valProgressSec?` (${state._valProgressSec}s)`:""}...`:"🔍 Analizar"}</button>
         <button class="btn" style="background:#7c3aed;border-color:#7c3aed" onclick="analyzeBySector()" ${loading || state._valSectorLoading?"disabled":""}>${state._valSectorLoading?`<span class="spinner"></span> Analizando sector...`:"🏭 Analizar según sector"}</button>
@@ -6841,7 +7488,7 @@ function renderValuation() {
     </div>
     ${fmpPanel}
     ${sectorResultHtml}
-    ${resultHtml||`<div style="text-align:center;color:#94a3b8;padding:40px 20px;font-size:13px">Introduce un ticker y pulsa <b>Analizar</b> para obtener la valoración</div>`}
+    ${loading?`<div style="text-align:center;padding:40px 20px"><div class="spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto 12px"></div><div style="color:#94a3b8;font-size:13px">Analizando ${esc(ticker)}...</div></div>`:(resultHtml||`<div style="text-align:center;color:#94a3b8;padding:40px 20px;font-size:13px">Introduce un ticker y pulsa <b>Analizar</b> para obtener la valoración</div>`)}
   </div>`;
 }
 
@@ -7641,9 +8288,14 @@ function openAddPos() {
       <button class="btn-gray" onclick="closeModal()">Cancelar</button>
       <button class="btn" onclick="saveNewPos()">💾 Guardar</button>
     </div>`);
-  setupAutocomplete("m-ticker", r => {
+  setupAutocomplete("m-ticker", async r => {
     document.getElementById("m-name").value = r.name || "";
-    document.getElementById("m-sector").value = guessSectorFromNameOrTicker(r.ticker, r.name);
+    const sectorField = document.getElementById("m-sector");
+    const isinField = document.getElementById("m-isin");
+    sectorField.value = TICKER_SECTOR[r.ticker] || guessSectorFromNameOrTicker(r.ticker, r.name);
+    const profile = await fetchTickerProfile(r.ticker);
+    if (profile.isin) isinField.value = profile.isin;
+    if (profile.sector) sectorField.value = profile.sector;
   });
 }
   
@@ -7744,6 +8396,18 @@ function openEditPos(ticker) {
       <button class="btn-gray" onclick="closeModal()">Cancelar</button>
       <button class="btn" onclick="saveEditPos()">💾 Guardar</button>
     </div>`);
+
+  // El ticker ya es fijo aquí (no se retipea), así que se autocompletan
+  // Sector e ISIN directamente al abrir el modal, solo si están vacíos —
+  // nunca se pisa un valor que el usuario ya haya introducido a mano.
+  if (!pos.isin || !pos.sector) {
+    fetchTickerProfile(pos.ticker).then(profile => {
+      const isinField = document.getElementById("m-isin");
+      const sectorField = document.getElementById("m-sector");
+      if (isinField && !isinField.value && profile.isin) isinField.value = profile.isin;
+      if (sectorField && !sectorField.value && profile.sector) sectorField.value = profile.sector;
+    });
+  }
 }
   
 function deletePosition(ticker) {
@@ -8612,6 +9276,7 @@ async function startAppIfNeeded() {
   if (!accessOk) return;
 
   state._appStarted = true;
+  restoreUiState();
 
   await loadCloudData();
 
@@ -8698,6 +9363,7 @@ function deleteRadarPreset(i) {
 function setRadarFilter(key, val) {
   state.radar[key] = val;
   if (RADAR_PERSISTED_KEYS[key]) ls.set(RADAR_PERSISTED_KEYS[key], val);
+  saveUiState();
 }
 
 
