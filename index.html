@@ -122,7 +122,9 @@
   </div>
 </div>
 
-<div id="modal-overlay" class="overlay" style="display:none" onclick="if(event.target===this)closeModal()">
+<div id="modal-overlay" class="overlay" style="display:none;z-index:2200" onclick="if(event.target===this)closeModal()">
+  <div id="modal-box" class="modal"></div>
+</div>
   <div id="modal-box" class="modal"></div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
