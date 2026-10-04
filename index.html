@@ -21,7 +21,6 @@
       <div style="flex:1"></div>
       <span id="last-update-label" style="font-size:11px;color:#94a3b8">Sin actualizar | Próx: 60s</span>
       <button id="refresh-btn" class="btn" style="padding:5px 12px;font-size:12px" onclick="refreshPrices()">↻ Actualizar</button>
-      <button class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="openPriceSourcesModal()" title="Configurar fuentes de precios">⚙️</button>
       <button id="privacy-toggle-btn" class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="togglePrivacyMode()" title="Ocultar/mostrar importes"></button>
       <button id="dark-mode-toggle-btn" class="btn-gray" style="padding:5px 10px;font-size:12px;display:none" onclick="toggleDarkMode()" title="Modo oscuro"></button>
       <span id="user-email-label" style="font-size:11px;color:#475569;font-weight:600;margin-left:6px"></span>
@@ -135,6 +134,27 @@
 <script src="js/utils/date.utils.js"></script>
 <script src="js/utils/helpers.js"></script>
 <script>
+
+// ── Claves de API por defecto (iguales para TODOS los usuarios) ──
+// Rellena aquí tus claves. Las que dejes en "" se saltan solas.
+// Se aplican siempre, ignorando lo que hubiera guardado antes en el navegador.
+const DEFAULT_API_KEYS = {
+  fmpKey:          "PEGA_AQUI_TU_CLAVE_FMP",
+  twelveDataKey:   "PEGA_AQUI_TU_CLAVE_TWELVEDATA",
+  fcsapiKey:       "PEGA_AQUI_TU_CLAVE_FCSAPI",
+  finnhubKey:      "PEGA_AQUI_TU_CLAVE_FINNHUB",
+  marketstackKey:  "PEGA_AQUI_TU_CLAVE_MARKETSTACK",
+  alphaVantageKey: "PEGA_AQUI_TU_CLAVE_ALPHAVANTAGE",
+};
+const _API_KEY_LS = {
+  fmpKey:'km_fmp_key', twelveDataKey:'km_twelvedata_key', fcsapiKey:'km_fcsapi_key',
+  finnhubKey:'km_finnhub_key', marketstackKey:'km_marketstack_key', alphaVantageKey:'km_alphavantage_key',
+};
+Object.entries(DEFAULT_API_KEYS).forEach(([k, v]) => {
+  const val = (v && !String(v).startsWith("PEGA_AQUI")) ? String(v).trim() : "";
+  state[k] = val;
+  try { localStorage.removeItem(_API_KEY_LS[k]); } catch (e) {}
+});
 
 // NOTA: sleep(ms) ya está definido en js/utils/helpers.js (cargado antes de
 // este bloque inline), así que NO se redeclara aquí — hacerlo causaba un
@@ -2012,50 +2032,6 @@ async function fetchFXRates() {
   state.fxCache["EUR"] = 1.0;
 }
 
-function openPriceSourcesModal() {
-  const fields = [
-    {key:'fmpKey', ls:'km_fmp_key', label:'Financial Modeling Prep', url:'financialmodelingprep.com/developer'},
-    {key:'twelveDataKey', ls:'km_twelvedata_key', label:'Twelve Data', url:'twelvedata.com'},
-    {key:'fcsapiKey', ls:'km_fcsapi_key', label:'FCS API', url:'fcsapi.com'},
-    {key:'finnhubKey', ls:'km_finnhub_key', label:'Finnhub', url:'finnhub.io'},
-    {key:'marketstackKey', ls:'km_marketstack_key', label:'Marketstack', url:'marketstack.com'},
-    {key:'alphaVantageKey', ls:'km_alphavantage_key', label:'Alpha Vantage', url:'alphavantage.co'},
-  ];
-  openModal(`
-    <h3>⚙️ Fuentes de precios</h3>
-    <div class="small" style="margin-bottom:12px;color:#64748b">
-      Al actualizar, se prueban en orden hasta conseguir el precio de cada acción. Las que dejes en blanco se saltan solas.
-    </div>
-    <div class="field" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 12px;margin-bottom:12px">
-      <label style="color:#166534">✅ Yahoo Finance — activo siempre, no necesita clave</label>
-      <div class="small" style="color:#166534">Es la primera fuente que se prueba (directo y luego por proxy si falla). No hace falta que hagas nada aquí.</div>
-    </div>
-    ${fields.map(f => `
-      <div class="field">
-        <label>${f.label} <a href="https://${f.url}" target="_blank" style="font-size:11px;color:#2563eb">(conseguir clave gratis)</a></label>
-        <input id="m-src-${f.key}" class="inp" placeholder="Pega aquí tu API key (opcional)" value="${esc(state[f.key]||'')}">
-      </div>`).join('')}
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
-      <button class="btn" onclick="savePriceSourcesModal()">💾 Guardar</button>
-    </div>`);
-}
-
-function savePriceSourcesModal() {
-  const fields = [
-    ['fmpKey','km_fmp_key'], ['twelveDataKey','km_twelvedata_key'], ['fcsapiKey','km_fcsapi_key'],
-    ['finnhubKey','km_finnhub_key'], ['marketstackKey','km_marketstack_key'],
-    ['alphaVantageKey','km_alphavantage_key'],
-  ];
-  fields.forEach(([key, lsKey]) => {
-    const val = (document.getElementById(`m-src-${key}`)?.value || '').trim();
-    state[key] = val;
-    ls.set(lsKey, val);
-  });
-  closeModal();
-  alert('Fuentes de precios guardadas. Pulsa "Actualizar" para probarlas.');
-}
-
 let pricesInFlight = false;
 async function refreshPrices(isAutoRetry) {
   if (pricesInFlight) {
@@ -3423,7 +3399,7 @@ function renderAnalysis360() {
   const e = a.earnings;
   const mod9 = `<div class="card" style="margin-bottom:12px">
     <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:8px">9️⃣ Último informe de resultados</h4>
-    ${!state.finnhubKey ? _a360NoData("Configura una clave gratuita de Finnhub en Ajustes para ver el último earnings report real.")
+    ${!state.finnhubKey ? _a360NoData("Dato no disponible por ahora.")
       : !e ? _a360NoData("Sin datos de resultados recientes para este ticker.")
       : `<div style="display:flex;gap:20px;flex-wrap:wrap">
           <div><div style="font-size:10px;color:#64748b;font-weight:600">PERIODO</div><div style="font-size:13px;font-weight:700">${esc(e.period||"—")}</div></div>
@@ -4074,7 +4050,7 @@ function renderNewsEventsPanel() {
   if (!state.finnhubKey) {
     return `<div class="card" style="margin-bottom:14px">
       <h4 style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:6px">📰 Noticias y eventos corporativos</h4>
-      <div style="font-size:11px;color:#94a3b8">Configura una clave gratuita de Finnhub en Ajustes para ver noticias recientes y próximas fechas de resultados de tu cartera.</div>
+      <div style="font-size:11px;color:#94a3b8">Noticias y fechas de resultados no disponibles por ahora.</div>
     </div>`;
   }
 
@@ -5660,7 +5636,7 @@ function renderCompanyFundamentalCharts(ticker) {
   const divAmounts = ph?.divYears?.length ? ph.divYears.map(yr => ph.divByYear[yr]) : [];
 
   const fundamentalsFallback = `<div class="card"><h4 style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px">
-      ${!state.fmpKey ? 'Configura una API key de Financial Modeling Prep en la pestaña Valoración para ver estos datos' : 'Datos no disponibles para este ticker ahora mismo'}
+      ${!state.fmpKey ? 'Datos no disponibles para este ticker ahora mismo' : 'Datos no disponibles para este ticker ahora mismo'}
     </h4>${noDataMsg()}</div>`;
 
   return `
@@ -7664,9 +7640,7 @@ function renderValuation() {
         resultHtml += `<div style="padding:16px;background:#fffbeb;border-radius:10px;border:1px solid #fde68a;font-size:12px;color:#92400e;line-height:1.8">
           <strong>🔬 Datos fundamentales (P&L, Cash Flow, Balance)</strong><br>
           ${!fmpKey
-            ? `Para ver estas gráficas configura una API key gratuita de <strong>Financial Modeling Prep</strong>
-               (<a href="https://financialmodelingprep.com/developer" target="_blank" style="color:#2563eb">financialmodelingprep.com/developer</a>) en el panel de arriba.
-               Funciona para tickers de bolsas USA. Las pestañas <strong>Precio</strong> y <strong>Dividendos</strong> siempre funcionan sin clave.`
+            ? `Los datos fundamentales no están disponibles ahora mismo. Las pestañas <strong>Precio</strong> y <strong>Dividendos</strong> siempre funcionan sin clave.`
             : `No se pudieron cargar los datos. La app intentó 11 fuentes distintas y todas fallaron.
                <br><br>
                <strong>Diagnóstico FMP:</strong> ${fmpErrs || "sin respuesta"}<br>
@@ -7761,25 +7735,10 @@ function renderValuation() {
   })();
 
   const fmpKey = state.fmpKey || "";
-  const fmpPanel = `
-    <div style="background:${fmpKey?"#f0fdf4":"#fffbeb"};border:1px solid ${fmpKey?"#bbf7d0":"#fde68a"};border-radius:10px;padding:12px 14px;margin-bottom:14px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <span style="font-size:13px;font-weight:700;color:${fmpKey?"#15803d":"#92400e"}">${fmpKey?"✅ Datos fundamentales: Financial Modeling Prep conectado":"⚙️ Configura la fuente de datos fundamentales"}</span>
-      </div>
-      ${fmpKey
-        ? `<div style="font-size:11px;color:#15803d">Clave activa — las gráficas de Crecimiento, Calidad, Balance y Valoración funcionan para cualquier empresa.</div>
-           <button onclick="state.fmpKey='';ls.set('km_fmp_key','');renderActiveTab()" style="margin-top:6px;font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;text-decoration:underline">Cambiar clave</button>`
-        : `<div style="font-size:11px;color:#92400e;margin-bottom:8px;line-height:1.5">
-             Las gráficas de análisis necesitan una API key gratuita de <strong>Financial Modeling Prep</strong>.<br>
-             1. Regístrate gratis en <strong>financialmodelingprep.com/developer</strong><br>
-             2. Copia tu API key y pégala aquí — se guarda en tu navegador.
-           </div>
-           <div style="display:flex;gap:6px">
-             <input id="fmp-key-input" class="inp-sm" placeholder="Pega tu API key de FMP aquí..." style="flex:1;font-size:12px" onkeydown="if(event.key==='Enter')saveFmpKey()">
-             <button class="btn" onclick="saveFmpKey()" style="padding:5px 12px;font-size:12px">Guardar</button>
-           </div>`
-      }
-    </div>`;
+  const fmpPanel = fmpKey ? `
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+      <span style="font-size:13px;font-weight:700;color:#15803d">✅ Datos fundamentales conectados</span>
+    </div>` : "";
 
   return `<div style="padding:14px">
     <div style="background:#f0f7ff;border-radius:12px;border:1px solid #bfdbfe;padding:16px;margin-bottom:14px">
@@ -7801,15 +7760,6 @@ function renderValuation() {
     ${sectorResultHtml}
     ${loading?`<div style="text-align:center;padding:40px 20px"><div class="spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto 12px"></div><div style="color:#94a3b8;font-size:13px">Analizando ${esc(ticker)}...</div></div>`:(resultHtml||`<div style="text-align:center;color:#94a3b8;padding:40px 20px;font-size:13px">Introduce un ticker y pulsa <b>Analizar</b> para obtener la valoración</div>`)}
   </div>`;
-}
-
-function saveFmpKey() {
-  const inp = document.getElementById("fmp-key-input");
-  if (!inp) return;
-  const k = inp.value.trim();
-  state.fmpKey = k;
-  ls.set("km_fmp_key", k);
-  renderActiveTab();
 }
 
 function _buildFundamentalsResult(years, inc, cf, bs, km, curPrice) {
