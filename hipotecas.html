@@ -93,7 +93,6 @@ const computeComputableIncome = (buyers) => buyers.reduce((sum, b) => {
 const computeRawIncome = (buyers) => buyers.reduce((s, b) =>
   s + (b.monthlyNetSalary||0) + (b.variableIncome||0) + (b.rentalIncome||0) + (b.otherIncome||0), 0);
 
-/* Ahorros individuales */
 const computeLiquidSavings = (s) => {
   if (!s) return 0;
   let total = (s.cash||0)+(s.deposits||0)+(s.funds||0)+(s.stocks||0)+(s.crypto||0)+(s.otherLiquid||0);
@@ -105,7 +104,6 @@ const computeTotalPatrimony = (s) => {
   return (s.cash||0)+(s.deposits||0)+(s.funds||0)+(s.stocks||0)+(s.crypto||0)+(s.pensionPlans||0)+(s.otherLiquid||0)+(s.otherIlliquid||0);
 };
 
-/* Agregación de ahorros de todos los compradores */
 const aggregateSavings = (buyers) => {
   const keys = ['cash','deposits','funds','stocks','crypto','pensionPlans','otherLiquid','otherIlliquid','willingToUse','emergencyReserve'];
   const agg = {};
@@ -130,8 +128,6 @@ const evaluateOperation = (state, override = {}) => {
   const termYears = override.termYears ?? state.mortgage.termYears;
   const tin = override.tin ?? state.mortgage.tin;
   const { buyers, debts, monthlyExpenses, mortgage: m, tax, property } = state;
-
-  // Ahorros agregados de todos los compradores
   const savings = aggregateSavings(buyers);
 
   const months = termYears * 12;
@@ -246,7 +242,7 @@ const emptySavings = () => ({
   cash: 0, deposits: 0, funds: 0, stocks: 0, crypto: 0,
   pensionPlans: 0, otherLiquid: 0, otherIlliquid: 0,
   willingToUse: 0, emergencyReserve: 0, pensionAvailable: false,
-  willingCustom: false // si el usuario ha personalizado "Dinero que destinarás"
+  willingCustom: false
 });
 
 const defaultBuyer = (i) => ({
@@ -607,35 +603,19 @@ const BuyersSection = ({ buyers, setBuyers }) => {
   );
 };
 
-/* Sección de ahorros por comprador */
+/* Sección de ahorros por comprador — SIN useEffect interno para evitar sobrescribir */
 const SavingsSection = ({ buyers, setBuyers }) => {
   const updateSavings = (buyerId, key, value) => {
-    setBuyers(buyers.map(b => b.id === buyerId ? { ...b, savings: { ...b.savings, [key]: value } } : b));
+    setBuyers(prev => prev.map(b => b.id === buyerId ? { ...b, savings: { ...b.savings, [key]: value } } : b));
   };
-  const toggleWillingCustom = (buyerId) => {
-    setBuyers(buyers.map(b => b.id === buyerId ? { ...b, savings: { ...b.savings, willingCustom: !b.savings.willingCustom } } : b));
-  };
+
   const resyncWilling = (buyerId) => {
-    setBuyers(buyers.map(b => {
+    setBuyers(prev => prev.map(b => {
       if (b.id !== buyerId) return b;
       const liquid = computeLiquidSavings(b.savings);
       return { ...b, savings: { ...b.savings, willingToUse: liquid, willingCustom: false } };
     }));
   };
-
-  // Sincronización automática: si el usuario no ha personalizado, willingToUse = líquido
-  useEffect(() => {
-    buyers.forEach(b => {
-      if (b.savings.willingCustom) return;
-      const liquid = computeLiquidSavings(b.savings);
-      if (liquid !== b.savings.willingToUse) {
-        updateSavings(b.id, 'willingToUse', liquid);
-      }
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    buyers.map(b => [b.id, b.savings.cash, b.savings.deposits, b.savings.funds, b.savings.stocks, b.savings.crypto, b.savings.otherLiquid, b.savings.pensionPlans, b.savings.pensionAvailable, b.savings.willingCustom].join(':')).join('|')
-  ]);
 
   const agg = aggregateSavings(buyers);
   const totalPatrimonyAgg = computeTotalPatrimony(agg);
@@ -646,7 +626,6 @@ const SavingsSection = ({ buyers, setBuyers }) => {
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Ahorros y patrimonio por comprador</h2>
       <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Cada titular declara sus propios activos. Los resultados agregados se calculan automáticamente.</p>
 
-      {/* Resumen agregado */}
       <Card className="p-5 mb-6 bg-brand-50/50 dark:bg-brand-900/10 border-brand-200 dark:border-brand-800">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-3">Resumen conjunto</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -711,7 +690,9 @@ const SavingsSection = ({ buyers, setBuyers }) => {
                     label="Dinero que destinarás"
                     tooltip="Cantidad que este titular aporta a la compra. Si no lo personalizas, se sincroniza con su líquido total."
                     value={b.savings.willingToUse}
-                    onChange={v => { updateSavings(b.id, 'willingToUse', v); updateSavings(b.id, 'willingCustom', true); }}
+                    onChange={v => setBuyers(prev => prev.map(x =>
+                      x.id === b.id ? { ...x, savings: { ...x.savings, willingToUse: v, willingCustom: true } } : x
+                    ))}
                     suffix="€" min={0}
                     help={b.savings.willingCustom
                       ? 'Valor personalizado. Pulsa el botón para resincronizar.'
@@ -904,13 +885,11 @@ const Row = ({ label, value, bold, color }) => (
   </div>
 );
 
-/* Tabla de aportación por comprador */
 const BuyersBreakdown = ({ buyers }) => {
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444'];
   const totalLiquid = buyers.reduce((s, b) => s + computeLiquidSavings(b.savings), 0);
   const totalPatrimony = buyers.reduce((s, b) => s + computeTotalPatrimony(b.savings), 0);
   const totalWilling = buyers.reduce((s, b) => s + (Number(b.savings.willingToUse) || 0), 0);
-  const totalEmergency = buyers.reduce((s, b) => s + (Number(b.savings.emergencyReserve) || 0), 0);
   const totalIncome = buyers.reduce((s, b) =>
     s + (b.monthlyNetSalary||0) + (b.variableIncome||0) + (b.rentalIncome||0) + (b.otherIncome||0), 0);
 
@@ -970,7 +949,7 @@ const BuyersBreakdown = ({ buyers }) => {
         <Card className="p-5">
           <h4 className="font-semibold mb-3">Reparto de la aportación</h4>
           <DonutChart
-            data={buyers.map((b, i) => ({ name: b.name, value: Number(b.savings.willingToUse) || 0 }))}
+            data={buyers.map((b) => ({ name: b.name, value: Number(b.savings.willingToUse) || 0 }))}
             colors={COLORS}
           />
         </Card>
@@ -1317,6 +1296,39 @@ function App() {
   useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify(state)); }, [state]);
   useEffect(() => { document.documentElement.classList.toggle('dark', dark); }, [dark]);
 
+  /* Auto-sincronizar willingToUse con el patrimonio líquido individual.
+     NO incluye willingToUse ni willingCustom en las dependencias para evitar
+     sobrescribir el valor cuando el usuario lo edita manualmente. */
+  useEffect(() => {
+    setState(prev => {
+      let changed = false;
+      const newBuyers = prev.buyers.map(b => {
+        if (b.savings.willingCustom) return b;
+        const liquid = computeLiquidSavings(b.savings);
+        if (liquid !== b.savings.willingToUse) {
+          changed = true;
+          return { ...b, savings: { ...b.savings, willingToUse: liquid } };
+        }
+        return b;
+      });
+      if (!changed) return prev;
+      return { ...prev, buyers: newBuyers };
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    JSON.stringify(state.buyers.map(b => ({
+      id: b.id,
+      cash: b.savings.cash,
+      deposits: b.savings.deposits,
+      funds: b.savings.funds,
+      stocks: b.savings.stocks,
+      crypto: b.savings.crypto,
+      otherLiquid: b.savings.otherLiquid,
+      pensionPlans: b.savings.pensionPlans,
+      pensionAvailable: b.savings.pensionAvailable,
+    })))
+  ]);
+
   const result = useMemo(() => evaluateOperation(state), [state]);
   const maxPrice = useMemo(() => ({
     savings: computeMaxPrice(state, 'savings'),
@@ -1395,7 +1407,7 @@ function App() {
           </Card>
         )}
         {tab === 'buyers' && <BuyersSection buyers={state.buyers} setBuyers={v => setState({ ...state, buyers: v })} />}
-        {tab === 'savings' && <SavingsSection buyers={state.buyers} setBuyers={v => setState({ ...state, buyers: v })} />}
+        {tab === 'savings' && <SavingsSection buyers={state.buyers} setBuyers={v => setState({ ...state, buyers: typeof v === 'function' ? v(state.buyers) : v })} />}
         {tab === 'debts' && <DebtsSection debts={state.debts} setDebts={v => setState({ ...state, debts: v })} monthlyExpenses={state.monthlyExpenses} setMonthlyExpenses={v => setState({ ...state, monthlyExpenses: v })} />}
         {tab === 'property' && <PropertySection property={state.property} setProperty={v => setState({ ...state, property: v })} tax={state.tax} setTax={v => setState({ ...state, tax: v })} />}
         {tab === 'mortgage' && <MortgageSection mortgage={state.mortgage} setMortgage={v => setState({ ...state, mortgage: v })} property={state.property} />}
