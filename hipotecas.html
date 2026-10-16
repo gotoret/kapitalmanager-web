@@ -62,21 +62,107 @@ const amortizationSchedule = (principal, annualRatePct, months) => {
 
 const totalInterest = (rows) => rows.reduce((s, r) => s + r.interest, 0);
 
-const amortizePartial = (schedule, month, amount) => {
-  if (!amount || month <= 0 || month > schedule.length) return schedule;
-  const newSchedule = [];
-  let applied = false;
-  for (let i = 0; i < schedule.length; i++) {
-    const row = { ...schedule[i] };
-    if (!applied && row.month === month) {
-      const newBal = Math.max(0, row.balance - amount);
-      row.principal = row.principal + (row.balance - newBal);
-      row.balance = newBal;
-      applied = true;
-    }
-    newSchedule.push(row);
+/* Amortización parcial: aplica N € al capital pendiente en el mes indicado,
+   y recalcula el resto del cuadro según el modo:
+   - 'reduce_cuota'  → mantiene el plazo, baja la cuota
+   - 'reduce_plazo'  → mantiene la cuota, acorta el plazo
+   - 'none'          → ignora la amortización (no la aplica) */
+const applyPartialAmortization = (schedule, atMonth, amount, mode, annualRatePct) => {
+  if (!amount || amount <= 0 || atMonth <= 0 || atMonth > schedule.length) return schedule;
+  if (mode === 'none') return schedule;
+
+  const r = annualRatePct / 100 / 12;
+  const head = schedule.slice(0, atMonth).map(row => ({ ...row }));
+  const lastBeforeRow = head[head.length - 1];
+  const newBalance = Math.max(0, lastBeforeRow.balance - amount);
+
+  // Registrar la amortización en la fila del mes indicado
+  const amortRow = {
+    month: atMonth,
+    payment: lastBeforeRow.payment,
+    interest: lastBeforeRow.interest,
+    principal: lastBeforeRow.principal + (lastBeforeRow.balance - newBalance),
+    balance: newBalance,
+    isAmortization: true,
+    amortizationAmount: amount,
+  };
+
+  const baseSchedule = [...head.slice(0, -1), amortRow];
+
+  if (newBalance <= 0) {
+    // Se cancela la hipoteca
+    return baseSchedule;
   }
-  return newSchedule;
+
+  if (mode === 'reduce_cuota') {
+    // Mismo plazo restante, nueva cuota
+    const remainingMonths = schedule.length - atMonth;
+    const newPayment = monthlyPayment(newBalance, annualRatePct, remainingMonths);
+    let bal = newBalance;
+    const rest = [];
+    for (let i = 1; i <= remainingMonths; i++) {
+      const interest = bal * r;
+      const principalPart = Math.min(newPayment - interest, bal);
+      bal = Math.max(0, bal - principalPart);
+      rest.push({
+        month: atMonth + i,
+        payment: newPayment,
+        interest,
+        principal: principalPart,
+        balance: bal,
+      });
+    }
+    return [...baseSchedule, ...rest];
+  }
+
+  if (mode === 'reduce_plazo') {
+    // Misma cuota, menos meses
+    const oldPayment = lastBeforeRow.payment;
+    let bal = newBalance;
+    const rest = [];
+    let m = atMonth + 1;
+    while (bal > 0.01 && m <= atMonth + 12 * 60) { // límite duro 60 años
+      const interest = bal * r;
+      const principalPart = Math.min(oldPayment - interest, bal);
+      bal = Math.max(0, bal - principalPart);
+      rest.push({
+        month: m,
+        payment: oldPayment,
+        interest,
+        principal: principalPart,
+        balance: bal,
+      });
+      m++;
+    }
+    return [...baseSchedule, ...rest];
+  }
+
+  return schedule;
+};
+
+/* Ejecuta todas las amortizaciones por venta después de la compra en orden cronológico */
+const applyAllAmortizations = (baseSchedule, amortizations, annualRatePct) => {
+  if (!amortizations || amortizations.length === 0) return baseSchedule;
+  // Filtrar las que no aplican
+  const active = amortizations
+    .filter(a => a.amount > 0 && a.month > 0 && a.mode !== 'none')
+    .sort((a, b) => a.month - b.month);
+  if (active.length === 0) return baseSchedule;
+
+  let schedule = baseSchedule;
+  let shiftedMonth = 0; // si una amortización reduce el plazo, la siguiente se aplica más tarde
+  for (const a of active) {
+    const atMonth = a.month + shiftedMonth;
+    if (atMonth > schedule.length) continue;
+    const before = schedule.length;
+    schedule = applyPartialAmortization(schedule, atMonth, a.amount, a.mode, annualRatePct);
+    // Si se redujo el plazo, las siguientes amortizaciones con mes "real" deben aplicarse
+    // sobre el índice correcto. Ajustamos el offset con la diferencia de longitud.
+    if (a.mode === 'reduce_plazo') {
+      shiftedMonth += (before - schedule.length);
+    }
+  }
+  return schedule;
 };
 
 const ITP_BY_REGION = {
@@ -148,8 +234,6 @@ const summarizeProperties = (buyers) => {
       return {
         buyerId: o.buyerId,
         pct: pct,
-        marketValueShare: (Number(p.marketValue)||0) * pct,
-        mortgageShare: (Number(p.mortgageOutstanding)||0) * pct,
         netEquityShare: netEquity * pct,
         collateralShare: p.usedAsCollateral && (p.collateralBuyerId === o.buyerId || !p.collateralBuyerId)
           ? (Number(p.collateralValue)||0) * pct
@@ -164,13 +248,17 @@ const summarizeProperties = (buyers) => {
     });
 
     let collateralAttributed = null;
-    if (p.usedAsCollateral) {
-      if (p.collateralBuyerId) {
-        collateralAttributed = { buyerId: p.collateralBuyerId, amount: Number(p.collateralValue)||0 };
-      }
+    if (p.usedAsCollateral && p.collateralBuyerId) {
+      collateralAttributed = { buyerId: p.collateralBuyerId, amount: Number(p.collateralValue)||0 };
     }
 
-    return { ...p, totalPct, netEquity, perOwner, collateralAttributed };
+    const saleNet = Math.max(0,
+      (Number(p.sellPrice) || Number(p.marketValue) || 0)
+      - (Number(p.sellCosts)||0) - (Number(p.sellTaxes)||0)
+      - (Number(p.mortgageOutstanding)||0)
+    );
+
+    return { ...p, totalPct, netEquity, perOwner, collateralAttributed, saleNet };
   });
 
   const totalMarketValue = enriched.reduce((s, p) => s + (Number(p.marketValue)||0), 0);
@@ -180,13 +268,25 @@ const summarizeProperties = (buyers) => {
   const totalCollateralValue = collaterals.reduce((s, p) => s + (Number(p.collateralValue)||0), 0);
 
   const toSellBefore = enriched.filter(p => p.planToSell === 'sell_before');
-  const liquidFromSalesBefore = toSellBefore.reduce((s, p) => s + p.perOwner.reduce((s2, o) => s2 + o.saleNetShare, 0), 0);
+  const liquidFromSalesBefore = toSellBefore.reduce((s, p) => s + p.saleNet, 0);
 
   const toSellAfter = enriched.filter(p => p.planToSell === 'sell_after');
-  const netFromSalesAfter = toSellAfter.reduce((s, p) => s + p.perOwner.reduce((s2, o) => s2 + o.saleNetShare, 0), 0);
-  const partialAmortizationMonth = toSellAfter.length > 0
-    ? Math.max(...toSellAfter.map(p => Number(p.sellMonth) || 24))
-    : 0;
+  const netFromSalesAfter = toSellAfter.reduce((s, p) => s + p.saleNet, 0);
+
+  // Amortizaciones planificadas desde inmuebles sell_after
+  const amortizations = toSellAfter.map(p => {
+    const pct = Number(p.sellAmortizePct ?? 100) / 100;
+    return {
+      propertyId: p.id,
+      propertyAlias: p.alias,
+      month: Number(p.sellMonth) || 24,
+      totalNet: p.saleNet,
+      amount: p.saleNet * pct,
+      keep: p.saleNet * (1 - pct),
+      mode: p.sellAmortizeMode || 'reduce_cuota',
+      pct: Number(p.sellAmortizePct ?? 100),
+    };
+  });
 
   const keptProperties = enriched.filter(p => p.planToSell === 'keep');
   const rentalNetMonthly = keptProperties.reduce((s, p) => s + (Number(p.netRentalIncome)||0), 0);
@@ -195,7 +295,7 @@ const summarizeProperties = (buyers) => {
     all: enriched, totalMarketValue, totalMortgageOutstanding, totalNetEquity,
     collaterals, totalCollateralValue,
     toSellBefore, liquidFromSalesBefore,
-    toSellAfter, netFromSalesAfter, partialAmortizationMonth,
+    toSellAfter, netFromSalesAfter, amortizations,
     keptProperties, rentalNetMonthly
   };
 };
@@ -236,18 +336,12 @@ const evaluateOperation = (state, override = {}) => {
   const anexos = (property.garagePrice||0) + (property.storagePrice||0);
   const totalPrice = price + anexos;
 
-  // El banco financia como máximo el LTV% del precio total.
-  // La aportación inicial del comprador = precio total − hipoteca.
   const maxMortgageByLtv = totalPrice * (maxLtv / 100);
   const desiredDownPayment = totalPrice * (downPaymentPct / 100);
   const desiredMortgage = totalPrice - desiredDownPayment;
-  // La hipoteca efectiva es la menor entre lo deseado y el máximo por LTV.
   const mortgageAmount = Math.max(0, Math.min(desiredMortgage, maxMortgageByLtv));
-  // La aportación inicial real (la que paga el comprador) es lo que el banco NO financia.
   const downPaymentReal = totalPrice - mortgageAmount;
-  // LTV efectivo (porcentaje del precio financiado por el banco).
   const effectiveLtv = totalPrice > 0 ? mortgageAmount / totalPrice : 0;
-  // Aviso: si el LTV deseado supera el máximo, se recorta y el comprador pone más.
   const ltvCapped = desiredMortgage > maxMortgageByLtv + 0.01;
 
   const openingFee = mortgageAmount * (m.openingFeePct || 0) / 100;
@@ -258,23 +352,39 @@ const evaluateOperation = (state, override = {}) => {
   const baseAvailable = (willingToUse > 0) ? Math.min(liquidSavings, willingToUse) : liquidSavings;
   const available = baseAvailable + props.liquidFromSalesBefore;
 
-  // Gastos de compra (lo que se PAGA): entrada + impuestos + gastos + comisión + apertura.
-  // NO se incluye la reserva de emergencia (no se paga, se conserva).
   const acquisitionCosts = downPaymentReal + acq.total + reforms + furniture + openingFee;
-  // Dinero total que debe estar disponible: gastos + reserva de emergencia.
   const emergencyReserve = savings.emergencyReserve || 0;
-  const totalNeeded = acquisitionCosts;                        // se paga
-  const totalRequired = acquisitionCosts + emergencyReserve;   // debe estar disponible
-  const liquidityGap = totalRequired - available;              // déficit total
-  const liquidityGapWithoutReserve = totalNeeded - available;  // déficit sin contar reserva
+  const totalNeeded = acquisitionCosts;
+  const totalRequired = acquisitionCosts + emergencyReserve;
+  const liquidityGap = totalRequired - available;
+  const liquidityGapWithoutReserve = totalNeeded - available;
 
+  /* ===== CUADRO DE AMORTIZACIÓN CON AMORTIZACIONES PARCIALES ===== */
+  const baseSchedule = amortizationSchedule(mortgageAmount, tin, months);
   const basePayment = monthlyPayment(mortgageAmount, tin, months);
-  let schedule = amortizationSchedule(mortgageAmount, tin, months);
-  if (props.netFromSalesAfter > 0 && props.partialAmortizationMonth > 0) {
-    schedule = amortizePartial(schedule, props.partialAmortizationMonth, props.netFromSalesAfter);
-  }
+  const baseInterestTotal = totalInterest(baseSchedule);
+
+  const amortizations = props.amortizations || [];
+  const schedule = applyAllAmortizations(baseSchedule, amortizations, tin);
   const interestTotal = totalInterest(schedule);
-  const payment = basePayment;
+
+  // Cuota representativa: la del primer mes que aún no ha sido amortizado.
+  // Si todas las amortizaciones la bajan, mostramos la cuota tras la primera amortización.
+  const firstAmort = amortizations.filter(a => a.amount > 0 && a.mode === 'reduce_cuota').sort((a,b) => a.month - b.month)[0];
+  let payment = basePayment;
+  let paymentAfterFirstAmort = basePayment;
+  if (firstAmort) {
+    const row = schedule.find(r => r.month === firstAmort.month + 1);
+    if (row) paymentAfterFirstAmort = row.payment;
+  }
+
+  // Duración real (si reduce_plazo, puede ser menor que months)
+  const effectiveMonths = schedule.length;
+  const effectiveYears = effectiveMonths / 12;
+
+  // Total amortizado por ventas
+  const totalAmortizedBySales = amortizations.reduce((s, a) => s + (a.mode === 'none' ? 0 : a.amount), 0);
+  const totalKeptFromSales = amortizations.reduce((s, a) => s + (a.mode === 'none' ? 0 : a.keep), 0);
 
   const computableIncome = computeComputableIncome(buyers);
   const rawIncome = computeRawIncome(buyers);
@@ -293,7 +403,6 @@ const evaluateOperation = (state, override = {}) => {
 
   const threshold = m.debtThreshold ?? 0.35;
   const ratioOk = ratioAfter <= threshold;
-  // Liquidez: puede faltar solo para la reserva (no bloqueante) o faltar para los gastos (bloqueante).
   const liquidityOk = liquidityGap <= 0;
   const liquidityOkWithoutReserve = liquidityGapWithoutReserve <= 0;
   const ltvOk = !ltvCapped;
@@ -326,17 +435,19 @@ const evaluateOperation = (state, override = {}) => {
 
   return {
     price, totalPrice, anexos, mortgageAmount,
-    downPayment: downPaymentReal,      // aportación inicial real (lo que pone el comprador)
+    downPayment: downPaymentReal,
     downPaymentDesired: desiredDownPayment,
     effectiveLtv, ltvCapped,
     acq, reforms, furniture, openingFee,
-    acquisitionCosts,                  // lo que se paga
-    emergencyReserve,                  // lo que se conserva
-    totalNeeded,                       // = acquisitionCosts (compat)
-    totalRequired,                     // = acquisitionCosts + emergencyReserve
+    acquisitionCosts, emergencyReserve,
+    totalNeeded, totalRequired,
     available, liquidityGap, liquidityGapWithoutReserve,
     liquidSavings, baseAvailable, liquidFromSalesBefore: props.liquidFromSalesBefore,
-    payment, schedule, interestTotal, months, tin, maxLtv,
+    payment, paymentAfterFirstAmort, basePayment,
+    schedule, baseSchedule,
+    interestTotal, baseInterestTotal,
+    months, effectiveMonths, effectiveYears, tin, maxLtv,
+    amortizations, totalAmortizedBySales, totalKeptFromSales,
     computableIncome, rawIncome, existingDebt, monthlyExpenses: monthlyExpensesTotal, totalDebtAfter,
     ratioBefore, ratioAfter, monthlyMargin, threshold, linkedAnnual,
     ageOk, maxAgeReached, maxAge, ratioOk, liquidityOk, liquidityOkWithoutReserve, ltvOk, allOk,
@@ -345,7 +456,6 @@ const evaluateOperation = (state, override = {}) => {
     aggregateSavings: savings,
     properties: props,
     netFromSalesAfter: props.netFromSalesAfter,
-    partialAmortizationMonth: props.partialAmortizationMonth,
     totalCollateralCoverage, collateralCoverageRatio
   };
 };
@@ -392,7 +502,9 @@ const emptyProperty = (ownerId) => ({
   sellCosts: 0,
   sellTaxes: 0,
   sellMonth: 24,
-  netRentalIncome: 0
+  netRentalIncome: 0,
+  sellAmortizeMode: 'reduce_cuota', // 'reduce_cuota' | 'reduce_plazo' | 'none'
+  sellAmortizePct: 100              // % del neto de venta que se destina a amortizar
 });
 
 const defaultBuyer = (i) => ({
@@ -421,8 +533,8 @@ const INITIAL_STATE = {
   mortgage: { downPaymentPct: 20, termYears: 30, type: 'fijo', tin: 3.25, euribor: 3.5, spread: 1.0, revisionMonths: 12, fixedYears: 5, postFixedTin: 4.0, openingFeePct: 0.5, linkedProductsAnnual: 600, maxLtv: 80, maxAgeAtMaturity: 75, debtThreshold: 0.35 }
 };
 
-const LS_KEY = 'simulador_hipoteca_v5';
-const LS_LIST = 'simulador_hipoteca_list_v5';
+const LS_KEY = 'simulador_hipoteca_v6';
+const LS_LIST = 'simulador_hipoteca_list_v6';
 const loadCurrent = () => { try { const r = localStorage.getItem(LS_KEY); if (r) return { ...INITIAL_STATE, ...JSON.parse(r) }; } catch(e){} return INITIAL_STATE; };
 const loadList = () => { try { return JSON.parse(localStorage.getItem(LS_LIST) || '{}'); } catch(e) { return {}; } };
 
@@ -624,8 +736,8 @@ const DonutChart = ({ data, colors, size=200 }) => {
   );
 };
 
-const AreaChartSVG = ({ data, height=240, amortizationEvent }) => {
-  const W = 600, H = height, P = { t: 20, r: 20, b: 30, l: 80 };
+const AreaChartSVG = ({ data, height=240, amortizationEvents = [] }) => {
+  const W = 600, H = height, P = { t: 30, r: 20, b: 30, l: 80 };
   const iw = W - P.l - P.r, ih = H - P.t - P.b;
   const maxY = Math.max(...data.map(d => d.balance), 1);
   const x = i => P.l + (i / Math.max(1, data.length - 1)) * iw;
@@ -633,8 +745,11 @@ const AreaChartSVG = ({ data, height=240, amortizationEvent }) => {
   const path = data.map((d, i) => `${i===0?'M':'L'} ${x(i)} ${y(d.balance)}`).join(' ');
   const area = `${path} L ${x(data.length-1)} ${P.t+ih} L ${x(0)} ${P.t+ih} Z`;
   const ticks = 4;
-  const eventYear = amortizationEvent ? Math.ceil(amortizationEvent / 12) : null;
-  const eventIdx = eventYear ? data.findIndex(d => d.year === eventYear) : -1;
+  // Detectar años con amortización
+  const eventYears = new Set();
+  amortizationEvents.forEach(a => {
+    if (a.amount > 0 && a.mode !== 'none' && a.month > 0) eventYears.add(Math.ceil(a.month / 12));
+  });
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{height}}>
       {[...Array(ticks+1)].map((_, i) => {
@@ -648,15 +763,20 @@ const AreaChartSVG = ({ data, height=240, amortizationEvent }) => {
       })}
       <path d={area} fill="#c7d2fe" opacity="0.6" />
       <path d={path} fill="none" stroke="#4f46e5" strokeWidth="2" />
-      {eventIdx >= 0 && (
-        <g>
-          <line x1={x(eventIdx)} x2={x(eventIdx)} y1={P.t} y2={P.t+ih} stroke="#f59e0b" strokeWidth="2" strokeDasharray="4 4" />
-          <text x={x(eventIdx)} y={P.t - 5} fontSize="10" fill="#f59e0b" textAnchor="middle">Amort. venta</text>
-        </g>
-      )}
-      {[0, Math.floor(data.length/2), data.length-1].map((i, k) => (
-        <text key={k} x={x(i)} y={H-10} fontSize="10" fill="#94a3b8" textAnchor="middle">Año {data[i]?.year}</text>
-      ))}
+      {[...eventYears].map((yr) => {
+        const idx = data.findIndex(d => d.year === yr);
+        if (idx < 0) return null;
+        return (
+          <g key={yr}>
+            <line x1={x(idx)} x2={x(idx)} y1={P.t} y2={P.t+ih} stroke="#f59e0b" strokeWidth="2" strokeDasharray="4 4" />
+            <text x={x(idx)} y={P.t - 10} fontSize="10" fill="#f59e0b" textAnchor="middle">Amort. venta</text>
+          </g>
+        );
+      })}
+      {data.filter((_,i) => i % Math.max(1, Math.ceil(data.length/6)) === 0 || i === data.length-1).map((d, k) => {
+        const i = data.indexOf(d);
+        return <text key={k} x={x(i)} y={H-10} fontSize="10" fill="#94a3b8" textAnchor="middle">{d.year}</text>;
+      })}
     </svg>
   );
 };
@@ -884,7 +1004,7 @@ const SavingsSection = ({ buyers, setBuyers }) => {
                   />
                   <NumberField
                     label="Reserva de emergencia"
-                    tooltip="Colchón que quieres mantener intacto tras la compra. NO se paga al vendedor; es dinero que se conserva. Se suma al total que debe estar disponible pero no a los gastos de compra."
+                    tooltip="Colchón que quieres mantener intacto tras la compra. NO se paga al vendedor; es dinero que se conserva."
                     value={b.savings.emergencyReserve}
                     onChange={v => updateSavings(b.id, 'emergencyReserve', v)}
                     suffix="€" min={0}
@@ -1006,6 +1126,10 @@ const PropertiesSection = ({ buyers, setBuyers }) => {
                 const netSaleAfter = Math.max(0, (Number(p.sellPrice)||0) - (Number(p.sellCosts)||0) - (Number(p.sellTaxes)||0) - (Number(p.mortgageOutstanding)||0));
                 const isShared = ownerships.length > 1;
                 const buyerIdsAvailable = buyers.map(bb => ({ id: bb.id, name: bb.name })).filter(x => !ownerships.some(o => o.buyerId === x.id));
+                const amortizeMode = p.sellAmortizeMode || 'reduce_cuota';
+                const amortizePct = Number(p.sellAmortizePct ?? 100);
+                const amortizeAmount = netSaleAfter * (amortizePct / 100);
+                const keepAmount = netSaleAfter * (1 - amortizePct / 100);
 
                 return (
                   <div key={p.id} className="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
@@ -1094,6 +1218,46 @@ const PropertiesSection = ({ buyers, setBuyers }) => {
                       </div>
                     )}
 
+                    {p.planToSell === 'sell_after' && (
+                      <div className="mt-4 p-4 rounded-lg bg-amber-50/60 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                        <h4 className="text-sm font-semibold text-amber-900 dark:text-amber-200 mb-3">💡 Amortización de la hipoteca con el neto de la venta</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <NumberField
+                            label="% del neto destinado a amortizar"
+                            tooltip="Porcentaje del neto de la venta que destinarás a reducir la hipoteca. El resto queda disponible."
+                            value={p.sellAmortizePct}
+                            onChange={v => updateProperty(p.id, { sellAmortizePct: Math.max(0, Math.min(100, Number(v) || 0)) })}
+                            suffix="%" min={0} max={100} step={5}
+                            help={`Amortizas ${fmtEur(amortizeAmount)} · Conservas ${fmtEur(keepAmount)}`}
+                          />
+                          <SelectField
+                            label="Modo de amortización"
+                            tooltip="Reduce cuota: mantiene el plazo y baja la mensualidad. Reduce plazo: mantiene la cuota y acorta la hipoteca."
+                            value={amortizeMode}
+                            onChange={v => updateProperty(p.id, { sellAmortizeMode: v })}
+                            options={[
+                              { value: 'reduce_cuota', label: 'Reducir CUOTA (mantener plazo)' },
+                              { value: 'reduce_plazo', label: 'Reducir PLAZO (mantener cuota)' },
+                              { value: 'none', label: 'No amortizar (solo obtener líquido)' }
+                            ]}
+                          />
+                          <div className="rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-xs">
+                            <div className="text-slate-500">Efecto de la amortización</div>
+                            <div className="mt-1 space-y-0.5">
+                              <div>Neto de venta: <strong>{fmtEur(netSaleAfter)}</strong></div>
+                              <div>Amortizas: <strong className="text-brand-600 dark:text-brand-400">{fmtEur(amortizeAmount)}</strong></div>
+                              <div>Conservas: <strong className="text-emerald-600 dark:text-emerald-400">{fmtEur(keepAmount)}</strong></div>
+                              <div className="text-slate-500 mt-1">
+                                {amortizeMode === 'reduce_cuota' && '→ Baja la cuota mensual'}
+                                {amortizeMode === 'reduce_plazo' && '→ Acorta el plazo de la hipoteca'}
+                                {amortizeMode === 'none' && '→ Sin efecto en la hipoteca'}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                       <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 p-2">
                         <div className="text-slate-500">Patrimonio neto total</div>
@@ -1133,7 +1297,7 @@ const PropertiesSection = ({ buyers, setBuyers }) => {
 
       <Card className="p-5 mt-6 bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800">
         <div className="text-xs text-amber-800 dark:text-amber-200">
-          <strong>⚠️ Nota:</strong> la aceptación de un inmueble como garantía adicional (pignoración o segunda hipoteca) depende de cada banco. No todos lo ofrecen, y el valor computado suele ser inferior (60%–70%) al de tasación. En copropiedad, el banco puede exigir la firma de todos los copropietarios o computar solo la parte del titular que aporta la garantía. Confirma con tu entidad.
+          <strong>⚠️ Nota:</strong> la aceptación de un inmueble como garantía adicional (pignoración o segunda hipoteca) depende de cada banco. No todos lo ofrecen, y el valor computado suele ser inferior (60%–70%) al de tasación. En copropiedad, el banco puede exigir la firma de todos los copropietarios o computar solo la parte del titular que aporta la garantía. Confirma con tu entidad. Las amortizaciones parciales pueden llevar comisión (habitual 0%–0,25% en fijo, 0%–0,15% en variable); no incluida en esta simulación.
         </div>
       </Card>
     </div>
@@ -1246,7 +1410,7 @@ const PropertySection = ({ property, setProperty, tax, setTax }) => {
   );
 };
 
-const MortgageSection = ({ mortgage, setMortgage, property }) => {
+const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => {
   const u = (k, v) => setMortgage({ ...mortgage, [k]: v });
   const totalPrice = (property.price||0) + (property.garagePrice||0) + (property.storagePrice||0);
   const downPct = mortgage.downPaymentPct;
@@ -1257,7 +1421,19 @@ const MortgageSection = ({ mortgage, setMortgage, property }) => {
   const effectiveDown = totalPrice - effectiveMortgage;
   const ltvCapped = desiredMortgage > maxMortgageByLtv + 0.01;
   const effectiveLtv = totalPrice > 0 ? effectiveMortgage / totalPrice : 0;
-  const payment = monthlyPayment(effectiveMortgage, mortgage.tin, mortgage.termYears * 12);
+  const basePayment = monthlyPayment(effectiveMortgage, mortgage.tin, mortgage.termYears * 12);
+
+  // Calcular cuota tras amortizaciones (si reduce_cuota)
+  const baseSchedule = amortizationSchedule(effectiveMortgage, mortgage.tin, mortgage.termYears * 12);
+  const schedule = applyAllAmortizations(baseSchedule, amortizations || [], mortgage.tin);
+  const firstAmortCuota = (amortizations || []).filter(a => a.amount > 0 && a.mode === 'reduce_cuota').sort((a,b) => a.month - b.month)[0];
+  let paymentAfterAmort = basePayment;
+  if (firstAmortCuota) {
+    const row = schedule.find(r => r.month === firstAmortCuota.month + 1);
+    if (row) paymentAfterAmort = row.payment;
+  }
+  const effectiveMonths = schedule.length;
+
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Hipoteca y financiación</h2>
@@ -1271,7 +1447,7 @@ const MortgageSection = ({ mortgage, setMortgage, property }) => {
             value={mortgage.downPaymentPct}
             onChange={v => u('downPaymentPct', v)}
             suffix="%" min={0} max={100} step={1}
-            help={`→ Aportas ${fmtEur(totalPrice * downPct / 100)} · Banzo financia el ${100 - downPct}%`}
+            help={`→ Aportas ${fmtEur(totalPrice * downPct / 100)} · Banco financia el ${100 - downPct}%`}
           />
           <NumberField label="Plazo (años)" tooltip="Duración. Más plazo = cuota menor pero más intereses y mayor edad al vencimiento. Habitual 25–30 años." value={mortgage.termYears} onChange={v => u('termYears', v)} min={1} max={40} suffix="años" />
           <SelectField label="Tipo de interés" tooltip="Fijo: TIN constante. Variable: Euríbor + diferencial revisable. Mixto: tramo fijo + variable." value={mortgage.type} onChange={v => u('type', v)} options={[{ value: 'fijo', label: 'Fijo' }, { value: 'variable', label: 'Variable' }, { value: 'mixto', label: 'Mixto' }]} />
@@ -1311,9 +1487,32 @@ const MortgageSection = ({ mortgage, setMortgage, property }) => {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <KPI label="Aportación inicial" value={fmtEur(effectiveDown)} sub={`${fmtPct(effectiveDown / (totalPrice||1), 0)} del precio`} color="brand" />
         <KPI label="Hipoteca" value={fmtEur(effectiveMortgage)} sub={`LTV ${fmtPct(effectiveLtv, 0)}`} />
-        <KPI label="Cuota mensual" value={fmtEur2(payment)} color="brand" />
-        <KPI label="Precio total" value={fmtEur(totalPrice)} />
+        <KPI label={firstAmortCuota ? 'Cuota (tras amortizar)' : 'Cuota mensual'} value={fmtEur2(paymentAfterAmort)} color="brand" sub={firstAmortCuota ? `Base: ${fmtEur2(basePayment)}` : null} />
+        <KPI label="Plazo efectivo" value={`${(effectiveMonths/12).toFixed(1)} años`} sub={effectiveMonths < mortgage.termYears * 12 ? `Base: ${mortgage.termYears} años` : `${effectiveMonths} meses`} />
       </div>
+
+      {(amortizations && amortizations.length > 0) && (
+        <Card className="p-5 mt-6 bg-amber-50/60 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800">
+          <h4 className="font-semibold text-amber-900 dark:text-amber-200 mb-3">📌 Amortizaciones planificadas por venta de inmuebles</h4>
+          <div className="space-y-2 text-sm">
+            {amortizations.map((a, i) => (
+              <div key={i} className="flex flex-wrap justify-between items-center gap-2 py-1 border-b border-amber-200/50 dark:border-amber-800/50 last:border-0">
+                <div>
+                  <strong>{a.propertyAlias}</strong> · mes {a.month} ({Math.ceil(a.month/12)} año/años)
+                </div>
+                <div className="flex gap-3 text-xs">
+                  <span>Neto: <strong>{fmtEur(a.totalNet)}</strong></span>
+                  <span>Amortizas: <strong className="text-brand-600 dark:text-brand-400">{fmtEur(a.amount)}</strong> ({a.pct}%)</span>
+                  <span>Conservas: <strong className="text-emerald-600 dark:text-emerald-400">{fmtEur(a.keep)}</strong></span>
+                  <span className="px-2 py-0.5 rounded bg-white dark:bg-slate-900">
+                    {a.mode === 'reduce_cuota' ? '↓ Cuota' : a.mode === 'reduce_plazo' ? '↓ Plazo' : 'Sin efecto'}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
     </div>
   );
 };
@@ -1538,6 +1737,7 @@ const ResultsSection = ({ state, result, maxPrice }) => {
   ];
   const props = result.properties;
   const buyerName = (id) => state.buyers.find(b => b.id === id)?.name || '—';
+  const hasAmortizations = result.amortizations && result.amortizations.some(a => a.amount > 0 && a.mode !== 'none');
 
   return (
     <div>
@@ -1563,7 +1763,7 @@ const ResultsSection = ({ state, result, maxPrice }) => {
         <KPI label="Precio máximo" value={fmtEur(maxPrice.all)} color="brand" sub="todas las restricciones" />
         <KPI label="Aportación inicial" value={fmtEur(result.downPayment)} sub={`${fmtPct(result.totalPrice > 0 ? result.downPayment / result.totalPrice : 0, 0)} del precio`} color="brand" />
         <KPI label="Hipoteca" value={fmtEur(result.mortgageAmount)} sub={`LTV ${fmtPct(result.effectiveLtv, 0)}`} />
-        <KPI label="Cuota mensual" value={fmtEur2(result.payment)} color="brand" />
+        <KPI label={hasAmortizations ? 'Cuota inicial' : 'Cuota mensual'} value={fmtEur2(result.payment)} color="brand" sub={hasAmortizations && result.paymentAfterFirstAmort !== result.payment ? `Tras amortizar: ${fmtEur2(result.paymentAfterFirstAmort)}` : null} />
         <KPI label="Ratio endeudamiento" value={fmtPct(result.ratioAfter)} color={result.ratioOk ? 'emerald' : 'red'} sub={`Umbral ${fmtPct(result.threshold)}`} />
         <KPI label="Margen mensual" value={fmtEur(result.monthlyMargin)} color={result.monthlyMargin > 0 ? 'emerald' : 'red'} sub={props.rentalNetMonthly > 0 ? `Incl. alquileres: ${fmtEur(props.rentalNetMonthly)}` : null} />
         <KPI label="Gastos de compra" value={fmtEur(result.acquisitionCosts)} color={result.liquidityOkWithoutReserve ? 'emerald' : 'red'} sub={`Se paga al vendedor, banco e impuestos`} />
@@ -1653,7 +1853,7 @@ const ResultsSection = ({ state, result, maxPrice }) => {
                     {(p.planToSell === 'sell_before' || p.planToSell === 'sell_after') && (
                       <div className="mt-3 text-xs">
                         <span className="px-2 py-1 rounded bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300">
-                          {p.planToSell === 'sell_before' ? 'Vender antes' : `Vender después (mes ${p.sellMonth})`} · Neto total: {fmtEur(p.perOwner.reduce((s,o)=>s+o.saleNetShare,0))}
+                          {p.planToSell === 'sell_before' ? 'Vender antes' : `Vender después (mes ${p.sellMonth})`} · Neto total: {fmtEur(p.saleNet)}
                         </span>
                       </div>
                     )}
@@ -1696,7 +1896,10 @@ const ResultsSection = ({ state, result, maxPrice }) => {
           {props.netFromSalesAfter > 0 && (
             <Card className="p-5 bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800">
               <h4 className="font-semibold mb-2">Ventas después de la compra</h4>
-              <p className="text-sm">Amortización parcial prevista en el mes <strong>{props.partialAmortizationMonth}</strong> por <strong>{fmtEur(props.netFromSalesAfter)}</strong>.</p>
+              <p className="text-sm">Se prevé vender inmuebles tras la compra por un neto total de <strong>{fmtEur(props.netFromSalesAfter)}</strong>.</p>
+              {result.totalAmortizedBySales > 0 && (
+                <p className="text-sm mt-2">De ese neto, <strong className="text-brand-600 dark:text-brand-400">{fmtEur(result.totalAmortizedBySales)}</strong> se destinan a amortizar la hipoteca y <strong className="text-emerald-600 dark:text-emerald-400">{fmtEur(result.totalKeptFromSales)}</strong> se conservan.</p>
+              )}
             </Card>
           )}
         </div>
@@ -1740,7 +1943,7 @@ const ResultsSection = ({ state, result, maxPrice }) => {
               <h4 className="font-semibold mb-3">Composición de gastos de compra</h4>
               <DonutChart data={costPie} colors={COLORS} size={220} />
               <div className="mt-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-xs text-slate-600 dark:text-slate-300">
-                <strong>ℹ️ Aclaración:</strong> la <em>aportación inicial</em> es la parte del precio que no financia el banco (100% − LTV). Los <em>impuestos y gastos</em> son obligatorios aparte, independientemente del tipo de vivienda. La <em>reserva de emergencia</em> es dinero que decides no gastar; se suma al "Total a tener" pero no a los gastos.
+                <strong>ℹ️ Aclaración:</strong> la <em>aportación inicial</em> es la parte del precio que no financia el banco (100% − LTV). Los <em>impuestos y gastos</em> son obligatorios aparte. La <em>reserva de emergencia</em> es dinero que decides no gastar.
               </div>
             </Card>
           </div>
@@ -1748,25 +1951,78 @@ const ResultsSection = ({ state, result, maxPrice }) => {
       )}
       {tab === 'amort' && (
         <div className="space-y-4">
+          {hasAmortizations && (
+            <Card className="p-5 bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800">
+              <h4 className="font-semibold mb-3">📌 Amortizaciones planificadas por venta de inmuebles</h4>
+              <div className="space-y-2 text-sm">
+                {result.amortizations.filter(a => a.amount > 0 && a.mode !== 'none').map((a, i) => (
+                  <div key={i} className="flex flex-wrap justify-between items-center gap-2 py-1 border-b border-amber-200/50 dark:border-amber-800/50 last:border-0">
+                    <div><strong>{a.propertyAlias}</strong> · mes {a.month} (año {Math.ceil(a.month/12)})</div>
+                    <div className="flex gap-3 text-xs">
+                      <span>Amortizas: <strong className="text-brand-600 dark:text-brand-400">{fmtEur(a.amount)}</strong></span>
+                      <span>Conservas: <strong className="text-emerald-600 dark:text-emerald-400">{fmtEur(a.keep)}</strong></span>
+                      <span className="px-2 py-0.5 rounded bg-white dark:bg-slate-900">
+                        {a.mode === 'reduce_cuota' ? '↓ Cuota' : '↓ Plazo'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
           <Card className="p-5">
             <h4 className="font-semibold mb-3">Evolución del capital pendiente</h4>
-            <AreaChartSVG data={yearlyData} amortizationEvent={result.partialAmortizationMonth > 0 ? result.partialAmortizationMonth : undefined} />
-            {result.netFromSalesAfter > 0 && (
-              <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">⤷ Marca naranja: amortización parcial por venta en el mes {result.partialAmortizationMonth} ({fmtEur(result.netFromSalesAfter)}).</p>
+            <AreaChartSVG data={yearlyData} amortizationEvents={result.amortizations || []} />
+            {hasAmortizations && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">⤷ Marcas naranjas: amortizaciones parciales por venta.</p>
             )}
           </Card>
           <Card className="p-5">
             <h4 className="font-semibold mb-3">Intereses vs. capital por año</h4>
             <StackedBarChart data={yearlyData} />
           </Card>
-          <Card className="p-5 text-sm">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div><div className="text-xs uppercase text-slate-500">Cuota</div><div className="font-bold">{fmtEur2(result.payment)}</div></div>
-              <div><div className="text-xs uppercase text-slate-500">Intereses totales</div><div className="font-bold">{fmtEur(result.interestTotal)}</div></div>
-              <div><div className="text-xs uppercase text-slate-500">Coste total hipoteca</div><div className="font-bold">{fmtEur(result.mortgageAmount + result.interestTotal)}</div></div>
-              <div><div className="text-xs uppercase text-slate-500">Plazo</div><div className="font-bold">{state.mortgage.termYears} años</div></div>
-            </div>
-          </Card>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card className="p-5">
+              <h4 className="font-semibold mb-3">Escenario base (sin amortizaciones)</h4>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div><div className="text-xs uppercase text-slate-500">Cuota</div><div className="font-bold">{fmtEur2(result.basePayment)}</div></div>
+                <div><div className="text-xs uppercase text-slate-500">Intereses totales</div><div className="font-bold">{fmtEur(result.baseInterestTotal)}</div></div>
+                <div><div className="text-xs uppercase text-slate-500">Meses</div><div className="font-bold">{result.months}</div></div>
+                <div><div className="text-xs uppercase text-slate-500">Coste hipoteca</div><div className="font-bold">{fmtEur(result.mortgageAmount + result.baseInterestTotal)}</div></div>
+              </div>
+            </Card>
+            <Card className="p-5 bg-emerald-50/50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800">
+              <h4 className="font-semibold mb-3">Con amortizaciones por ventas</h4>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div><div className="text-xs uppercase text-slate-500">Cuota final</div><div className="font-bold">{fmtEur2(result.paymentAfterFirstAmort)}</div></div>
+                <div><div className="text-xs uppercase text-slate-500">Intereses totales</div><div className="font-bold">{fmtEur(result.interestTotal)}</div></div>
+                <div><div className="text-xs uppercase text-slate-500">Meses</div><div className="font-bold">{result.effectiveMonths}</div></div>
+                <div><div className="text-xs uppercase text-slate-500">Coste hipoteca</div><div className="font-bold">{fmtEur(result.mortgageAmount + result.interestTotal)}</div></div>
+              </div>
+              {hasAmortizations && (
+                <div className="mt-3 pt-3 border-t border-emerald-200 dark:border-emerald-800 text-sm">
+                  <div className="flex justify-between">
+                    <span>Ahorro en intereses</span>
+                    <span className="font-bold text-emerald-600 dark:text-emerald-400">{fmtEur(result.baseInterestTotal - result.interestTotal)}</span>
+                  </div>
+                  {result.paymentAfterFirstAmort < result.basePayment && (
+                    <div className="flex justify-between">
+                      <span>Reducción cuota</span>
+                      <span className="font-bold text-emerald-600 dark:text-emerald-400">{fmtEur(result.basePayment - result.paymentAfterFirstAmort)}/mes</span>
+                    </div>
+                  )}
+                  {result.effectiveMonths < result.months && (
+                    <div className="flex justify-between">
+                      <span>Reducción plazo</span>
+                      <span className="font-bold text-emerald-600 dark:text-emerald-400">{result.months - result.effectiveMonths} meses ({(Math.round((result.months - result.effectiveMonths)/12*10)/10)} años)</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </Card>
+          </div>
         </div>
       )}
       {tab === 'maxprice' && (
@@ -1840,7 +2096,7 @@ const SavedSection = ({ state, setState, list, setList }) => {
   const exportAll = () => {
     const payload = {
       _type: 'simulador_hipoteca_backup',
-      _version: 5,
+      _version: 6,
       exportedAt: new Date().toISOString(),
       current: state,
       saved: list,
@@ -1852,7 +2108,7 @@ const SavedSection = ({ state, setState, list, setList }) => {
   const exportCurrent = () => {
     const payload = {
       _type: 'simulador_hipoteca_current',
-      _version: 5,
+      _version: 6,
       exportedAt: new Date().toISOString(),
       state,
     };
@@ -1865,7 +2121,7 @@ const SavedSection = ({ state, setState, list, setList }) => {
     if (!s) return;
     const payload = {
       _type: 'simulador_hipoteca_single',
-      _version: 5,
+      _version: 6,
       exportedAt: new Date().toISOString(),
       simulation: s,
     };
@@ -2122,7 +2378,7 @@ function App() {
         {tab === 'properties' && <PropertiesSection buyers={state.buyers} setBuyers={v => setState({ ...state, buyers: typeof v === 'function' ? v(state.buyers) : v })} />}
         {tab === 'debts' && <DebtsSection debts={state.debts} setDebts={v => setState({ ...state, debts: v })} monthlyExpenses={state.monthlyExpenses} setMonthlyExpenses={v => setState({ ...state, monthlyExpenses: v })} />}
         {tab === 'property' && <PropertySection property={state.property} setProperty={v => setState({ ...state, property: v })} tax={state.tax} setTax={v => setState({ ...state, tax: v })} />}
-        {tab === 'mortgage' && <MortgageSection mortgage={state.mortgage} setMortgage={v => setState({ ...state, mortgage: v })} property={state.property} />}
+        {tab === 'mortgage' && <MortgageSection mortgage={state.mortgage} setMortgage={v => setState({ ...state, mortgage: v })} property={state.property} amortizations={result.amortizations} />}
         {tab === 'results' && <ResultsSection state={state} result={result} maxPrice={maxPrice} />}
         {tab === 'saved' && <SavedSection state={state} setState={setState} list={list} setList={setList} />}
         <footer className="mt-12 pt-6 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500">
