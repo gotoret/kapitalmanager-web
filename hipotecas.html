@@ -396,10 +396,8 @@ const LS_LIST = 'simulador_hipoteca_list_v4';
 const loadCurrent = () => { try { const r = localStorage.getItem(LS_KEY); if (r) return { ...INITIAL_STATE, ...JSON.parse(r) }; } catch(e){} return INITIAL_STATE; };
 const loadList = () => { try { return JSON.parse(localStorage.getItem(LS_LIST) || '{}'); } catch(e) { return {}; } };
 
-/* Validar y normalizar un state importado para evitar crashes por estructuras incompletas */
 const normalizeState = (incoming) => {
   const s = { ...INITIAL_STATE, ...(incoming || {}) };
-  // Garantizar buyers con savings y properties
   s.buyers = (Array.isArray(s.buyers) ? s.buyers : INITIAL_STATE.buyers).map((b, i) => ({
     ...defaultBuyer(i),
     ...b,
@@ -503,34 +501,60 @@ const SelectField = ({ label, value, onChange, options, help, tooltip }) => (
   </div>
 );
 
+/* Toggle corregido: el clic no se ve interferido por el tooltip */
 const Toggle = ({ label, checked, onChange, tooltip }) => {
   const [show, setShow] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0, placement: 'top' });
-  const ref = useRef(null);
+  const labelRef = useRef(null);
+
   const handleEnter = () => {
-    if (!ref.current) return;
-    const rect = ref.current.getBoundingClientRect();
+    if (!labelRef.current) return;
+    const rect = labelRef.current.getBoundingClientRect();
     const placement = (rect.top < 180) ? 'bottom' : 'top';
-    setPos({ top: placement === 'top' ? rect.top - 8 : rect.bottom + 8, left: Math.min(rect.left + rect.width / 2, window.innerWidth - 160), placement });
+    setPos({
+      top: placement === 'top' ? rect.top - 8 : rect.bottom + 8,
+      left: Math.min(rect.left + rect.width / 2, window.innerWidth - 160),
+      placement
+    });
     setShow(true);
   };
+
   return (
-    <label className="flex items-center gap-3 cursor-pointer select-none" ref={ref}
-      onMouseEnter={handleEnter} onMouseLeave={() => setShow(false)}>
-      <span className={"relative w-10 h-6 rounded-full transition " + (checked ? 'bg-brand-600' : 'bg-slate-300 dark:bg-slate-700')}>
+    <div className="flex items-center gap-3 select-none">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={"relative flex-shrink-0 w-10 h-6 rounded-full transition focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 " + (checked ? 'bg-brand-600' : 'bg-slate-300 dark:bg-slate-700')}
+      >
         <span className={"absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform " + (checked ? 'translate-x-4' : '')}></span>
-      </span>
-      <span className="text-sm font-medium text-slate-700 dark:text-slate-300 border-b border-dotted border-slate-400 dark:border-slate-500">
+      </button>
+
+      <span
+        ref={labelRef}
+        onClick={() => onChange(!checked)}
+        onMouseEnter={handleEnter}
+        onMouseLeave={() => setShow(false)}
+        className="text-sm font-medium text-slate-700 dark:text-slate-300 border-b border-dotted border-slate-400 dark:border-slate-500 cursor-pointer"
+      >
         {label}
       </span>
+
       {show && tooltip && (
-        <div className="fixed z-50 max-w-xs px-3 py-2 text-xs rounded-lg bg-slate-900 dark:bg-slate-700 text-white shadow-xl pointer-events-none"
-          style={{ top: pos.top, left: pos.left, transform: pos.placement === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)' }}>
+        <div
+          className="fixed z-50 max-w-xs px-3 py-2 text-xs rounded-lg bg-slate-900 dark:bg-slate-700 text-white shadow-xl pointer-events-none"
+          style={{
+            top: pos.top,
+            left: pos.left,
+            transform: pos.placement === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)'
+          }}
+        >
           {tooltip}
           <div className={"absolute left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-slate-900 dark:bg-slate-700 " + (pos.placement === 'top' ? '-bottom-1' : '-top-1')} />
         </div>
       )}
-    </label>
+    </div>
   );
 };
 
@@ -1715,7 +1739,7 @@ const ResultsSection = ({ state, result, maxPrice }) => {
 /* ---------- GUARDADAS ---------- */
 const SavedSection = ({ state, setState, list, setList }) => {
   const [name, setName] = useState('');
-  const [message, setMessage] = useState(null); // { type: 'ok'|'error', text }
+  const [message, setMessage] = useState(null);
   const fileRef = useRef();
 
   const showMessage = (type, text) => {
@@ -1807,14 +1831,12 @@ const SavedSection = ({ state, setState, list, setList }) => {
         let importedCount = 0;
         let loadedCurrent = false;
 
-        /* Detectar formato por _type o por estructura */
         const type = data._type || (
           data.saved || data.simulation || data.current ? 'legacy' :
           data.buyers && data.property && data.mortgage ? 'raw_state' : 'unknown'
         );
 
         if (type === 'simulador_hipoteca_backup' || (data.saved && data.current)) {
-          /* Backup completo */
           const mergedSaved = { ...list, ...(data.saved || {}) };
           setList(mergedSaved);
           localStorage.setItem(LS_LIST, JSON.stringify(mergedSaved));
@@ -1836,11 +1858,9 @@ const SavedSection = ({ state, setState, list, setList }) => {
           localStorage.setItem(LS_LIST, JSON.stringify(merged));
           showMessage('ok', `Simulación "${sim.name}" importada.`);
         } else if (type === 'raw_state' || (data.buyers && data.property)) {
-          /* Un state suelto */
           setState(normalizeState(data));
           showMessage('ok', 'Estado cargado directamente.');
         } else if (data.saved) {
-          /* Backup con solo saved */
           const merged = { ...list, ...data.saved };
           setList(merged);
           localStorage.setItem(LS_LIST, JSON.stringify(merged));
