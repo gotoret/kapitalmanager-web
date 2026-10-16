@@ -236,9 +236,19 @@ const evaluateOperation = (state, override = {}) => {
   const anexos = (property.garagePrice||0) + (property.storagePrice||0);
   const totalPrice = price + anexos;
 
+  // El banco financia como máximo el LTV% del precio total.
+  // La aportación inicial del comprador = precio total − hipoteca.
   const maxMortgageByLtv = totalPrice * (maxLtv / 100);
-  const desiredMortgage = totalPrice * (1 - downPaymentPct / 100);
+  const desiredDownPayment = totalPrice * (downPaymentPct / 100);
+  const desiredMortgage = totalPrice - desiredDownPayment;
+  // La hipoteca efectiva es la menor entre lo deseado y el máximo por LTV.
   const mortgageAmount = Math.max(0, Math.min(desiredMortgage, maxMortgageByLtv));
+  // La aportación inicial real (la que paga el comprador) es lo que el banco NO financia.
+  const downPaymentReal = totalPrice - mortgageAmount;
+  // LTV efectivo (porcentaje del precio financiado por el banco).
+  const effectiveLtv = totalPrice > 0 ? mortgageAmount / totalPrice : 0;
+  // Aviso: si el LTV deseado supera el máximo, se recorta y el comprador pone más.
+  const ltvCapped = desiredMortgage > maxMortgageByLtv + 0.01;
 
   const openingFee = mortgageAmount * (m.openingFeePct || 0) / 100;
   const linkedAnnual = m.linkedProductsAnnual || 0;
@@ -248,8 +258,15 @@ const evaluateOperation = (state, override = {}) => {
   const baseAvailable = (willingToUse > 0) ? Math.min(liquidSavings, willingToUse) : liquidSavings;
   const available = baseAvailable + props.liquidFromSalesBefore;
 
-  const totalNeeded = totalPrice - mortgageAmount + acq.total + reforms + furniture + openingFee + (savings.emergencyReserve || 0);
-  const liquidityGap = totalNeeded - available;
+  // Gastos de compra (lo que se PAGA): entrada + impuestos + gastos + comisión + apertura.
+  // NO se incluye la reserva de emergencia (no se paga, se conserva).
+  const acquisitionCosts = downPaymentReal + acq.total + reforms + furniture + openingFee;
+  // Dinero total que debe estar disponible: gastos + reserva de emergencia.
+  const emergencyReserve = savings.emergencyReserve || 0;
+  const totalNeeded = acquisitionCosts;                        // se paga
+  const totalRequired = acquisitionCosts + emergencyReserve;   // debe estar disponible
+  const liquidityGap = totalRequired - available;              // déficit total
+  const liquidityGapWithoutReserve = totalNeeded - available;  // déficit sin contar reserva
 
   const basePayment = monthlyPayment(mortgageAmount, tin, months);
   let schedule = amortizationSchedule(mortgageAmount, tin, months);
@@ -276,17 +293,20 @@ const evaluateOperation = (state, override = {}) => {
 
   const threshold = m.debtThreshold ?? 0.35;
   const ratioOk = ratioAfter <= threshold;
+  // Liquidez: puede faltar solo para la reserva (no bloqueante) o faltar para los gastos (bloqueante).
   const liquidityOk = liquidityGap <= 0;
-  const ltvOk = mortgageAmount <= maxMortgageByLtv + 0.01;
-  const allOk = ratioOk && liquidityOk && ltvOk && ageOk;
+  const liquidityOkWithoutReserve = liquidityGapWithoutReserve <= 0;
+  const ltvOk = !ltvCapped;
+  const allOk = ratioOk && liquidityOkWithoutReserve && ltvOk && ageOk;
 
   const totalCollateralCoverage = totalPrice + props.totalCollateralValue;
   const collateralCoverageRatio = mortgageAmount > 0 ? totalCollateralCoverage / mortgageAmount : 0;
 
   const reasons = [];
   if (!ratioOk) reasons.push(`Ratio de endeudamiento ${fmtPct(ratioAfter)} > umbral ${fmtPct(threshold)}`);
-  if (!liquidityOk) reasons.push(`Faltan ${fmtEur(-liquidityGap)} para cubrir gastos`);
-  if (!ltvOk) reasons.push(`LTV supera el máximo del ${maxLtv}%`);
+  if (!liquidityOkWithoutReserve) reasons.push(`Faltan ${fmtEur(-liquidityGapWithoutReserve)} para cubrir la entrada y gastos de compra`);
+  else if (!liquidityOk) reasons.push(`Faltan ${fmtEur(-liquidityGap)} para cubrir gastos + la reserva de emergencia deseada (la reserva se puede reducir)`);
+  if (!ltvOk) reasons.push(`LTV deseado supera el máximo del ${maxLtv}% (banco financia ${fmtPct(effectiveLtv, 0)}, tú aportas el resto)`);
   if (!ageOk) reasons.push(`Edad al vencimiento ${maxAgeReached ? maxAgeReached.toFixed(1) : '?'} años > ${maxAge}`);
 
   let verdict, verdictLabel, verdictColor;
@@ -296,22 +316,32 @@ const evaluateOperation = (state, override = {}) => {
     verdict='viable'; verdictLabel='Viable según criterios configurados'; verdictColor='emerald';
   } else if (allOk) {
     verdict='conditional'; verdictLabel='Viable con margen reducido'; verdictColor='amber';
-  } else if (ratioOk && !liquidityOk) {
+  } else if (ratioOk && liquidityOkWithoutReserve && !liquidityOk) {
+    verdict='conditional'; verdictLabel='Viable si reduces la reserva de emergencia'; verdictColor='amber';
+  } else if (ratioOk && !liquidityOkWithoutReserve) {
     verdict='conditional'; verdictLabel='Viable si se resuelve la liquidez'; verdictColor='amber';
   } else {
     verdict='not_viable'; verdictLabel='No viable con los datos actuales'; verdictColor='red';
   }
 
   return {
-    price, totalPrice, anexos, mortgageAmount, downPayment: totalPrice - mortgageAmount,
-    acq, reforms, furniture, openingFee, totalNeeded, available, liquidityGap, liquidSavings,
-    baseAvailable, liquidFromSalesBefore: props.liquidFromSalesBefore,
+    price, totalPrice, anexos, mortgageAmount,
+    downPayment: downPaymentReal,      // aportación inicial real (lo que pone el comprador)
+    downPaymentDesired: desiredDownPayment,
+    effectiveLtv, ltvCapped,
+    acq, reforms, furniture, openingFee,
+    acquisitionCosts,                  // lo que se paga
+    emergencyReserve,                  // lo que se conserva
+    totalNeeded,                       // = acquisitionCosts (compat)
+    totalRequired,                     // = acquisitionCosts + emergencyReserve
+    available, liquidityGap, liquidityGapWithoutReserve,
+    liquidSavings, baseAvailable, liquidFromSalesBefore: props.liquidFromSalesBefore,
     payment, schedule, interestTotal, months, tin, maxLtv,
     computableIncome, rawIncome, existingDebt, monthlyExpenses: monthlyExpensesTotal, totalDebtAfter,
     ratioBefore, ratioAfter, monthlyMargin, threshold, linkedAnnual,
-    ageOk, maxAgeReached, maxAge, ratioOk, liquidityOk, ltvOk, allOk,
+    ageOk, maxAgeReached, maxAge, ratioOk, liquidityOk, liquidityOkWithoutReserve, ltvOk, allOk,
     verdict, verdictLabel, verdictColor, reasons,
-    ltv: totalPrice > 0 ? mortgageAmount / totalPrice : 0,
+    ltv: effectiveLtv,
     aggregateSavings: savings,
     properties: props,
     netFromSalesAfter: props.netFromSalesAfter,
@@ -324,9 +354,9 @@ const computeMaxPrice = (state, binding) => {
   const evaluate = (p) => {
     if (p <= 0) return false;
     const r = evaluateOperation(state, { price: p });
-    if (binding === 'savings') return r.liquidityGap <= 0;
+    if (binding === 'savings') return r.liquidityGapWithoutReserve <= 0;
     if (binding === 'income') return r.ratioAfter <= r.threshold;
-    if (binding === 'ltv') return r.ltv <= r.maxLtv / 100 + 0.0001;
+    if (binding === 'ltv') return !r.ltvCapped;
     if (binding === 'age') return r.ageOk;
     return r.allOk;
   };
@@ -391,8 +421,8 @@ const INITIAL_STATE = {
   mortgage: { downPaymentPct: 20, termYears: 30, type: 'fijo', tin: 3.25, euribor: 3.5, spread: 1.0, revisionMonths: 12, fixedYears: 5, postFixedTin: 4.0, openingFeePct: 0.5, linkedProductsAnnual: 600, maxLtv: 80, maxAgeAtMaturity: 75, debtThreshold: 0.35 }
 };
 
-const LS_KEY = 'simulador_hipoteca_v4';
-const LS_LIST = 'simulador_hipoteca_list_v4';
+const LS_KEY = 'simulador_hipoteca_v5';
+const LS_LIST = 'simulador_hipoteca_list_v5';
 const loadCurrent = () => { try { const r = localStorage.getItem(LS_KEY); if (r) return { ...INITIAL_STATE, ...JSON.parse(r) }; } catch(e){} return INITIAL_STATE; };
 const loadList = () => { try { return JSON.parse(localStorage.getItem(LS_LIST) || '{}'); } catch(e) { return {}; } };
 
@@ -501,12 +531,10 @@ const SelectField = ({ label, value, onChange, options, help, tooltip }) => (
   </div>
 );
 
-/* Toggle corregido: el clic no se ve interferido por el tooltip */
 const Toggle = ({ label, checked, onChange, tooltip }) => {
   const [show, setShow] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0, placement: 'top' });
   const labelRef = useRef(null);
-
   const handleEnter = () => {
     if (!labelRef.current) return;
     const rect = labelRef.current.getBoundingClientRect();
@@ -518,38 +546,19 @@ const Toggle = ({ label, checked, onChange, tooltip }) => {
     });
     setShow(true);
   };
-
   return (
     <div className="flex items-center gap-3 select-none">
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        className={"relative flex-shrink-0 w-10 h-6 rounded-full transition focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 " + (checked ? 'bg-brand-600' : 'bg-slate-300 dark:bg-slate-700')}
-      >
+      <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)}
+        className={"relative flex-shrink-0 w-10 h-6 rounded-full transition focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 " + (checked ? 'bg-brand-600' : 'bg-slate-300 dark:bg-slate-700')}>
         <span className={"absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform " + (checked ? 'translate-x-4' : '')}></span>
       </button>
-
-      <span
-        ref={labelRef}
-        onClick={() => onChange(!checked)}
-        onMouseEnter={handleEnter}
-        onMouseLeave={() => setShow(false)}
-        className="text-sm font-medium text-slate-700 dark:text-slate-300 border-b border-dotted border-slate-400 dark:border-slate-500 cursor-pointer"
-      >
+      <span ref={labelRef} onClick={() => onChange(!checked)} onMouseEnter={handleEnter} onMouseLeave={() => setShow(false)}
+        className="text-sm font-medium text-slate-700 dark:text-slate-300 border-b border-dotted border-slate-400 dark:border-slate-500 cursor-pointer">
         {label}
       </span>
-
       {show && tooltip && (
-        <div
-          className="fixed z-50 max-w-xs px-3 py-2 text-xs rounded-lg bg-slate-900 dark:bg-slate-700 text-white shadow-xl pointer-events-none"
-          style={{
-            top: pos.top,
-            left: pos.left,
-            transform: pos.placement === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)'
-          }}
-        >
+        <div className="fixed z-50 max-w-xs px-3 py-2 text-xs rounded-lg bg-slate-900 dark:bg-slate-700 text-white shadow-xl pointer-events-none"
+          style={{ top: pos.top, left: pos.left, transform: pos.placement === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)' }}>
           {tooltip}
           <div className={"absolute left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-slate-900 dark:bg-slate-700 " + (pos.placement === 'top' ? '-bottom-1' : '-top-1')} />
         </div>
@@ -875,7 +884,7 @@ const SavingsSection = ({ buyers, setBuyers }) => {
                   />
                   <NumberField
                     label="Reserva de emergencia"
-                    tooltip="Colchón que este titular quiere mantener intacto. Se suma a las necesidades conjuntas."
+                    tooltip="Colchón que quieres mantener intacto tras la compra. NO se paga al vendedor; es dinero que se conserva. Se suma al total que debe estar disponible pero no a los gastos de compra."
                     value={b.savings.emergencyReserve}
                     onChange={v => updateSavings(b.id, 'emergencyReserve', v)}
                     suffix="€" min={0}
@@ -1195,7 +1204,7 @@ const PropertySection = ({ property, setProperty, tax, setTax }) => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <NumberField label="Precio de compraventa" tooltip="Precio de la vivienda sin anexos ni gastos. Base para impuestos y LTV." value={property.price} onChange={v => u('price', v)} suffix="€" min={0} />
           <SelectField label="Comunidad autónoma" tooltip="Ubicación del inmueble. Determina el ITP aplicable." value={property.region} onChange={v => u('region', v)} options={REGIONS.map(r => ({ value: r, label: r }))} />
-          <SelectField label="Tipo de vivienda" tooltip="Segunda mano → ITP. Obra nueva → IVA 10% + AJD." value={property.isNew ? 'new' : 'used'} onChange={v => u('isNew', v === 'new')} options={[{ value: 'used', label: 'Segunda mano (ITP)' }, { value: 'new', label: 'Obra nueva (IVA + AJD)' }]} />
+          <SelectField label="Tipo de vivienda" tooltip="Segunda mano → ITP. Obra nueva → IVA 10% + AJD. No afecta a la entrada, solo a los impuestos." value={property.isNew ? 'new' : 'used'} onChange={v => u('isNew', v === 'new')} options={[{ value: 'used', label: 'Segunda mano (ITP)' }, { value: 'new', label: 'Obra nueva (IVA + AJD)' }]} />
           <NumberField label="Plaza de garaje" tooltip="Precio del garaje si va junto a la vivienda." value={property.garagePrice} onChange={v => u('garagePrice', v)} suffix="€" min={0} />
           <NumberField label="Trastero" tooltip="Precio del trastero si va junto a la vivienda." value={property.storagePrice} onChange={v => u('storagePrice', v)} suffix="€" min={0} />
           <NumberField label="Comisión inmobiliaria" tooltip="Honorarios de la agencia (3–5% del precio + IVA)." value={property.agencyFee} onChange={v => u('agencyFee', v)} suffix="€" min={0} />
@@ -1240,16 +1249,30 @@ const PropertySection = ({ property, setProperty, tax, setTax }) => {
 const MortgageSection = ({ mortgage, setMortgage, property }) => {
   const u = (k, v) => setMortgage({ ...mortgage, [k]: v });
   const totalPrice = (property.price||0) + (property.garagePrice||0) + (property.storagePrice||0);
-  const mortgageAmount = totalPrice * (1 - mortgage.downPaymentPct / 100);
-  const payment = monthlyPayment(mortgageAmount, mortgage.tin, mortgage.termYears * 12);
+  const downPct = mortgage.downPaymentPct;
+  const maxLtv = mortgage.maxLtv;
+  const desiredMortgage = totalPrice * (1 - downPct / 100);
+  const maxMortgageByLtv = totalPrice * (maxLtv / 100);
+  const effectiveMortgage = Math.min(desiredMortgage, maxMortgageByLtv);
+  const effectiveDown = totalPrice - effectiveMortgage;
+  const ltvCapped = desiredMortgage > maxMortgageByLtv + 0.01;
+  const effectiveLtv = totalPrice > 0 ? effectiveMortgage / totalPrice : 0;
+  const payment = monthlyPayment(effectiveMortgage, mortgage.tin, mortgage.termYears * 12);
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Hipoteca y financiación</h2>
-      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Configura las condiciones. Los perfiles son editables.</p>
+      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Configura las condiciones. La entrada depende del LTV máximo que concede el banco, no del tipo de vivienda.</p>
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Condiciones</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <NumberField label="Entrada (%)" tooltip="Porcentaje aportado de tu bolsillo. El banco financia el resto hasta el LTV máximo. Habitual 20%." value={mortgage.downPaymentPct} onChange={v => u('downPaymentPct', v)} suffix="%" min={0} max={100} step={1} help={`≈ ${fmtEur(totalPrice * mortgage.downPaymentPct / 100)}`} />
+          <NumberField
+            label="Aportación inicial (% del precio)"
+            tooltip="Porcentaje del precio total que pagas tú de tu bolsillo. El banco financiará el resto hasta el LTV máximo configurado. Habitual 20% en primera vivienda (el banco financia 80%)."
+            value={mortgage.downPaymentPct}
+            onChange={v => u('downPaymentPct', v)}
+            suffix="%" min={0} max={100} step={1}
+            help={`→ Aportas ${fmtEur(totalPrice * downPct / 100)} · Banzo financia el ${100 - downPct}%`}
+          />
           <NumberField label="Plazo (años)" tooltip="Duración. Más plazo = cuota menor pero más intereses y mayor edad al vencimiento. Habitual 25–30 años." value={mortgage.termYears} onChange={v => u('termYears', v)} min={1} max={40} suffix="años" />
           <SelectField label="Tipo de interés" tooltip="Fijo: TIN constante. Variable: Euríbor + diferencial revisable. Mixto: tramo fijo + variable." value={mortgage.type} onChange={v => u('type', v)} options={[{ value: 'fijo', label: 'Fijo' }, { value: 'variable', label: 'Variable' }, { value: 'mixto', label: 'Mixto' }]} />
           <NumberField label="TIN anual" tooltip="Tipo de Interés Nominal anual. En fijo el pactado; en variable el vigente actual." value={mortgage.tin} onChange={v => u('tin', v)} suffix="%" min={0} max={20} step={0.05} />
@@ -1273,24 +1296,32 @@ const MortgageSection = ({ mortgage, setMortgage, property }) => {
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Criterios del banco (editables)</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <NumberField label="LTV máximo" tooltip="Loan-to-Value: % máximo del inmueble que el banco financia. Habitual 80% primera vivienda, 70% segunda." value={mortgage.maxLtv} onChange={v => u('maxLtv', v)} suffix="%" min={0} max={100} step={1} />
+          <NumberField label="LTV máximo" tooltip="Loan-to-Value: % máximo del precio que el banco financia. Habitual 80% primera vivienda, 70% segunda. Editable según entidad y perfil." value={mortgage.maxLtv} onChange={v => u('maxLtv', v)} suffix="%" min={0} max={100} step={1} />
           <NumberField label="Edad máxima al vencimiento" tooltip="Edad máxima del titular al terminar la hipoteca. Habitual 70–75 años." value={mortgage.maxAgeAtMaturity} onChange={v => u('maxAgeAtMaturity', v)} suffix="años" min={50} max={90} />
           <NumberField label="Umbral endeudamiento" tooltip="Ratio máximo cuotas/ingresos computables. Habitual 0,35 (35%)." value={mortgage.debtThreshold} onChange={v => u('debtThreshold', v)} step={0.01} min={0.1} max={0.6} help={`${(mortgage.debtThreshold*100).toFixed(0)}%`} />
         </div>
       </Card>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <KPI label="Hipoteca estimada" value={fmtEur(mortgageAmount)} />
+
+      {ltvCapped && (
+        <div className="mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-200">
+          ⚠️ Has pedido una aportación inicial del <strong>{downPct}%</strong>, pero el LTV máximo configurado es del <strong>{maxLtv}%</strong>. La hipoteca se recorta al máximo permitido: financiación real del <strong>{fmtPct(effectiveLtv, 0)}</strong>.
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <KPI label="Aportación inicial" value={fmtEur(effectiveDown)} sub={`${fmtPct(effectiveDown / (totalPrice||1), 0)} del precio`} color="brand" />
+        <KPI label="Hipoteca" value={fmtEur(effectiveMortgage)} sub={`LTV ${fmtPct(effectiveLtv, 0)}`} />
         <KPI label="Cuota mensual" value={fmtEur2(payment)} color="brand" />
-        <KPI label="Entrada" value={fmtEur(totalPrice - mortgageAmount)} />
+        <KPI label="Precio total" value={fmtEur(totalPrice)} />
       </div>
     </div>
   );
 };
 
 /* ---------- RESULTADOS ---------- */
-const Row = ({ label, value, bold, color }) => (
+const Row = ({ label, value, bold, color, negative }) => (
   <div className={"flex justify-between " + (bold?'font-bold pt-2 border-t border-slate-200 dark:border-slate-800 ':'') + (color === 'emerald' ? 'text-emerald-600' : color === 'red' ? 'text-red-600' : '')}>
-    <span>{label}</span><span>{fmtEur(value)}</span>
+    <span>{label}</span><span>{negative ? '−' : ''}{fmtEur(value)}</span>
   </div>
 );
 
@@ -1467,7 +1498,7 @@ const ResultsSection = ({ state, result, maxPrice }) => {
   const [tab, setTab] = useState('summary');
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#0ea5e9', '#ec4899'];
   const pieData = [
-    { name: 'Entrada', value: Math.max(0, result.downPayment) },
+    { name: 'Aportación inicial', value: Math.max(0, result.downPayment) },
     { name: 'Hipoteca', value: result.mortgageAmount },
   ];
   const costPie = [
@@ -1528,14 +1559,18 @@ const ResultsSection = ({ state, result, maxPrice }) => {
         </div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <KPI label="Precio analizado" value={fmtEur(result.totalPrice)} />
+        <KPI label="Precio total" value={fmtEur(result.totalPrice)} />
         <KPI label="Precio máximo" value={fmtEur(maxPrice.all)} color="brand" sub="todas las restricciones" />
-        <KPI label="Hipoteca" value={fmtEur(result.mortgageAmount)} sub={`LTV ${fmtPct(result.ltv)}`} />
-        <KPI label="Entrada" value={fmtEur(result.downPayment)} sub={`${state.mortgage.downPaymentPct}%`} />
+        <KPI label="Aportación inicial" value={fmtEur(result.downPayment)} sub={`${fmtPct(result.totalPrice > 0 ? result.downPayment / result.totalPrice : 0, 0)} del precio`} color="brand" />
+        <KPI label="Hipoteca" value={fmtEur(result.mortgageAmount)} sub={`LTV ${fmtPct(result.effectiveLtv, 0)}`} />
         <KPI label="Cuota mensual" value={fmtEur2(result.payment)} color="brand" />
         <KPI label="Ratio endeudamiento" value={fmtPct(result.ratioAfter)} color={result.ratioOk ? 'emerald' : 'red'} sub={`Umbral ${fmtPct(result.threshold)}`} />
         <KPI label="Margen mensual" value={fmtEur(result.monthlyMargin)} color={result.monthlyMargin > 0 ? 'emerald' : 'red'} sub={props.rentalNetMonthly > 0 ? `Incl. alquileres: ${fmtEur(props.rentalNetMonthly)}` : null} />
-        <KPI label="Necesario" value={fmtEur(result.totalNeeded)} color={result.liquidityGap <= 0 ? 'emerald' : 'red'} sub={`Disponible: ${fmtEur(result.available)}${result.liquidFromSalesBefore > 0 ? ` (incl. ventas ${fmtEur(result.liquidFromSalesBefore)})` : ''}`} />
+        <KPI label="Gastos de compra" value={fmtEur(result.acquisitionCosts)} color={result.liquidityOkWithoutReserve ? 'emerald' : 'red'} sub={`Se paga al vendedor, banco e impuestos`} />
+        <KPI label="Reserva de emergencia" value={fmtEur(result.emergencyReserve)} sub="No se paga; se conserva" />
+        <KPI label="Total a tener" value={fmtEur(result.totalRequired)} sub={`Gastos + reserva`} />
+        <KPI label="Disponible" value={fmtEur(result.available)} color={result.liquidityGap <= 0 ? 'emerald' : 'red'} sub={result.liquidFromSalesBefore > 0 ? `Incl. ventas: ${fmtEur(result.liquidFromSalesBefore)}` : null} />
+        <KPI label="Déficit / Excedente" value={fmtEur(-result.liquidityGap)} color={result.liquidityGap <= 0 ? 'emerald' : 'red'} sub={result.liquidityGapWithoutReserve > 0 ? `Sin contar reserva: ${fmtEur(-result.liquidityGapWithoutReserve)}` : 'Cubre gastos y reserva'} />
       </div>
       <div className="flex flex-wrap gap-2 mb-4">
         {tabs.map(([k,l]) => (
@@ -1545,7 +1580,7 @@ const ResultsSection = ({ state, result, maxPrice }) => {
       {tab === 'summary' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <Card className="p-5">
-            <h4 className="font-semibold mb-3">Distribución entrada / hipoteca</h4>
+            <h4 className="font-semibold mb-3">Distribución aportación / hipoteca</h4>
             <DonutChart data={pieData} colors={COLORS} />
           </Card>
           <Card className="p-5">
@@ -1667,31 +1702,48 @@ const ResultsSection = ({ state, result, maxPrice }) => {
         </div>
       )}
       {tab === 'costs' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Card className="p-5">
-            <h4 className="font-semibold mb-3">Desglose de gastos de compra</h4>
-            <div className="space-y-2 text-sm">
-              <Row label="Precio vivienda" value={result.price} />
-              <Row label="Anexos (garaje/trastero)" value={result.anexos} />
-              <Row label="ITP" value={result.acq.itp} />
-              <Row label="IVA" value={result.acq.iva} />
-              <Row label="AJD" value={result.acq.ajd} />
-              <Row label="Notaría + Registro + Tasación + Gestoría" value={result.acq.fixed} />
-              <Row label="Comisión inmobiliaria" value={result.acq.agency} />
-              <Row label="Reformas + Mobiliario" value={(result.reforms||0)+(result.furniture||0)} />
-              <Row label="Apertura hipoteca" value={result.openingFee} />
-              <Row label="Reserva de emergencia" value={state.buyers.reduce((s,b) => s + (Number(b.savings.emergencyReserve)||0), 0)} />
-              <Row label="Total necesario" value={result.totalNeeded} bold />
-              <Row label="Disponible (líquido)" value={result.baseAvailable} />
-              {result.liquidFromSalesBefore > 0 && <Row label="+ Ventas antes" value={result.liquidFromSalesBefore} />}
-              <Row label="Disponible total" value={result.available} bold />
-              <Row label="Déficit / Excedente" value={-result.liquidityGap} bold color={result.liquidityGap <= 0 ? 'emerald' : 'red'} />
-            </div>
-          </Card>
-          <Card className="p-5">
-            <h4 className="font-semibold mb-3">Composición de gastos</h4>
-            <DonutChart data={costPie} colors={COLORS} size={220} />
-          </Card>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Card className="p-5">
+              <h4 className="font-semibold mb-1">Desglose de la operación</h4>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">Distingue lo que se <strong>paga</strong> de lo que se <strong>conserva</strong>.</p>
+              <div className="space-y-2 text-sm">
+                <div className="text-xs uppercase text-slate-500 font-semibold mt-2">Se paga al vendedor, banco e impuestos</div>
+                <Row label="Aportación inicial (entrada)" value={result.downPayment} />
+                <Row label="ITP" value={result.acq.itp} />
+                <Row label="IVA" value={result.acq.iva} />
+                <Row label="AJD" value={result.acq.ajd} />
+                <Row label="Notaría + Registro + Tasación + Gestoría" value={result.acq.fixed} />
+                <Row label="Comisión inmobiliaria" value={result.acq.agency} />
+                <Row label="Reformas + Mobiliario" value={(result.reforms||0)+(result.furniture||0)} />
+                <Row label="Apertura hipoteca" value={result.openingFee} />
+                <Row label="Gastos de compra (subtotal)" value={result.acquisitionCosts} bold />
+                <div className="text-xs uppercase text-slate-500 font-semibold mt-4">Se conserva en tu cuenta</div>
+                <Row label="Reserva de emergencia" value={result.emergencyReserve} />
+                <Row label="Total a tener disponible" value={result.totalRequired} bold />
+                <div className="text-xs uppercase text-slate-500 font-semibold mt-4">Tu situación</div>
+                <Row label="Disponible (líquido + ventas antes)" value={result.available} />
+                <Row label="Déficit / Excedente total" value={-result.liquidityGap} bold color={result.liquidityGap <= 0 ? 'emerald' : 'red'} />
+                {result.liquidityGap > 0 && result.liquidityGapWithoutReserve <= 0 && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 pt-2">
+                    ℹ️ Cubres los gastos de compra, pero te falta liquidez para la reserva de emergencia deseada. Puedes reducir la reserva sin comprometer la operación.
+                  </p>
+                )}
+                {result.liquidityGapWithoutReserve > 0 && (
+                  <p className="text-xs text-red-600 dark:text-red-400 pt-2">
+                    ⚠️ Ni siquiera cubres los gastos mínimos de compra. Necesitas reducir el precio, aumentar los ahorros o cambiar las condiciones.
+                  </p>
+                )}
+              </div>
+            </Card>
+            <Card className="p-5">
+              <h4 className="font-semibold mb-3">Composición de gastos de compra</h4>
+              <DonutChart data={costPie} colors={COLORS} size={220} />
+              <div className="mt-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-xs text-slate-600 dark:text-slate-300">
+                <strong>ℹ️ Aclaración:</strong> la <em>aportación inicial</em> es la parte del precio que no financia el banco (100% − LTV). Los <em>impuestos y gastos</em> son obligatorios aparte, independientemente del tipo de vivienda. La <em>reserva de emergencia</em> es dinero que decides no gastar; se suma al "Total a tener" pero no a los gastos.
+              </div>
+            </Card>
+          </div>
         </div>
       )}
       {tab === 'amort' && (
@@ -1788,7 +1840,7 @@ const SavedSection = ({ state, setState, list, setList }) => {
   const exportAll = () => {
     const payload = {
       _type: 'simulador_hipoteca_backup',
-      _version: 4,
+      _version: 5,
       exportedAt: new Date().toISOString(),
       current: state,
       saved: list,
@@ -1800,7 +1852,7 @@ const SavedSection = ({ state, setState, list, setList }) => {
   const exportCurrent = () => {
     const payload = {
       _type: 'simulador_hipoteca_current',
-      _version: 4,
+      _version: 5,
       exportedAt: new Date().toISOString(),
       state,
     };
@@ -1813,7 +1865,7 @@ const SavedSection = ({ state, setState, list, setList }) => {
     if (!s) return;
     const payload = {
       _type: 'simulador_hipoteca_single',
-      _version: 4,
+      _version: 5,
       exportedAt: new Date().toISOString(),
       simulation: s,
     };
