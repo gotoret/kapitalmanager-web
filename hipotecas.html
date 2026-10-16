@@ -1,0 +1,1319 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Simulador de Viabilidad Hipotecaria · España</title>
+<meta name="description" content="Herramienta profesional para analizar la viabilidad económica y bancaria de comprar una vivienda en España." />
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        colors: {
+          brand: {
+            50:'#eef2ff',100:'#e0e7ff',200:'#c7d2fe',300:'#a5b4fc',400:'#818cf8',
+            500:'#6366f1',600:'#4f46e5',700:'#4338ca',800:'#3730a3',900:'#312e81'
+          }
+        },
+        fontFamily: { sans: ['Inter','system-ui','sans-serif'] }
+      }
+    }
+  }
+</script>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+  html { scroll-behavior: smooth; }
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .card { @apply bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm; }
+  .input { @apply w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition text-sm; }
+  .label { @apply block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1; }
+  .help { @apply text-xs text-slate-500 dark:text-slate-400 mt-1; }
+  .btn { @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-500; }
+  .btn-primary { @apply btn bg-brand-600 hover:bg-brand-700 text-white; }
+  .btn-ghost { @apply btn bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200; }
+  .btn-danger { @apply btn bg-red-50 hover:bg-red-100 text-red-600 dark:bg-red-900/30 dark:hover:bg-red-900/50 dark:text-red-300; }
+  .section-title { @apply text-xl font-semibold text-slate-900 dark:text-white mb-1; }
+  .section-sub { @apply text-sm text-slate-500 dark:text-slate-400 mb-6; }
+  .kpi-label { @apply text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400 font-medium; }
+  .kpi-value { @apply text-2xl font-bold text-slate-900 dark:text-white mt-1; }
+  .tab { @apply flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition; }
+  .tab-active { @apply bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-200; }
+  .badge { @apply inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium; }
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  .dark .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; }
+  @media print { .no-print { display: none !important; } }
+</style>
+</head>
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 transition-colors">
+
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react,typescript">
+const { useState, useMemo, useEffect, useRef, useCallback } = React;
+const { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } = Recharts;
+
+/* =========================================================
+   FORMATEO
+========================================================= */
+const fmtEur = (n) => {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n);
+};
+const fmtEur2 = (n) => {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+};
+const fmtPct = (n, d=1) => {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return new Intl.NumberFormat('es-ES', { style: 'percent', minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
+};
+const fmtNum = (n, d=0) => {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
+};
+
+/* =========================================================
+   MOTOR FINANCIERO (puro)
+========================================================= */
+const monthlyPayment = (principal, annualRatePct, months) => {
+  if (months <= 0) return 0;
+  if (principal <= 0) return 0;
+  const r = annualRatePct / 100 / 12;
+  if (r === 0) return principal / months;
+  const f = Math.pow(1 + r, months);
+  return (principal * r * f) / (f - 1);
+};
+
+const amortizationSchedule = (principal, annualRatePct, months) => {
+  const payment = monthlyPayment(principal, annualRatePct, months);
+  const r = annualRatePct / 100 / 12;
+  let balance = principal;
+  const rows = [];
+  for (let m = 1; m <= months; m++) {
+    const interest = balance * r;
+    const principalPart = Math.min(payment - interest, balance);
+    balance = Math.max(0, balance - principalPart);
+    rows.push({ month: m, payment, interest, principal: principalPart, balance });
+  }
+  return rows;
+};
+
+const totalInterest = (rows) => rows.reduce((s, r) => s + r.interest, 0);
+
+/* Impuestos por CCAA (ITP vivienda usada). Valores orientativos — editables en la app. */
+const ITP_BY_REGION = {
+  'Andalucía': 7, 'Aragón': 8, 'Asturias': 8, 'Baleares': 8, 'Canarias': 6.5,
+  'Cantabria': 10, 'Castilla-La Mancha': 9, 'Castilla y León': 8, 'Cataluña': 10,
+  'Extremadura': 8, 'Galicia': 8, 'La Rioja': 7, 'Madrid': 6, 'Murcia': 8,
+  'Navarra': 6, 'País Vasco': 4, 'Comunidad Valenciana': 10, 'Ceuta': 6, 'Melilla': 6
+};
+
+const REGIONS = Object.keys(ITP_BY_REGION);
+
+/* Cálculo de gastos de adquisición */
+const computeAcquisitionCosts = (params) => {
+  const {
+    price, isNew, region, itpPct, ivaPct, ajdPct,
+    notary, registry, appraisal, gestoria, agencyFee, otherCosts,
+    useManual
+  } = params;
+
+  const itp = !isNew ? price * (useManual ? itpPct : (ITP_BY_REGION[region] ?? 8)) / 100 : 0;
+  const iva = isNew ? price * (useManual ? ivaPct : 10) / 100 : 0;
+  const ajd = isNew ? price * (useManual ? ajdPct : 1.5) / 100 : 0;
+  const fixed = (notary||0) + (registry||0) + (appraisal||0) + (gestoria||0);
+  const agency = agencyFee || 0;
+  const other = otherCosts || 0;
+  const total = itp + iva + ajd + fixed + agency + other;
+
+  return { itp, iva, ajd, fixed, agency, other, total };
+};
+
+/* Ingresos computables */
+const computeComputableIncome = (buyers) => {
+  return buyers.reduce((sum, b) => {
+    const salary = (b.monthlyNetSalary || 0) * ((b.computablePct?.salary ?? 100) / 100);
+    const variable = (b.variableIncome || 0) * ((b.computablePct?.variable ?? 80) / 100);
+    const rental = (b.rentalIncome || 0) * ((b.computablePct?.rental ?? 80) / 100);
+    const other = (b.otherIncome || 0) * ((b.computablePct?.other ?? 100) / 100);
+    return sum + salary + variable + rental + other;
+  }, 0);
+};
+
+const computeRawIncome = (buyers) => {
+  return buyers.reduce((s, b) =>
+    s + (b.monthlyNetSalary||0) + (b.variableIncome||0) + (b.rentalIncome||0) + (b.otherIncome||0), 0);
+};
+
+const computeLiquidSavings = (s) => {
+  let total = (s.cash||0) + (s.deposits||0) + (s.funds||0) + (s.stocks||0) + (s.crypto||0) + (s.otherLiquid||0);
+  if (s.pensionAvailable) total += (s.pensionPlans||0);
+  return total;
+};
+
+const computeTotalPatrimony = (s) => {
+  return (s.cash||0) + (s.deposits||0) + (s.funds||0) + (s.stocks||0) + (s.crypto||0)
+       + (s.pensionPlans||0) + (s.otherLiquid||0) + (s.otherIlliquid||0);
+};
+
+const computeDebtTotal = (debts) => debts.reduce((s, d) => s + (d.monthlyPayment || 0), 0);
+
+const computeMonthlyExpenses = (e) => {
+  return Object.values(e).reduce((s, v) => s + (Number(v)||0), 0);
+};
+
+/* Edad al vencimiento */
+const ageAtMaturity = (birthDateISO, termYears) => {
+  if (!birthDateISO) return null;
+  const birth = new Date(birthDateISO);
+  if (isNaN(birth.getTime())) return null;
+  const today = new Date();
+  const ageNow = (today - birth) / (365.25 * 24 * 3600 * 1000);
+  return ageNow + termYears;
+};
+
+/* =========================================================
+   EVALUACIÓN COMPLETA DE UNA OPERACIÓN
+========================================================= */
+const evaluateOperation = (state, override = {}) => {
+  const price = override.price ?? state.property.price;
+  const termYears = override.termYears ?? state.mortgage.termYears;
+  const tin = override.tin ?? state.mortgage.tin;
+  const buyers = state.buyers;
+  const debts = state.debts;
+  const expenses = state.monthlyExpenses;
+  const savings = state.savings;
+  const m = state.mortgage;
+  const tax = state.tax;
+
+  const months = termYears * 12;
+  const downPaymentPct = override.downPaymentPct ?? m.downPaymentPct;
+  const maxLtv = override.maxLtv ?? m.maxLtv;
+
+  // Gastos adquisición sobre el precio de la vivienda
+  const acq = computeAcquisitionCosts({
+    price, isNew: state.property.isNew, region: state.property.region,
+    itpPct: tax.itpPct, ivaPct: tax.ivaPct, ajdPct: tax.ajdPct,
+    notary: tax.notary, registry: tax.registry, appraisal: tax.appraisal, gestoria: tax.gestoria,
+    agencyFee: state.property.agencyFee, otherCosts: state.property.otherInitialCosts,
+    useManual: tax.mode === 'manual'
+  });
+
+  const reforms = state.property.reforms || 0;
+  const furniture = state.property.furniture || 0;
+  const anexos = (state.property.garagePrice||0) + (state.property.storagePrice||0);
+  const totalPrice = price + anexos;
+
+  const maxMortgageByLtv = totalPrice * (maxLtv / 100);
+  const desiredMortgage = totalPrice * (1 - downPaymentPct / 100);
+  const mortgageAmount = Math.max(0, Math.min(desiredMortgage, maxMortgageByLtv));
+
+  const openingFee = mortgageAmount * (m.openingFeePct || 0) / 100;
+  const linkedAnnual = m.linkedProductsAnnual || 0;
+
+  const totalNeeded = totalPrice - mortgageAmount + acq.total + reforms + furniture + openingFee + (savings.emergencyReserve || 0);
+  const available = Math.min(computeLiquidSavings(savings), savings.willingToUse || computeLiquidSavings(savings));
+  const liquidityGap = totalNeeded - available;
+
+  const payment = monthlyPayment(mortgageAmount, tin, months);
+  const schedule = amortizationSchedule(mortgageAmount, tin, months);
+  const interestTotal = totalInterest(schedule);
+
+  const computableIncome = computeComputableIncome(buyers);
+  const rawIncome = computeRawIncome(buyers);
+  const existingDebt = computeDebtTotal(debts);
+  const monthlyExpenses = computeMonthlyExpenses(expenses);
+
+  const ratioBefore = computableIncome > 0 ? existingDebt / computableIncome : 0;
+  const totalDebtAfter = existingDebt + payment;
+  const ratioAfter = computableIncome > 0 ? totalDebtAfter / computableIncome : 0;
+  const monthlyMargin = computableIncome - totalDebtAfter - monthlyExpenses - (linkedAnnual/12);
+
+  const maxAge = m.maxAgeAtMaturity || 75;
+  const agesAtMat = buyers.map(b => ageAtMaturity(b.birthDate, termYears)).filter(x => x !== null);
+  const ageOk = agesAtMat.length === 0 || agesAtMat.every(a => a <= maxAge);
+  const maxAgeReached = agesAtMat.length ? Math.max(...agesAtMat) : null;
+
+  const threshold = m.debtThreshold ?? 0.35;
+  const ratioOk = ratioAfter <= threshold;
+  const liquidityOk = liquidityGap <= 0;
+  const ltvOk = mortgageAmount <= maxMortgageByLtv + 0.01;
+
+  const allOk = ratioOk && liquidityOk && ltvOk && ageOk;
+
+  const reasons = [];
+  if (!ratioOk) reasons.push(`Ratio de endeudamiento ${fmtPct(ratioAfter)} > umbral ${fmtPct(threshold)}`);
+  if (!liquidityOk) reasons.push(`Faltan ${fmtEur(-liquidityGap)} para cubrir gastos`);
+  if (!ltvOk) reasons.push(`LTV supera el máximo del ${maxLtv}%`);
+  if (!ageOk) reasons.push(`Edad al vencimiento ${maxAgeReached ? maxAgeReached.toFixed(1) : '?'} años > ${maxAge}`);
+
+  // Veredicto
+  let verdict, verdictLabel, verdictColor;
+  if (!computableIncome || !price) {
+    verdict = 'insufficient';
+    verdictLabel = 'Datos insuficientes';
+    verdictColor = 'slate';
+  } else if (allOk && monthlyMargin > computableIncome * 0.10) {
+    verdict = 'viable';
+    verdictLabel = 'Viable según criterios configurados';
+    verdictColor = 'emerald';
+  } else if (allOk) {
+    verdict = 'conditional';
+    verdictLabel = 'Viable con margen reducido';
+    verdictColor = 'amber';
+  } else if (ratioOk && !liquidityOk) {
+    verdict = 'conditional';
+    verdictLabel = 'Viable si se resuelve la liquidez';
+    verdictColor = 'amber';
+  } else {
+    verdict = 'not_viable';
+    verdictLabel = 'No viable con los datos actuales';
+    verdictColor = 'red';
+  }
+
+  return {
+    price, totalPrice, anexos, mortgageAmount, downPayment: totalPrice - mortgageAmount,
+    acq, reforms, furniture, openingFee, totalNeeded, available, liquidityGap,
+    payment, schedule, interestTotal, months, tin, maxLtv,
+    computableIncome, rawIncome, existingDebt, monthlyExpenses, totalDebtAfter,
+    ratioBefore, ratioAfter, monthlyMargin, threshold, linkedAnnual,
+    ageOk, maxAgeReached, maxAge, ratioOk, liquidityOk, ltvOk, allOk,
+    verdict, verdictLabel, verdictColor, reasons,
+    ltv: totalPrice > 0 ? mortgageAmount / totalPrice : 0
+  };
+};
+
+/* Precio máximo vía búsqueda binaria */
+const computeMaxPrice = (state, binding) => {
+  const evaluate = (p) => {
+    if (p <= 0) return false;
+    const r = evaluateOperation(state, { price: p });
+    if (binding === 'all') return r.allOk;
+    if (binding === 'savings') return r.liquidityGap <= 0;
+    if (binding === 'income') return r.ratioAfter <= r.threshold;
+    if (binding === 'ltv') return r.ltv <= r.maxLtv / 100 + 0.0001;
+    if (binding === 'age') return r.ageOk;
+    return r.allOk;
+  };
+  if (!evaluate(10000)) return 0;
+  let lo = 10000, hi = 5000000;
+  if (evaluate(hi)) return hi;
+  while (hi - lo > 500) {
+    const mid = (lo + hi) / 2;
+    if (evaluate(mid)) lo = mid; else hi = mid;
+  }
+  return Math.floor(lo);
+};
+
+/* =========================================================
+   ESTADO INICIAL
+========================================================= */
+const defaultBuyer = (i) => ({
+  id: 'b' + i + '_' + Math.random().toString(36).slice(2, 7),
+  name: i === 0 ? 'Titular 1' : `Titular ${i+1}`,
+  birthDate: '1985-01-01',
+  region: 'Madrid',
+  dependents: 0,
+  employmentType: 'indefinido',
+  monthlyNetSalary: 2500,
+  variableIncome: 0,
+  rentalIncome: 0,
+  otherIncome: 0,
+  computablePct: { salary: 100, variable: 80, rental: 80, other: 100 }
+});
+
+const INITIAL_STATE = {
+  simName: 'Mi simulación',
+  buyers: [defaultBuyer(0)],
+  savings: {
+    cash: 40000, deposits: 0, funds: 0, stocks: 0, crypto: 0,
+    pensionPlans: 0, otherLiquid: 0, otherIlliquid: 0,
+    willingToUse: 40000, emergencyReserve: 8000, pensionAvailable: false
+  },
+  debts: [],
+  monthlyExpenses: {
+    food: 400, utilities: 150, transport: 150, education: 0,
+    insurance: 80, children: 0, otherHome: 0, other: 100
+  },
+  property: {
+    price: 250000, region: 'Madrid', isNew: false,
+    garagePrice: 0, storagePrice: 0, reforms: 0, furniture: 0,
+    agencyFee: 0, otherInitialCosts: 0
+  },
+  tax: {
+    mode: 'auto',
+    itpPct: 6, ivaPct: 10, ajdPct: 1.5,
+    notary: 900, registry: 500, appraisal: 350, gestoria: 400
+  },
+  mortgage: {
+    downPaymentPct: 20,
+    termYears: 30,
+    type: 'fijo',
+    tin: 3.25,
+    euribor: 3.5, spread: 1.0, revisionMonths: 12,
+    fixedYears: 5, postFixedTin: 4.0,
+    openingFeePct: 0.5,
+    linkedProductsAnnual: 600,
+    maxLtv: 80,
+    maxAgeAtMaturity: 75,
+    debtThreshold: 0.35
+  }
+};
+
+/* =========================================================
+   PERSISTENCIA
+========================================================= */
+const LS_KEY = 'simulador_hipoteca_v1';
+const LS_LIST = 'simulador_hipoteca_list_v1';
+
+const loadCurrent = () => {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) return { ...INITIAL_STATE, ...JSON.parse(raw) };
+  } catch(e) {}
+  return INITIAL_STATE;
+};
+const loadList = () => {
+  try { return JSON.parse(localStorage.getItem(LS_LIST) || '{}'); } catch(e) { return {}; }
+};
+
+/* =========================================================
+   COMPONENTES UI
+========================================================= */
+const NumberField = ({ label, value, onChange, help, suffix, min, max, step=1, placeholder }) => (
+  <div>
+    {label && <label className="label">{label}</label>}
+    <div className="relative">
+      <input
+        type="number" className="input" value={value ?? ''}
+        min={min} max={max} step={step} placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
+      />
+      {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">{suffix}</span>}
+    </div>
+    {help && <p className="help">{help}</p>}
+  </div>
+);
+
+const TextField = ({ label, value, onChange, help }) => (
+  <div>
+    {label && <label className="label">{label}</label>}
+    <input type="text" className="input" value={value ?? ''} onChange={e => onChange(e.target.value)} />
+    {help && <p className="help">{help}</p>}
+  </div>
+);
+
+const DateField = ({ label, value, onChange, help }) => (
+  <div>
+    {label && <label className="label">{label}</label>}
+    <input type="date" className="input" value={value || ''} onChange={e => onChange(e.target.value)} />
+    {help && <p className="help">{help}</p>}
+  </div>
+);
+
+const SelectField = ({ label, value, onChange, options, help }) => (
+  <div>
+    {label && <label className="label">{label}</label>}
+    <select className="input" value={value} onChange={e => onChange(e.target.value)}>
+      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+    {help && <p className="help">{help}</p>}
+  </div>
+);
+
+const Toggle = ({ label, checked, onChange, help }) => (
+  <label className="flex items-center gap-3 cursor-pointer select-none">
+    <span className={`relative w-10 h-6 rounded-full transition ${checked ? 'bg-brand-600' : 'bg-slate-300 dark:bg-slate-700'}`}>
+      <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${checked ? 'translate-x-4' : ''}`}></span>
+    </span>
+    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
+    {help && <span className="text-xs text-slate-500 dark:text-slate-400">· {help}</span>}
+  </label>
+);
+
+const KPI = ({ label, value, sub, color='slate' }) => (
+  <div className="card p-4">
+    <div className="kpi-label">{label}</div>
+    <div className={`kpi-value text-${color}-600 dark:text-${color}-400`}>{value}</div>
+    {sub && <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{sub}</div>}
+  </div>
+);
+
+/* =========================================================
+   SECCIONES DE FORMULARIO
+========================================================= */
+const BuyersSection = ({ buyers, setBuyers }) => {
+  const update = (id, patch) => setBuyers(buyers.map(b => b.id === id ? { ...b, ...patch } : b));
+  const updatePct = (id, key, val) => setBuyers(buyers.map(b => b.id === id ? { ...b, computablePct: { ...b.computablePct, [key]: val } } : b));
+
+  const addBuyer = () => {
+    if (buyers.length >= 4) return;
+    setBuyers([...buyers, defaultBuyer(buyers.length)]);
+  };
+  const removeBuyer = (id) => {
+    if (buyers.length <= 1) return;
+    setBuyers(buyers.filter(b => b.id !== id));
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="section-title">Compradores e ingresos</h2>
+          <p className="section-sub">Añade hasta 4 titulares. Diferencia ingreso real de computable.</p>
+        </div>
+        <button className="btn-primary" onClick={addBuyer} disabled={buyers.length>=4}>+ Añadir</button>
+      </div>
+
+      <div className="space-y-6">
+        {buyers.map((b, i) => {
+          const age = b.birthDate ? ((Date.now() - new Date(b.birthDate).getTime()) / (365.25*24*3600*1000)) : null;
+          return (
+            <div key={b.id} className="card p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-slate-900 dark:text-white">Comprador {i+1} {age ? <span className="text-xs font-normal text-slate-500">· {age.toFixed(0)} años</span> : null}</h3>
+                {buyers.length > 1 && (
+                  <button className="btn-danger" onClick={() => removeBuyer(b.id)}>Eliminar</button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <TextField label="Nombre o alias" value={b.name} onChange={v => update(b.id, { name: v })} />
+                <DateField label="Fecha de nacimiento" value={b.birthDate} onChange={v => update(b.id, { birthDate: v })} />
+                <SelectField label="Comunidad autónoma" value={b.region} onChange={v => update(b.id, { region: v })}
+                  options={REGIONS.map(r => ({ value: r, label: r }))} />
+                <NumberField label="Personas dependientes" value={b.dependents} onChange={v => update(b.id, { dependents: v })} min={0} max={10} />
+                <SelectField label="Tipo de empleo" value={b.employmentType} onChange={v => update(b.id, { employmentType: v })}
+                  options={[
+                    { value: 'indefinido', label: 'Indefinido' },
+                    { value: 'temporal', label: 'Temporal' },
+                    { value: 'funcionario', label: 'Funcionario' },
+                    { value: 'autonomo', label: 'Autónomo' },
+                    { value: 'pensionista', label: 'Pensionista' },
+                    { value: 'otro', label: 'Otro' },
+                  ]} />
+              </div>
+
+              <div className="mt-6">
+                <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Ingresos netos mensuales</h4>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <NumberField label="Nómina neta" value={b.monthlyNetSalary} onChange={v => update(b.id, { monthlyNetSalary: v })} suffix="€/mes" min={0} />
+                  <NumberField label="Variables / bonus" value={b.variableIncome} onChange={v => update(b.id, { variableIncome: v })} suffix="€/mes" min={0} />
+                  <NumberField label="Alquileres" value={b.rentalIncome} onChange={v => update(b.id, { rentalIncome: v })} suffix="€/mes" min={0} />
+                  <NumberField label="Otros ingresos" value={b.otherIncome} onChange={v => update(b.id, { otherIncome: v })} suffix="€/mes" min={0} />
+                </div>
+              </div>
+
+              <div className="mt-6">
+                <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">% computable para el banco</h4>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <NumberField label="Nómina" value={b.computablePct.salary} onChange={v => updatePct(b.id, 'salary', v)} suffix="%" min={0} max={100} />
+                  <NumberField label="Variables" value={b.computablePct.variable} onChange={v => updatePct(b.id, 'variable', v)} suffix="%" min={0} max={100} help="Los bancos suelen computar 70–80%" />
+                  <NumberField label="Alquileres" value={b.computablePct.rental} onChange={v => updatePct(b.id, 'rental', v)} suffix="%" min={0} max={100} help="Habitual 70–80%" />
+                  <NumberField label="Otros" value={b.computablePct.other} onChange={v => updatePct(b.id, 'other', v)} suffix="%" min={0} max={100} />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const SavingsSection = ({ savings, setSavings }) => {
+  const u = (k, v) => setSavings({ ...savings, [k]: v });
+  const liquid = computeLiquidSavings(savings);
+  const total = computeTotalPatrimony(savings);
+
+  return (
+    <div>
+      <h2 className="section-title">Ahorros y patrimonio</h2>
+      <p className="section-sub">No todos los activos son líquidos. Diferencia patrimonio total de disponible.</p>
+
+      <div className="card p-5 mb-6">
+        <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Activos líquidos</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <NumberField label="Cuentas bancarias" value={savings.cash} onChange={v => u('cash', v)} suffix="€" min={0} />
+          <NumberField label="Depósitos" value={savings.deposits} onChange={v => u('deposits', v)} suffix="€" min={0} />
+          <NumberField label="Fondos de inversión" value={savings.funds} onChange={v => u('funds', v)} suffix="€" min={0} />
+          <NumberField label="Acciones / ETF" value={savings.stocks} onChange={v => u('stocks', v)} suffix="€" min={0} />
+          <NumberField label="Criptomonedas" value={savings.crypto} onChange={v => u('crypto', v)} suffix="€" min={0} />
+          <NumberField label="Otros líquidos" value={savings.otherLiquid} onChange={v => u('otherLiquid', v)} suffix="€" min={0} />
+        </div>
+      </div>
+
+      <div className="card p-5 mb-6">
+        <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Activos ilíquidos</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <NumberField label="Planes de pensiones" value={savings.pensionPlans} onChange={v => u('pensionPlans', v)} suffix="€" min={0} help="Solo se considera líquido si marcas la casilla inferior" />
+          <NumberField label="Otros bienes" value={savings.otherIlliquid} onChange={v => u('otherIlliquid', v)} suffix="€" min={0} />
+        </div>
+        <div className="mt-4">
+          <Toggle label="¿Puedes disponer del plan de pensiones?" checked={savings.pensionAvailable} onChange={v => u('pensionAvailable', v)} help="rescate anticipado sujeto a tributación" />
+        </div>
+      </div>
+
+      <div className="card p-5 mb-6">
+        <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Asignación a la compra</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <NumberField label="Dinero que destinarás" value={savings.willingToUse} onChange={v => u('willingToUse', v)} suffix="€" min={0} />
+          <NumberField label="Reserva de emergencia" value={savings.emergencyReserve} onChange={v => u('emergencyReserve', v)} suffix="€" min={0} help="Se suma a las necesidades (no se toca)" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <KPI label="Patrimonio total" value={fmtEur(total)} />
+        <KPI label="Patrimonio líquido" value={fmtEur(liquid)} />
+        <KPI label="Disponible para la compra" value={fmtEur(Math.min(liquid, savings.willingToUse || liquid))} color="brand" />
+      </div>
+    </div>
+  );
+};
+
+const DebtsSection = ({ debts, setDebts, monthlyExpenses, setMonthlyExpenses }) => {
+  const add = () => setDebts([...debts, {
+    id: 'd' + Math.random().toString(36).slice(2, 7),
+    type: 'personal', outstanding: 0, monthlyPayment: 0, cancelCost: 0, cancelable: false
+  }]);
+  const update = (id, patch) => setDebts(debts.map(d => d.id === id ? { ...d, ...patch } : d));
+  const remove = (id) => setDebts(debts.filter(d => d.id !== id));
+
+  const typeLabels = {
+    hipoteca: 'Hipoteca', personal: 'Préstamo personal', vehiculo: 'Vehículo',
+    tarjeta: 'Tarjeta de crédito', financiacion: 'Financiación', otro: 'Otra'
+  };
+
+  const ue = (k, v) => setMonthlyExpenses({ ...monthlyExpenses, [k]: v });
+
+  return (
+    <div>
+      <h2 className="section-title">Deudas y gastos mensuales</h2>
+      <p className="section-sub">Las deudas afectan al ratio de endeudamiento; los gastos, al presupuesto familiar.</p>
+
+      <div className="card p-5 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-slate-900 dark:text-white">Deudas</h3>
+          <button className="btn-primary" onClick={add}>+ Añadir deuda</button>
+        </div>
+        {debts.length === 0 ? (
+          <p className="text-sm text-slate-500">Sin deudas registradas.</p>
+        ) : (
+          <div className="space-y-3">
+            {debts.map(d => (
+              <div key={d.id} className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end border-t border-slate-100 dark:border-slate-800 pt-3 first:border-0 first:pt-0">
+                <SelectField label="Tipo" value={d.type} onChange={v => update(d.id, { type: v })}
+                  options={Object.entries(typeLabels).map(([value,label]) => ({ value, label }))} />
+                <NumberField label="Capital" value={d.outstanding} onChange={v => update(d.id, { outstanding: v })} suffix="€" min={0} />
+                <NumberField label="Cuota" value={d.monthlyPayment} onChange={v => update(d.id, { monthlyPayment: v })} suffix="€/mes" min={0} />
+                <NumberField label="Coste cancelar" value={d.cancelCost} onChange={v => update(d.id, { cancelCost: v })} suffix="€" min={0} />
+                <div className="flex items-center h-full pb-2">
+                  <Toggle label="Cancelable" checked={d.cancelable} onChange={v => update(d.id, { cancelable: v })} />
+                </div>
+                <button className="btn-danger" onClick={() => remove(d.id)}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card p-5">
+        <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Gastos familiares mensuales</h3>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <NumberField label="Alimentación" value={monthlyExpenses.food} onChange={v => ue('food', v)} suffix="€" min={0} />
+          <NumberField label="Suministros" value={monthlyExpenses.utilities} onChange={v => ue('utilities', v)} suffix="€" min={0} />
+          <NumberField label="Transporte" value={monthlyExpenses.transport} onChange={v => ue('transport', v)} suffix="€" min={0} />
+          <NumberField label="Educación" value={monthlyExpenses.education} onChange={v => ue('education', v)} suffix="€" min={0} />
+          <NumberField label="Seguros" value={monthlyExpenses.insurance} onChange={v => ue('insurance', v)} suffix="€" min={0} />
+          <NumberField label="Hijos" value={monthlyExpenses.children} onChange={v => ue('children', v)} suffix="€" min={0} />
+          <NumberField label="Otras viviendas" value={monthlyExpenses.otherHome} onChange={v => ue('otherHome', v)} suffix="€" min={0} />
+          <NumberField label="Otros gastos" value={monthlyExpenses.other} onChange={v => ue('other', v)} suffix="€" min={0} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const PropertySection = ({ property, setProperty, tax, setTax, regions }) => {
+  const u = (k, v) => setProperty({ ...property, [k]: v });
+  const ut = (k, v) => setTax({ ...tax, [k]: v });
+
+  const totalPrice = (property.price||0) + (property.garagePrice||0) + (property.storagePrice||0);
+
+  return (
+    <div>
+      <h2 className="section-title">Inmueble y gastos</h2>
+      <p className="section-sub">Precio, anexos y gastos iniciales. Los impuestos son editables — verifica la normativa de tu CCAA.</p>
+
+      <div className="card p-5 mb-6">
+        <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Datos del inmueble</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <NumberField label="Precio de compraventa" value={property.price} onChange={v => u('price', v)} suffix="€" min={0} />
+          <SelectField label="Comunidad autónoma" value={property.region} onChange={v => u('region', v)}
+            options={regions.map(r => ({ value: r, label: r }))} />
+          <SelectField label="Tipo de vivienda" value={property.isNew ? 'new' : 'used'} onChange={v => u('isNew', v === 'new')}
+            options={[{ value: 'used', label: 'Segunda mano (ITP)' }, { value: 'new', label: 'Obra nueva (IVA + AJD)' }]} />
+          <NumberField label="Plaza de garaje" value={property.garagePrice} onChange={v => u('garagePrice', v)} suffix="€" min={0} />
+          <NumberField label="Trastero" value={property.storagePrice} onChange={v => u('storagePrice', v)} suffix="€" min={0} />
+          <NumberField label="Comisión inmobiliaria" value={property.agencyFee} onChange={v => u('agencyFee', v)} suffix="€" min={0} />
+          <NumberField label="Reformas" value={property.reforms} onChange={v => u('reforms', v)} suffix="€" min={0} />
+          <NumberField label="Mobiliario" value={property.furniture} onChange={v => u('furniture', v)} suffix="€" min={0} />
+          <NumberField label="Otros gastos iniciales" value={property.otherInitialCosts} onChange={v => u('otherInitialCosts', v)} suffix="€" min={0} />
+        </div>
+        <div className="mt-4 p-3 rounded-lg bg-brand-50 dark:bg-brand-900/20 text-sm">
+          <strong>Precio total (vivienda + anexos):</strong> {fmtEur(totalPrice)}
+        </div>
+      </div>
+
+      <div className="card p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-slate-900 dark:text-white">Impuestos y gastos de adquisición</h3>
+          <div className="flex gap-2">
+            <button className={`btn ${tax.mode==='auto'?'bg-brand-600 text-white':'btn-ghost'}`} onClick={() => ut('mode', 'auto')}>Automático</button>
+            <button className={`btn ${tax.mode==='manual'?'bg-brand-600 text-white':'btn-ghost'}`} onClick={() => ut('mode', 'manual')}>Manual</button>
+          </div>
+        </div>
+
+        <div className="p-3 mb-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-xs text-amber-800 dark:text-amber-200">
+          ⚠️ Tipos orientativos. La fiscalidad depende de CCAA, fecha, tipo de inmueble y circunstancias del comprador. Verifica siempre con la normativa vigente.
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <NumberField label="ITP (%)" value={tax.itpPct} onChange={v => ut('itpPct', v)} suffix="%" min={0} max={20} step={0.1} help={tax.mode==='auto'?'Solo si marcas Manual':''} />
+          <NumberField label="IVA (%)" value={tax.ivaPct} onChange={v => ut('ivaPct', v)} suffix="%" min={0} max={30} step={0.1} />
+          <NumberField label="AJD (%)" value={tax.ajdPct} onChange={v => ut('ajdPct', v)} suffix="%" min={0} max={5} step={0.1} />
+          <NumberField label="Notaría" value={tax.notary} onChange={v => ut('notary', v)} suffix="€" min={0} />
+          <NumberField label="Registro" value={tax.registry} onChange={v => ut('registry', v)} suffix="€" min={0} />
+          <NumberField label="Tasación" value={tax.appraisal} onChange={v => ut('appraisal', v)} suffix="€" min={0} />
+          <NumberField label="Gestoría" value={tax.gestoria} onChange={v => ut('gestoria', v)} suffix="€" min={0} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MortgageSection = ({ mortgage, setMortgage, property }) => {
+  const u = (k, v) => setMortgage({ ...mortgage, [k]: v });
+  const totalPrice = (property.price||0) + (property.garagePrice||0) + (property.storagePrice||0);
+  const mortgageAmount = totalPrice * (1 - mortgage.downPaymentPct / 100);
+  const payment = monthlyPayment(mortgageAmount, mortgage.tin, mortgage.termYears * 12);
+
+  return (
+    <div>
+      <h2 className="section-title">Hipoteca y financiación</h2>
+      <p className="section-sub">Configura las condiciones. Los perfiles de LTV y plazo son parámetros editables.</p>
+
+      <div className="card p-5 mb-6">
+        <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Condiciones</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <NumberField label="Entrada (%)" value={mortgage.downPaymentPct} onChange={v => u('downPaymentPct', v)} suffix="%" min={0} max={100} step={1} help={`≈ ${fmtEur(totalPrice * mortgage.downPaymentPct / 100)}`} />
+          <NumberField label="Plazo (años)" value={mortgage.termYears} onChange={v => u('termYears', v)} min={1} max={40} suffix="años" />
+          <SelectField label="Tipo de interés" value={mortgage.type} onChange={v => u('type', v)}
+            options={[
+              { value: 'fijo', label: 'Fijo' },
+              { value: 'variable', label: 'Variable' },
+              { value: 'mixto', label: 'Mixto' },
+            ]} />
+          <NumberField label="TIN anual" value={mortgage.tin} onChange={v => u('tin', v)} suffix="%" min={0} max={20} step={0.05} />
+          <NumberField label="Comisión apertura" value={mortgage.openingFeePct} onChange={v => u('openingFeePct', v)} suffix="%" min={0} max={5} step={0.1} />
+          <NumberField label="Productos vinculados (anual)" value={mortgage.linkedProductsAnnual} onChange={v => u('linkedProductsAnnual', v)} suffix="€" min={0} help="Seguros, tarjetas, etc." />
+        </div>
+
+        {mortgage.type !== 'fijo' && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+            <NumberField label="Euríbor" value={mortgage.euribor} onChange={v => u('euribor', v)} suffix="%" min={-1} max={10} step={0.05} />
+            <NumberField label="Diferencial" value={mortgage.spread} onChange={v => u('spread', v)} suffix="%" min={0} max={5} step={0.05} />
+            <NumberField label="Revisión" value={mortgage.revisionMonths} onChange={v => u('revisionMonths', v)} suffix="meses" min={1} max={60} />
+          </div>
+        )}
+
+        {mortgage.type === 'mixto' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+            <NumberField label="Años tramo fijo" value={mortgage.fixedYears} onChange={v => u('fixedYears', v)} suffix="años" min={1} max={30} />
+            <NumberField label="TIN posterior" value={mortgage.postFixedTin} onChange={v => u('postFixedTin', v)} suffix="%" min={0} max={20} step={0.05} />
+          </div>
+        )}
+      </div>
+
+      <div className="card p-5 mb-6">
+        <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Criterios del banco (editables)</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <NumberField label="LTV máximo" value={mortgage.maxLtv} onChange={v => u('maxLtv', v)} suffix="%" min={0} max={100} step={1} help="Habitual 80% primera vivienda" />
+          <NumberField label="Edad máxima al vencimiento" value={mortgage.maxAgeAtMaturity} onChange={v => u('maxAgeAtMaturity', v)} suffix="años" min={50} max={90} />
+          <NumberField label="Umbral endeudamiento" value={mortgage.debtThreshold} onChange={v => u('debtThreshold', v)} suffix="ratio" min={0.1} max={0.6} step={0.01} help={`${(mortgage.debtThreshold*100).toFixed(0)}%`} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <KPI label="Hipoteca estimada" value={fmtEur(mortgageAmount)} />
+        <KPI label="Cuota mensual" value={fmtEur2(payment)} color="brand" />
+        <KPI label="Entrada" value={fmtEur(totalPrice - mortgageAmount)} />
+      </div>
+    </div>
+  );
+};
+
+/* =========================================================
+   SECCIÓN: RESULTADOS
+========================================================= */
+const ResultsSection = ({ state, result, maxPrice }) => {
+  const [tab, setTab] = useState('summary');
+
+  const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#0ea5e9', '#ec4899'];
+
+  const pieData = [
+    { name: 'Entrada', value: Math.max(0, result.downPayment) },
+    { name: 'Hipoteca', value: result.mortgageAmount },
+  ];
+  const costPie = [
+    { name: 'ITP', value: result.acq.itp },
+    { name: 'IVA', value: result.acq.iva },
+    { name: 'AJD', value: result.acq.ajd },
+    { name: 'Notaría + Registro', value: result.acq.fixed },
+    { name: 'Inmobiliaria', value: result.acq.agency },
+    { name: 'Reformas + Mobiliario', value: (result.reforms||0) + (result.furniture||0) },
+    { name: 'Apertura hipoteca', value: result.openingFee },
+  ].filter(x => x.value > 0);
+
+  const yearlyData = useMemo(() => {
+    const s = result.schedule;
+    const years = {};
+    s.forEach(r => {
+      const y = Math.ceil(r.month / 12);
+      if (!years[y]) years[y] = { year: y, interest: 0, principal: 0, balance: 0 };
+      years[y].interest += r.interest;
+      years[y].principal += r.principal;
+      years[y].balance = r.balance;
+    });
+    return Object.values(years);
+  }, [result.schedule]);
+
+  const verdictClasses = {
+    emerald: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800',
+    amber: 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800',
+    red: 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800',
+    slate: 'bg-slate-50 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700',
+  };
+
+  return (
+    <div>
+      <h2 className="section-title">Resultados y análisis</h2>
+      <p className="section-sub">Los cálculos se actualizan al modificar los datos. Los criterios son orientativos, no garantías bancarias.</p>
+
+      {/* Veredicto */}
+      <div className={`card p-5 mb-6 border-2 ${verdictClasses[result.verdictColor]}`}>
+        <div className="flex items-start gap-4">
+          <div className="text-3xl">
+            {result.verdict === 'viable' ? '✅' :
+             result.verdict === 'conditional' ? '⚠️' :
+             result.verdict === 'not_viable' ? '❌' : 'ℹ️'}
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-bold">{result.verdictLabel}</h3>
+            {result.reasons.length > 0 && (
+              <ul className="mt-2 text-sm space-y-1 list-disc list-inside">
+                {result.reasons.map((r, i) => <li key={i}>{r}</li>)}
+              </ul>
+            )}
+            {result.verdict === 'viable' && (
+              <p className="mt-2 text-sm">La operación cumple todos los criterios configurados con margen suficiente.</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <KPI label="Precio analizado" value={fmtEur(result.totalPrice)} />
+        <KPI label="Precio máximo" value={fmtEur(maxPrice.all)} color="brand" sub="búsqueda con todas las restricciones" />
+        <KPI label="Hipoteca" value={fmtEur(result.mortgageAmount)} sub={`LTV ${fmtPct(result.ltv)}`} />
+        <KPI label="Entrada" value={fmtEur(result.downPayment)} sub={`${state.mortgage.downPaymentPct}%`} />
+        <KPI label="Cuota mensual" value={fmtEur2(result.payment)} color="brand" />
+        <KPI label="Ratio endeudamiento"
+             value={fmtPct(result.ratioAfter)}
+             color={result.ratioOk ? 'emerald' : 'red'}
+             sub={`Umbral ${fmtPct(result.threshold)}`} />
+        <KPI label="Margen mensual"
+             value={fmtEur(result.monthlyMargin)}
+             color={result.monthlyMargin > 0 ? 'emerald' : 'red'} />
+        <KPI label="Necesario vs. disponible"
+             value={`${fmtEur(result.totalNeeded)}`}
+             color={result.liquidityGap <= 0 ? 'emerald' : 'red'}
+             sub={`Disponible: ${fmtEur(result.available)} · Gap: ${fmtEur(result.liquidityGap)}`} />
+      </div>
+
+      {/* Tabs */}
+      <div className="flex flex-wrap gap-2 mb-4">
+        {[
+          ['summary','Resumen'], ['costs','Gastos'], ['amort','Amortización'],
+          ['maxprice','Precios máximos'], ['stress','Estrés']
+        ].map(([k,l]) => (
+          <button key={k} className={`tab ${tab===k?'tab-active':''}`} onClick={() => setTab(k)}>{l}</button>
+        ))}
+      </div>
+
+      {tab === 'summary' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="card p-5">
+            <h4 className="font-semibold mb-3">Distribución entrada / hipoteca</h4>
+            <div style={{height: 260}}>
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={60} outerRadius={95} paddingAngle={2} label={({name, value}) => `${name}: ${fmtEur(value)}`}>
+                    {pieData.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}
+                  </Pie>
+                  <Tooltip formatter={v => fmtEur(v)} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="card p-5">
+            <h4 className="font-semibold mb-3">Flujo mensual estimado</h4>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between"><span>Ingresos brutos</span><span>{fmtEur(result.rawIncome)}</span></div>
+              <div className="flex justify-between text-brand-600 dark:text-brand-400"><span>Ingresos computables</span><span>{fmtEur(result.computableIncome)}</span></div>
+              <div className="flex justify-between text-red-600 dark:text-red-400"><span>Deudas existentes</span><span>−{fmtEur(result.existingDebt)}</span></div>
+              <div className="flex justify-between text-red-600 dark:text-red-400"><span>Nueva hipoteca</span><span>−{fmtEur(result.payment)}</span></div>
+              <div className="flex justify-between text-red-600 dark:text-red-400"><span>Gastos familiares</span><span>−{fmtEur(result.monthlyExpenses)}</span></div>
+              <div className="flex justify-between text-red-600 dark:text-red-400"><span>Productos vinculados</span><span>−{fmtEur((result.linkedAnnual||0)/12)}</span></div>
+              <hr className="border-slate-200 dark:border-slate-800" />
+              <div className={`flex justify-between font-bold ${result.monthlyMargin >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                <span>Margen mensual</span><span>{fmtEur(result.monthlyMargin)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'costs' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="card p-5">
+            <h4 className="font-semibold mb-3">Desglose de gastos de compra</h4>
+            <div className="space-y-2 text-sm">
+              <Row label="Precio vivienda" value={result.price} />
+              <Row label="Anexos (garaje/trastero)" value={result.anexos} />
+              <Row label="ITP" value={result.acq.itp} />
+              <Row label="IVA" value={result.acq.iva} />
+              <Row label="AJD" value={result.acq.ajd} />
+              <Row label="Notaría + Registro + Tasación + Gestoría" value={result.acq.fixed} />
+              <Row label="Comisión inmobiliaria" value={result.acq.agency} />
+              <Row label="Reformas + Mobiliario" value={(result.reforms||0)+(result.furniture||0)} />
+              <Row label="Apertura hipoteca" value={result.openingFee} />
+              <Row label="Reserva de emergencia" value={state.savings.emergencyReserve} />
+              <hr className="border-slate-200 dark:border-slate-800" />
+              <Row label="Total necesario" value={result.totalNeeded} bold />
+              <Row label="Disponible" value={result.available} />
+              <Row label="Déficit / Excedente" value={-result.liquidityGap} bold color={result.liquidityGap <= 0 ? 'emerald' : 'red'} />
+            </div>
+          </div>
+          <div className="card p-5">
+            <h4 className="font-semibold mb-3">Composición de gastos</h4>
+            <div style={{height: 300}}>
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie data={costPie} dataKey="value" nameKey="name" outerRadius={100} label={({name, value}) => `${name}: ${fmtEur(value)}`}>
+                    {costPie.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                  </Pie>
+                  <Tooltip formatter={v => fmtEur(v)} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'amort' && (
+        <div className="space-y-4">
+          <div className="card p-5">
+            <h4 className="font-semibold mb-3">Evolución del capital pendiente</h4>
+            <div style={{height: 300}}>
+              <ResponsiveContainer>
+                <AreaChart data={yearlyData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="year" tick={{fontSize: 12}} />
+                  <YAxis tickFormatter={v => fmtEur(v)} tick={{fontSize: 11}} width={90} />
+                  <Tooltip formatter={v => fmtEur(v)} labelFormatter={l => `Año ${l}`} />
+                  <Area type="monotone" dataKey="balance" stroke="#6366f1" fill="#c7d2fe" name="Capital pendiente" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div className="card p-5">
+            <h4 className="font-semibold mb-3">Intereses vs. capital por año</h4>
+            <div style={{height: 300}}>
+              <ResponsiveContainer>
+                <BarChart data={yearlyData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="year" tick={{fontSize: 12}} />
+                  <YAxis tickFormatter={v => fmtEur(v)} tick={{fontSize: 11}} width={90} />
+                  <Tooltip formatter={v => fmtEur(v)} labelFormatter={l => `Año ${l}`} />
+                  <Legend />
+                  <Bar dataKey="interest" stackId="a" fill="#ef4444" name="Intereses" />
+                  <Bar dataKey="principal" stackId="a" fill="#10b981" name="Capital" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div className="card p-5 text-sm">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div><div className="kpi-label">Cuota</div><div className="font-bold">{fmtEur2(result.payment)}</div></div>
+              <div><div className="kpi-label">Intereses totales</div><div className="font-bold">{fmtEur(result.interestTotal)}</div></div>
+              <div><div className="kpi-label">Coste total hipoteca</div><div className="font-bold">{fmtEur(result.mortgageAmount + result.interestTotal)}</div></div>
+              <div><div className="kpi-label">Plazo</div><div className="font-bold">{state.mortgage.termYears} años</div></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'maxprice' && (
+        <div className="card p-5">
+          <h4 className="font-semibold mb-4">Precio máximo por tipo de restricción</h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            <KPI label="Ahorros" value={fmtEur(maxPrice.savings)} />
+            <KPI label="Ingresos" value={fmtEur(maxPrice.income)} />
+            <KPI label="LTV máximo" value={fmtEur(maxPrice.ltv)} />
+            <KPI label="Edad / plazo" value={fmtEur(maxPrice.age)} />
+            <KPI label="Conjunto (todas)" value={fmtEur(maxPrice.all)} color="brand" />
+          </div>
+          <p className="help mt-4">El precio máximo conjunto se calcula con búsqueda binaria sobre una función que verifica <strong>simultáneamente</strong> todas las restricciones. No es una suma, es el mayor precio viable.</p>
+        </div>
+      )}
+
+      {tab === 'stress' && <StressTab state={state} />}
+    </div>
+  );
+};
+
+const Row = ({ label, value, bold, color }) => (
+  <div className={`flex justify-between ${bold?'font-bold pt-2 border-t border-slate-200 dark:border-slate-800':''} ${color === 'emerald' ? 'text-emerald-600' : color === 'red' ? 'text-red-600' : ''}`}>
+    <span>{label}</span><span>{fmtEur(value)}</span>
+  </div>
+);
+
+/* =========================================================
+   ESTRÉS
+========================================================= */
+const StressTab = ({ state }) => {
+  const [rateShock, setRateShock] = useState(0);
+  const [incomeDrop, setIncomeDrop] = useState(0);
+  const [expenseUp, setExpenseUp] = useState(0);
+
+  const base = useMemo(() => evaluateOperation(state), [state]);
+
+  const stressed = useMemo(() => {
+    const s = JSON.parse(JSON.stringify(state));
+    s.mortgage.tin = state.mortgage.tin + rateShock;
+    if (s.mortgage.type === 'mixto') s.mortgage.postFixedTin = state.mortgage.postFixedTin + rateShock;
+    s.buyers = s.buyers.map(b => ({
+      ...b,
+      monthlyNetSalary: b.monthlyNetSalary * (1 - incomeDrop/100),
+      variableIncome: b.variableIncome * (1 - incomeDrop/100),
+      otherIncome: b.otherIncome * (1 - incomeDrop/100),
+    }));
+    s.monthlyExpenses = Object.fromEntries(Object.entries(s.monthlyExpenses).map(([k,v]) => [k, v * (1 + expenseUp/100)]));
+    return evaluateOperation(s);
+  }, [state, rateShock, incomeDrop, expenseUp]);
+
+  const compData = [
+    { name: 'Base', cuota: base.payment, ratio: base.ratioAfter * 100, margen: base.monthlyMargin },
+    { name: 'Estrés', cuota: stressed.payment, ratio: stressed.ratioAfter * 100, margen: stressed.monthlyMargin },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="card p-5">
+        <h4 className="font-semibold mb-4">Pruebas de resistencia</h4>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div>
+            <label className="label">Subida tipos: +{rateShock.toFixed(1)} pp</label>
+            <input type="range" min={0} max={3} step={0.25} value={rateShock} onChange={e => setRateShock(Number(e.target.value))} className="w-full" />
+          </div>
+          <div>
+            <label className="label">Caída ingresos: −{incomeDrop}%</label>
+            <input type="range" min={0} max={50} step={5} value={incomeDrop} onChange={e => setIncomeDrop(Number(e.target.value))} className="w-full" />
+          </div>
+          <div>
+            <label className="label">Subida gastos: +{expenseUp}%</label>
+            <input type="range" min={0} max={50} step={5} value={expenseUp} onChange={e => setExpenseUp(Number(e.target.value))} className="w-full" />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <KPI label="Cuota estresada" value={fmtEur2(stressed.payment)} sub={`Base: ${fmtEur2(base.payment)}`} />
+        <KPI label="Ratio estresado" value={fmtPct(stressed.ratioAfter)} color={stressed.ratioOk ? 'emerald' : 'red'} sub={`Umbral ${fmtPct(stressed.threshold)}`} />
+        <KPI label="Margen estresado" value={fmtEur(stressed.monthlyMargin)} color={stressed.monthlyMargin > 0 ? 'emerald' : 'red'} sub={`Base: ${fmtEur(base.monthlyMargin)}`} />
+      </div>
+
+      <div className="card p-5">
+        <h4 className="font-semibold mb-3">Comparativa base vs. estrés</h4>
+        <div style={{height: 280}}>
+          <ResponsiveContainer>
+            <BarChart data={compData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="name" />
+              <YAxis yAxisId="left" tickFormatter={v => fmtEur(v)} tick={{fontSize: 11}} width={90} />
+              <YAxis yAxisId="right" orientation="right" tickFormatter={v => v.toFixed(0)+'%'} />
+              <Tooltip />
+              <Legend />
+              <Bar yAxisId="left" dataKey="cuota" fill="#6366f1" name="Cuota (€)" />
+              <Bar yAxisId="left" dataKey="margen" fill="#10b981" name="Margen (€)" />
+              <Bar yAxisId="right" dataKey="ratio" fill="#ef4444" name="Ratio (%)" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className={`card p-5 border-2 ${stressed.allOk ? 'border-emerald-300' : 'border-red-300'}`}>
+        <strong>Resultado estresado: {stressed.verdictLabel}</strong>
+        {stressed.reasons.length > 0 && (
+          <ul className="mt-2 text-sm list-disc list-inside">
+            {stressed.reasons.map((r,i) => <li key={i}>{r}</li>)}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/* =========================================================
+   SIMULACIONES GUARDADAS
+========================================================= */
+const SavedSection = ({ state, setState, list, setList }) => {
+  const [name, setName] = useState('');
+  const fileRef = useRef();
+
+  const save = () => {
+    const n = name.trim() || state.simName || 'Simulación ' + new Date().toLocaleString('es-ES');
+    const id = 'sim_' + Date.now();
+    const newList = { ...list, [id]: { id, name: n, savedAt: new Date().toISOString(), state: { ...state, simName: n } } };
+    setList(newList);
+    localStorage.setItem(LS_LIST, JSON.stringify(newList));
+    setName('');
+    alert('Simulación guardada: ' + n);
+  };
+
+  const load = (id) => {
+    const s = list[id];
+    if (!s) return;
+    if (!confirm(`¿Cargar "${s.name}"? Se reemplazará la simulación actual.`)) return;
+    setState({ ...INITIAL_STATE, ...s.state });
+  };
+
+  const del = (id) => {
+    if (!confirm('¿Eliminar esta simulación?')) return;
+    const newList = { ...list };
+    delete newList[id];
+    setList(newList);
+    localStorage.setItem(LS_LIST, JSON.stringify(newList));
+  };
+
+  const exportJson = (id) => {
+    const data = id ? list[id] : { current: state, saved: list };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `simulacion-hipoteca-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importJson = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (data.saved) {
+          const merged = { ...list, ...data.saved };
+          setList(merged);
+          localStorage.setItem(LS_LIST, JSON.stringify(merged));
+          alert('Importadas ' + Object.keys(data.saved).length + ' simulaciones.');
+        } else if (data.current) {
+          setState({ ...INITIAL_STATE, ...data.current });
+          alert('Simulación cargada.');
+        } else {
+          alert('Formato desconocido.');
+        }
+      } catch (err) { alert('Error al leer JSON: ' + err.message); }
+    };
+    reader.readAsText(file);
+  };
+
+  return (
+    <div>
+      <h2 className="section-title">Simulaciones guardadas</h2>
+      <p className="section-sub">Todo se guarda en tu navegador (localStorage). Nada sale de tu dispositivo.</p>
+
+      <div className="card p-5 mb-6">
+        <div className="flex flex-col md:flex-row gap-3">
+          <input className="input flex-1" placeholder="Nombre de la simulación" value={name} onChange={e => setName(e.target.value)} />
+          <button className="btn-primary" onClick={save}>Guardar actual</button>
+          <button className="btn-ghost" onClick={() => exportJson(null)}>Exportar todo</button>
+          <button className="btn-ghost" onClick={() => fileRef.current.click()}>Importar JSON</button>
+          <input ref={fileRef} type="file" accept=".json" hidden onChange={importJson} />
+        </div>
+      </div>
+
+      {Object.keys(list).length === 0 ? (
+        <p className="text-sm text-slate-500">No hay simulaciones guardadas.</p>
+      ) : (
+        <div className="space-y-3">
+          {Object.values(list).sort((a,b) => b.savedAt.localeCompare(a.savedAt)).map(s => (
+            <div key={s.id} className="card p-4 flex flex-col md:flex-row md:items-center gap-3">
+              <div className="flex-1">
+                <div className="font-semibold">{s.name}</div>
+                <div className="text-xs text-slate-500">
+                  {new Date(s.savedAt).toLocaleString('es-ES')} · Precio {fmtEur(s.state.property?.price || 0)}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button className="btn-ghost" onClick={() => load(s.id)}>Cargar</button>
+                <button className="btn-ghost" onClick={() => exportJson(s.id)}>Exportar</button>
+                <button className="btn-danger" onClick={() => del(s.id)}>Eliminar</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* =========================================================
+   APP PRINCIPAL
+========================================================= */
+function App() {
+  const [state, setState] = useState(loadCurrent);
+  const [tab, setTab] = useState('buyers');
+  const [dark, setDark] = useState(() => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false);
+  const [list, setList] = useState(loadList);
+  const [showAviso, setShowAviso] = useState(true);
+
+  useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify(state)); }, [state]);
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark);
+  }, [dark]);
+
+  const result = useMemo(() => evaluateOperation(state), [state]);
+
+  const maxPrice = useMemo(() => ({
+    savings: computeMaxPrice(state, 'savings'),
+    income: computeMaxPrice(state, 'income'),
+    ltv: computeMaxPrice(state, 'ltv'),
+    age: computeMaxPrice(state, 'age'),
+    all: computeMaxPrice(state, 'all'),
+  }), [state]);
+
+  const tabs = [
+    { id: 'buyers', label: 'Compradores', icon: '👥' },
+    { id: 'savings', label: 'Ahorros', icon: '💰' },
+    { id: 'debts', label: 'Deudas y gastos', icon: '📋' },
+    { id: 'property', label: 'Inmueble', icon: '🏠' },
+    { id: 'mortgage', label: 'Hipoteca', icon: '🏦' },
+    { id: 'results', label: 'Resultados', icon: '📊' },
+    { id: 'saved', label: 'Guardadas', icon: '💾' },
+  ];
+
+  // Progreso
+  const progress = useMemo(() => {
+    let done = 0, total = 0;
+    const check = (v) => { total++; if (v) done++; };
+    check(state.buyers.length > 0);
+    state.buyers.forEach(b => { check(b.monthlyNetSalary > 0); check(b.birthDate); });
+    check(state.savings.cash > 0 || state.savings.willingToUse > 0);
+    check(state.property.price > 0);
+    check(state.mortgage.tin >= 0 && state.mortgage.termYears > 0);
+    check(result.computableIncome > 0);
+    return Math.round((done / total) * 100);
+  }, [state, result]);
+
+  return (
+    <div className="min-h-screen flex flex-col lg:flex-row">
+      {/* Sidebar */}
+      <aside className="lg:w-72 lg:fixed lg:inset-y-0 bg-white dark:bg-slate-900 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800 no-print">
+        <div className="p-5 border-b border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-xl bg-brand-600 flex items-center justify-center text-white font-bold">V</div>
+            <div>
+              <div className="font-bold text-slate-900 dark:text-white text-sm">Viabilidad Hipotecaria</div>
+              <div className="text-xs text-slate-500">Simulador España</div>
+            </div>
+          </div>
+        </div>
+
+        <nav className="p-3 space-y-1">
+          {tabs.map(t => (
+            <div key={t.id} className={`tab ${tab === t.id ? 'tab-active' : ''}`} onClick={() => setTab(t.id)}>
+              <span>{t.icon}</span><span>{t.label}</span>
+            </div>
+          ))}
+        </nav>
+
+        <div className="p-5 border-t border-slate-200 dark:border-slate-800">
+          <div className="flex items-center justify-between text-xs text-slate-500 mb-2">
+            <span>Progreso</span><span className="font-semibold">{progress}%</span>
+          </div>
+          <div className="w-full h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+            <div className="h-full bg-brand-600 transition-all" style={{ width: progress + '%' }}></div>
+          </div>
+          <button className="btn-ghost w-full mt-4 justify-center" onClick={() => setDark(!dark)}>
+            {dark ? '☀️ Modo claro' : '🌙 Modo oscuro'}
+          </button>
+        </div>
+      </aside>
+
+      {/* Main */}
+      <main className="lg:ml-72 flex-1 p-4 md:p-8 max-w-6xl mx-auto w-full">
+        {showAviso && (
+          <div className="card p-4 mb-6 border-l-4 border-amber-400 bg-amber-50/50 dark:bg-amber-900/10 no-print">
+            <div className="flex items-start gap-3">
+              <div className="text-xl">ℹ️</div>
+              <div className="flex-1 text-sm text-slate-700 dark:text-slate-300">
+                <strong>Aviso:</strong> esta herramienta es orientativa y no constituye asesoramiento financiero ni fiscal. Los criterios son parámetros configurables. Verifica tipos impositivos y condiciones bancarias con profesionales.
+              </div>
+              <button className="text-slate-400 hover:text-slate-600" onClick={() => setShowAviso(false)}>×</button>
+            </div>
+          </div>
+        )}
+
+        {tab === 'buyers' && <BuyersSection buyers={state.buyers} setBuyers={v => setState({ ...state, buyers: v })} />}
+        {tab === 'savings' && <SavingsSection savings={state.savings} setSavings={v => setState({ ...state, savings: v })} />}
+        {tab === 'debts' && <DebtsSection debts={state.debts} setDebts={v => setState({ ...state, debts: v })} monthlyExpenses={state.monthlyExpenses} setMonthlyExpenses={v => setState({ ...state, monthlyExpenses: v })} />}
+        {tab === 'property' && <PropertySection property={state.property} setProperty={v => setState({ ...state, property: v })} tax={state.tax} setTax={v => setState({ ...state, tax: v })} regions={REGIONS} />}
+        {tab === 'mortgage' && <MortgageSection mortgage={state.mortgage} setMortgage={v => setState({ ...state, mortgage: v })} property={state.property} />}
+        {tab === 'results' && <ResultsSection state={state} result={result} maxPrice={maxPrice} />}
+        {tab === 'saved' && <SavedSection state={state} setState={setState} list={list} setList={setList} />}
+
+        <footer className="mt-12 pt-6 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 no-print">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+            <span>Simulador de Viabilidad Hipotecaria · Los datos se guardan solo en tu navegador.</span>
+            <div className="flex gap-3">
+              <button className="hover:text-brand-600" onClick={() => { if (confirm('¿Resetear todos los datos?')) { localStorage.clear(); setState(INITIAL_STATE); setList({}); } }}>Resetear todo</button>
+            </div>
+          </div>
+        </footer>
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
