@@ -62,11 +62,43 @@ const amortizationSchedule = (principal, annualRatePct, months) => {
 
 const totalInterest = (rows) => rows.reduce((s, r) => s + r.interest, 0);
 
+/* ---------------------------------------------------------
+   ITP por CCAA — tipo GENERAL de vivienda de segunda mano.
+   Valores orientativos vigentes en 2026. Verificar normativa.
+   
+   Notas:
+   - Muchas CCAA tienen tipos reducidos por edad (<35), familia
+     numerosa, discapacidad, VPO o vivienda habitual con límites
+     de precio. Esos NO se aplican aquí; ajústalos en modo Manual.
+   - La Comunidad Valenciana tiene tipo general 9% y un tipo
+     incrementado del 11% sobre la parte que exceda 1.000.000 €.
+     Aquí se aplica el 9% general.
+   - Baleares: tipo general 8%, pero con escalas progresivas que
+     pueden llegar al 13% en tramos altos. Se aplica 8%.
+   - La Rioja: 7% general, con tipos reducidos por edad y VPO.
+   - Cantabria: 10% general, con bonificaciones por edad, familia
+     numerosa y discapacidad.
+--------------------------------------------------------- */
 const ITP_BY_REGION = {
-  'Andalucía': 7, 'Aragón': 8, 'Asturias': 8, 'Baleares': 8, 'Canarias': 6.5,
-  'Cantabria': 10, 'Castilla-La Mancha': 9, 'Castilla y León': 8, 'Cataluña': 10,
-  'Extremadura': 8, 'Galicia': 8, 'La Rioja': 7, 'Madrid': 6, 'Murcia': 8,
-  'Navarra': 6, 'País Vasco': 4, 'Comunidad Valenciana': 10, 'Ceuta': 6, 'Melilla': 6
+  'Andalucía': 7,
+  'Aragón': 8,
+  'Asturias': 8,
+  'Baleares': 8,
+  'Canarias': 6.5,
+  'Cantabria': 10,
+  'Castilla-La Mancha': 9,
+  'Castilla y León': 8,
+  'Cataluña': 10,
+  'Extremadura': 8,
+  'Galicia': 8,
+  'La Rioja': 7,
+  'Madrid': 6,
+  'Murcia': 8,
+  'Navarra': 6,
+  'País Vasco': 4,
+  'Comunidad Valenciana': 9,
+  'Ceuta': 6,
+  'Melilla': 6
 };
 const REGIONS = Object.keys(ITP_BY_REGION);
 
@@ -140,7 +172,10 @@ const evaluateOperation = (state, override = {}) => {
   const linkedAnnual = m.linkedProductsAnnual || 0;
 
   const totalNeeded = totalPrice - mortgageAmount + acq.total + reforms + furniture + openingFee + (savings.emergencyReserve || 0);
-  const available = Math.min(computeLiquidSavings(savings), savings.willingToUse || computeLiquidSavings(savings));
+  const liquidSavings = computeLiquidSavings(savings);
+  const willingToUse = savings.willingToUse;
+  // Si willingToUse es 0/vacío → usar todo el líquido. Si es mayor → limitar al líquido real.
+  const available = (willingToUse > 0) ? Math.min(liquidSavings, willingToUse) : liquidSavings;
   const liquidityGap = totalNeeded - available;
 
   const payment = monthlyPayment(mortgageAmount, tin, months);
@@ -189,7 +224,7 @@ const evaluateOperation = (state, override = {}) => {
 
   return {
     price, totalPrice, anexos, mortgageAmount, downPayment: totalPrice - mortgageAmount,
-    acq, reforms, furniture, openingFee, totalNeeded, available, liquidityGap,
+    acq, reforms, furniture, openingFee, totalNeeded, available, liquidityGap, liquidSavings,
     payment, schedule, interestTotal, months, tin, maxLtv,
     computableIncome, rawIncome, existingDebt, monthlyExpenses: monthlyExpensesTotal, totalDebtAfter,
     ratioBefore, ratioAfter, monthlyMargin, threshold, linkedAnnual,
@@ -311,10 +346,8 @@ const KPI = ({ label, value, sub, color='slate' }) => {
 };
 
 /* =========================================================
-   GRÁFICOS SVG PUROS (sin dependencias)
+   GRÁFICOS SVG PUROS
 ========================================================= */
-
-/* Donut / Pie */
 const DonutChart = ({ data, colors, size=200 }) => {
   const total = data.reduce((s, d) => s + Math.max(0, d.value), 0);
   if (total <= 0) return <div className="text-sm text-slate-500 p-4">Sin datos</div>;
@@ -354,7 +387,6 @@ const DonutChart = ({ data, colors, size=200 }) => {
   );
 };
 
-/* Área de capital pendiente */
 const AreaChartSVG = ({ data, height=240 }) => {
   const W = 600, H = height, P = { t: 20, r: 20, b: 30, l: 80 };
   const iw = W - P.l - P.r, ih = H - P.t - P.b;
@@ -385,7 +417,6 @@ const AreaChartSVG = ({ data, height=240 }) => {
   );
 };
 
-/* Barras apiladas interés/capital por año */
 const StackedBarChart = ({ data, height=260 }) => {
   const W = 600, H = height, P = { t: 20, r: 20, b: 30, l: 80 };
   const iw = W - P.l - P.r, ih = H - P.t - P.b;
@@ -432,7 +463,6 @@ const StackedBarChart = ({ data, height=260 }) => {
   );
 };
 
-/* Barras horizontales simples para comparativas */
 const HBarChart = ({ data, height=200 }) => {
   const max = Math.max(...data.map(d => d.value), 1);
   return (
@@ -514,7 +544,7 @@ const BuyersSection = ({ buyers, setBuyers }) => {
   );
 };
 
-const SavingsSection = ({ savings, setSavings }) => {
+const SavingsSection = ({ savings, setSavings, onUserEditWilling, willingIsCustom }) => {
   const u = (k, v) => setSavings({ ...savings, [k]: v });
   const liquid = computeLiquidSavings(savings);
   const total = computeTotalPatrimony(savings);
@@ -546,14 +576,30 @@ const SavingsSection = ({ savings, setSavings }) => {
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Asignación a la compra</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <NumberField label="Dinero que destinarás" value={savings.willingToUse} onChange={v => u('willingToUse', v)} suffix="€" min={0} />
+          <NumberField
+            label="Dinero que destinarás"
+            value={savings.willingToUse}
+            onChange={v => { onUserEditWilling(); u('willingToUse', v); }}
+            suffix="€" min={0}
+            help={willingIsCustom
+              ? 'Valor personalizado. Pulsa el botón para volver a sincronizar con el líquido total.'
+              : 'Se sincroniza automáticamente con el patrimonio líquido total.'}
+          />
           <NumberField label="Reserva de emergencia" value={savings.emergencyReserve} onChange={v => u('emergencyReserve', v)} suffix="€" min={0} help="Se suma a las necesidades" />
         </div>
+        {willingIsCustom && (
+          <button
+            className="mt-3 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-medium"
+            onClick={() => { setSavings({ ...savings, willingToUse: computeLiquidSavings(savings) }); onUserEditWilling(true, true); }}
+          >
+            ↻ Volver a sincronizar con líquido total
+          </button>
+        )}
       </Card>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KPI label="Patrimonio total" value={fmtEur(total)} />
         <KPI label="Patrimonio líquido" value={fmtEur(liquid)} />
-        <KPI label="Disponible para la compra" value={fmtEur(Math.min(liquid, savings.willingToUse || liquid))} color="brand" />
+        <KPI label="Disponible para la compra" value={fmtEur(savings.willingToUse > 0 ? Math.min(liquid, savings.willingToUse) : liquid)} color="brand" />
       </div>
     </div>
   );
@@ -612,6 +658,7 @@ const PropertySection = ({ property, setProperty, tax, setTax }) => {
   const u = (k, v) => setProperty({ ...property, [k]: v });
   const ut = (k, v) => setTax({ ...tax, [k]: v });
   const totalPrice = (property.price||0) + (property.garagePrice||0) + (property.storagePrice||0);
+  const autoItp = ITP_BY_REGION[property.region] ?? 8;
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Inmueble y gastos</h2>
@@ -643,10 +690,15 @@ const PropertySection = ({ property, setProperty, tax, setTax }) => {
           </div>
         </div>
         <div className="p-3 mb-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-xs text-amber-800 dark:text-amber-200">
-          ⚠️ Tipos orientativos. Verifica la normativa vigente de tu CCAA.
+          ⚠️ Tipos orientativos de vivienda de segunda mano. Muchas CCAA aplican tipos reducidos (jóvenes &lt;35, familia numerosa, VPO, discapacidad) que <strong>no se aplican automáticamente</strong>. Verifica la normativa vigente de tu CCAA y ajústalo en modo Manual si procede.
         </div>
+        {tax.mode === 'auto' && !property.isNew && (
+          <div className="p-3 mb-4 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-xs text-slate-600 dark:text-slate-300">
+            ITP aplicado para <strong>{property.region}</strong>: <strong>{autoItp}%</strong> → {fmtEur((property.price||0) * autoItp / 100)}
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <NumberField label="ITP (%)" value={tax.itpPct} onChange={v => ut('itpPct', v)} suffix="%" min={0} max={20} step={0.1} />
+          <NumberField label="ITP (%)" value={tax.mode === 'auto' ? autoItp : tax.itpPct} onChange={v => ut('itpPct', v)} suffix="%" min={0} max={20} step={0.1} help={tax.mode==='auto'?'Automático según CCAA':'Valor personalizado'} />
           <NumberField label="IVA (%)" value={tax.ivaPct} onChange={v => ut('ivaPct', v)} suffix="%" min={0} max={30} step={0.1} />
           <NumberField label="AJD (%)" value={tax.ajdPct} onChange={v => ut('ajdPct', v)} suffix="%" min={0} max={5} step={0.1} />
           <NumberField label="Notaría" value={tax.notary} onChange={v => ut('notary', v)} suffix="€" min={0} />
@@ -730,7 +782,6 @@ const StressTab = ({ state }) => {
     s.monthlyExpenses = Object.fromEntries(Object.entries(s.monthlyExpenses).map(([k,v]) => [k, v * (1 + expenseUp/100)]));
     return evaluateOperation(s);
   }, [state, rateShock, incomeDrop, expenseUp]);
-
   const comp = [
     { label: 'Cuota base', value: base.payment, color: '#6366f1', display: fmtEur2(base.payment) },
     { label: 'Cuota estresada', value: stressed.payment, color: '#ef4444', display: fmtEur2(stressed.payment) },
@@ -1051,8 +1102,27 @@ function App() {
   const [dark, setDark] = useState(false);
   const [list, setList] = useState(loadList);
   const [showAviso, setShowAviso] = useState(true);
+  // Flag: ¿el usuario ha editado manualmente "Dinero que destinarás"?
+  const [willingIsCustom, setWillingIsCustom] = useState(false);
+
   useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify(state)); }, [state]);
   useEffect(() => { document.documentElement.classList.toggle('dark', dark); }, [dark]);
+
+  // Auto-sincronizar willingToUse con el patrimonio líquido total,
+  // salvo que el usuario lo haya personalizado manualmente.
+  useEffect(() => {
+    if (willingIsCustom) return;
+    const liquidTotal = computeLiquidSavings(state.savings);
+    if (liquidTotal !== state.savings.willingToUse) {
+      setState(prev => ({ ...prev, savings: { ...prev.savings, willingToUse: liquidTotal } }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    state.savings.cash, state.savings.deposits, state.savings.funds,
+    state.savings.stocks, state.savings.crypto, state.savings.otherLiquid,
+    state.savings.pensionPlans, state.savings.pensionAvailable, willingIsCustom
+  ]);
+
   const result = useMemo(() => evaluateOperation(state), [state]);
   const maxPrice = useMemo(() => ({
     savings: computeMaxPrice(state, 'savings'),
@@ -1081,6 +1151,7 @@ function App() {
     check(result.computableIncome > 0);
     return Math.round((done / total) * 100);
   }, [state, result]);
+
   return (
     <div className="min-h-screen flex flex-col lg:flex-row">
       <aside className="lg:w-72 lg:fixed lg:inset-y-0 bg-white dark:bg-slate-900 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800 overflow-y-auto">
@@ -1127,7 +1198,17 @@ function App() {
           </Card>
         )}
         {tab === 'buyers' && <BuyersSection buyers={state.buyers} setBuyers={v => setState({ ...state, buyers: v })} />}
-        {tab === 'savings' && <SavingsSection savings={state.savings} setSavings={v => setState({ ...state, savings: v })} />}
+        {tab === 'savings' && (
+          <SavingsSection
+            savings={state.savings}
+            setSavings={v => setState({ ...state, savings: v })}
+            onUserEditWilling={(force, resync) => {
+              if (resync) setWillingIsCustom(false);
+              else setWillingIsCustom(true);
+            }}
+            willingIsCustom={willingIsCustom}
+          />
+        )}
         {tab === 'debts' && <DebtsSection debts={state.debts} setDebts={v => setState({ ...state, debts: v })} monthlyExpenses={state.monthlyExpenses} setMonthlyExpenses={v => setState({ ...state, monthlyExpenses: v })} />}
         {tab === 'property' && <PropertySection property={state.property} setProperty={v => setState({ ...state, property: v })} tax={state.tax} setTax={v => setState({ ...state, tax: v })} />}
         {tab === 'mortgage' && <MortgageSection mortgage={state.mortgage} setMortgage={v => setState({ ...state, mortgage: v })} property={state.property} />}
@@ -1136,7 +1217,7 @@ function App() {
         <footer className="mt-12 pt-6 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
             <span>Simulador de Viabilidad Hipotecaria · Datos solo en tu navegador.</span>
-            <button className="hover:text-brand-600" onClick={() => { if (confirm('¿Resetear todo?')) { localStorage.clear(); setState(INITIAL_STATE); setList({}); } }}>Resetear</button>
+            <button className="hover:text-brand-600" onClick={() => { if (confirm('¿Resetear todo?')) { localStorage.clear(); setState(INITIAL_STATE); setList({}); setWillingIsCustom(false); } }}>Resetear</button>
           </div>
         </footer>
       </main>
