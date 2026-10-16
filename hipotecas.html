@@ -9,32 +9,21 @@
 <script>
   tailwind.config = {
     darkMode: 'class',
-    theme: {
-      extend: {
-        colors: {
-          brand: {
-            50:'#eef2ff',100:'#e0e7ff',200:'#c7d2fe',300:'#a5b4fc',400:'#818cf8',
-            500:'#6366f1',600:'#4f46e5',700:'#4338ca',800:'#3730a3',900:'#312e81'
-          }
-        }
-      }
-    }
+    theme: { extend: { colors: {
+      brand: {50:'#eef2ff',100:'#e0e7ff',200:'#c7d2fe',300:'#a5b4fc',400:'#818cf8',500:'#6366f1',600:'#4f46e5',700:'#4338ca',800:'#3730a3',900:'#312e81'}
+    }}}
   }
 </script>
 
-<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
-<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 
 <style>
   body { font-family: 'Inter', system-ui, sans-serif; }
-  .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
-  .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-  .dark .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; }
 </style>
 </head>
 <body class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 transition-colors">
@@ -42,7 +31,6 @@
 
 <script type="text/babel" data-presets="react">
 const { useState, useMemo, useEffect, useRef } = React;
-const { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } = Recharts;
 
 /* ---------- FORMATEO ---------- */
 const fmtEur = (n) => (n==null||isNaN(n)) ? '—' : new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(n);
@@ -87,7 +75,7 @@ const computeAcquisitionCosts = (params) => {
   const itp = !isNew ? price * (useManual ? itpPct : (ITP_BY_REGION[region] ?? 8)) / 100 : 0;
   const iva = isNew ? price * (useManual ? ivaPct : 10) / 100 : 0;
   const ajd = isNew ? price * (useManual ? ajdPct : 1.5) / 100 : 0;
-  const fixed = (notary||0) + (registry||0) + (appraisal||0) + (gestoria||0);
+  const fixed = (notary||0)+(registry||0)+(appraisal||0)+(gestoria||0);
   const agency = agencyFee || 0;
   const other = otherCosts || 0;
   return { itp, iva, ajd, fixed, agency, other, total: itp+iva+ajd+fixed+agency+other };
@@ -249,11 +237,7 @@ const defaultBuyer = (i) => ({
 const INITIAL_STATE = {
   simName: 'Mi simulación',
   buyers: [defaultBuyer(0)],
-  savings: {
-    cash: 40000, deposits: 0, funds: 0, stocks: 0, crypto: 0,
-    pensionPlans: 0, otherLiquid: 0, otherIlliquid: 0,
-    willingToUse: 40000, emergencyReserve: 8000, pensionAvailable: false
-  },
+  savings: { cash: 40000, deposits: 0, funds: 0, stocks: 0, crypto: 0, pensionPlans: 0, otherLiquid: 0, otherIlliquid: 0, willingToUse: 40000, emergencyReserve: 8000, pensionAvailable: false },
   debts: [],
   monthlyExpenses: { food: 400, utilities: 150, transport: 150, education: 0, insurance: 80, children: 0, otherHome: 0, other: 100 },
   property: { price: 250000, region: 'Madrid', isNew: false, garagePrice: 0, storagePrice: 0, reforms: 0, furniture: 0, agencyFee: 0, otherInitialCosts: 0 },
@@ -266,7 +250,7 @@ const LS_LIST = 'simulador_hipoteca_list_v1';
 const loadCurrent = () => { try { const r = localStorage.getItem(LS_KEY); if (r) return { ...INITIAL_STATE, ...JSON.parse(r) }; } catch(e){} return INITIAL_STATE; };
 const loadList = () => { try { return JSON.parse(localStorage.getItem(LS_LIST) || '{}'); } catch(e) { return {}; } };
 
-/* ---------- COMPONENTES UI ---------- */
+/* ---------- COMPONENTES BÁSICOS ---------- */
 const inputCls = "w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition text-sm";
 const labelCls = "block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1";
 const helpCls = "text-xs text-slate-500 dark:text-slate-400 mt-1";
@@ -289,11 +273,10 @@ const TextField = ({ label, value, onChange, help }) => (
     {help && <p className={helpCls}>{help}</p>}
   </div>
 );
-const DateField = ({ label, value, onChange, help }) => (
+const DateField = ({ label, value, onChange }) => (
   <div>
     {label && <label className={labelCls}>{label}</label>}
     <input type="date" className={inputCls} value={value || ''} onChange={e => onChange(e.target.value)} />
-    {help && <p className={helpCls}>{help}</p>}
   </div>
 );
 const SelectField = ({ label, value, onChange, options, help }) => (
@@ -305,34 +288,167 @@ const SelectField = ({ label, value, onChange, options, help }) => (
     {help && <p className={helpCls}>{help}</p>}
   </div>
 );
-const Toggle = ({ label, checked, onChange, help }) => (
+const Toggle = ({ label, checked, onChange }) => (
   <label className="flex items-center gap-3 cursor-pointer select-none">
     <span className={"relative w-10 h-6 rounded-full transition " + (checked ? 'bg-brand-600' : 'bg-slate-300 dark:bg-slate-700')}>
       <span className={"absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform " + (checked ? 'translate-x-4' : '')}></span>
     </span>
     <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
-    {help && <span className="text-xs text-slate-500 dark:text-slate-400">· {help}</span>}
   </label>
 );
-
 const Card = ({ children, className = '' }) => (
   <div className={"bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm " + className}>{children}</div>
 );
-
 const KPI = ({ label, value, sub, color='slate' }) => {
-  const colorMap = {
-    slate: 'text-slate-900 dark:text-white',
-    brand: 'text-brand-600 dark:text-brand-400',
-    emerald: 'text-emerald-600 dark:text-emerald-400',
-    red: 'text-red-600 dark:text-red-400',
-    amber: 'text-amber-600 dark:text-amber-400',
-  };
+  const cm = { slate:'text-slate-900 dark:text-white', brand:'text-brand-600 dark:text-brand-400', emerald:'text-emerald-600 dark:text-emerald-400', red:'text-red-600 dark:text-red-400', amber:'text-amber-600 dark:text-amber-400' };
   return (
     <Card className="p-4">
       <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400 font-medium">{label}</div>
-      <div className={"text-2xl font-bold mt-1 " + colorMap[color]}>{value}</div>
+      <div className={"text-2xl font-bold mt-1 " + cm[color]}>{value}</div>
       {sub && <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{sub}</div>}
     </Card>
+  );
+};
+
+/* =========================================================
+   GRÁFICOS SVG PUROS (sin dependencias)
+========================================================= */
+
+/* Donut / Pie */
+const DonutChart = ({ data, colors, size=200 }) => {
+  const total = data.reduce((s, d) => s + Math.max(0, d.value), 0);
+  if (total <= 0) return <div className="text-sm text-slate-500 p-4">Sin datos</div>;
+  const cx = size/2, cy = size/2;
+  const R = size/2 - 10, r = R * 0.55;
+  let angle = -Math.PI/2;
+  const slices = data.map((d, i) => {
+    const val = Math.max(0, d.value);
+    const frac = val / total;
+    const a0 = angle, a1 = angle + frac * Math.PI * 2;
+    angle = a1;
+    const large = (a1 - a0) > Math.PI ? 1 : 0;
+    const x0 = cx + R * Math.cos(a0), y0 = cy + R * Math.sin(a0);
+    const x1 = cx + R * Math.cos(a1), y1 = cy + R * Math.sin(a1);
+    const xi1 = cx + r * Math.cos(a1), yi1 = cy + r * Math.sin(a1);
+    const xi0 = cx + r * Math.cos(a0), yi0 = cy + r * Math.sin(a0);
+    const path = `M ${x0} ${y0} A ${R} ${R} 0 ${large} 1 ${x1} ${y1} L ${xi1} ${yi1} A ${r} ${r} 0 ${large} 0 ${xi0} ${yi0} Z`;
+    return { path, color: colors[i % colors.length], name: d.name, value: val, frac };
+  });
+  return (
+    <div>
+      <svg viewBox={`0 0 ${size} ${size}`} width="100%" style={{maxWidth: size}}>
+        {slices.map((s, i) => <path key={i} d={s.path} fill={s.color} stroke="white" strokeWidth="1" />)}
+      </svg>
+      <div className="mt-3 space-y-1">
+        {slices.map((s, i) => (
+          <div key={i} className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-sm" style={{background: s.color}}></span>
+              <span>{s.name}</span>
+            </div>
+            <span className="font-medium">{fmtEur(s.value)} · {fmtPct(s.frac, 0)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+/* Área de capital pendiente */
+const AreaChartSVG = ({ data, height=240 }) => {
+  const W = 600, H = height, P = { t: 20, r: 20, b: 30, l: 80 };
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+  const maxY = Math.max(...data.map(d => d.balance), 1);
+  const x = i => P.l + (i / Math.max(1, data.length - 1)) * iw;
+  const y = v => P.t + ih - (v / maxY) * ih;
+  const path = data.map((d, i) => `${i===0?'M':'L'} ${x(i)} ${y(d.balance)}`).join(' ');
+  const area = `${path} L ${x(data.length-1)} ${P.t+ih} L ${x(0)} ${P.t+ih} Z`;
+  const ticks = 4;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{height}}>
+      {[...Array(ticks+1)].map((_, i) => {
+        const v = (maxY / ticks) * i;
+        const yy = y(v);
+        return (
+          <g key={i}>
+            <line x1={P.l} x2={W-P.r} y1={yy} y2={yy} stroke="#e2e8f0" strokeDasharray="3 3" />
+            <text x={P.l-6} y={yy+4} fontSize="10" fill="#94a3b8" textAnchor="end">{fmtEur(v)}</text>
+          </g>
+        );
+      })}
+      <path d={area} fill="#c7d2fe" opacity="0.6" />
+      <path d={path} fill="none" stroke="#4f46e5" strokeWidth="2" />
+      {[0, Math.floor(data.length/2), data.length-1].map((i, k) => (
+        <text key={k} x={x(i)} y={H-10} fontSize="10" fill="#94a3b8" textAnchor="middle">Año {data[i]?.year}</text>
+      ))}
+    </svg>
+  );
+};
+
+/* Barras apiladas interés/capital por año */
+const StackedBarChart = ({ data, height=260 }) => {
+  const W = 600, H = height, P = { t: 20, r: 20, b: 30, l: 80 };
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+  const totals = data.map(d => d.interest + d.principal);
+  const maxY = Math.max(...totals, 1);
+  const bw = iw / data.length * 0.75;
+  const y = v => P.t + ih - (v / maxY) * ih;
+  const ticks = 4;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{height}}>
+      {[...Array(ticks+1)].map((_, i) => {
+        const v = (maxY / ticks) * i;
+        const yy = y(v);
+        return (
+          <g key={i}>
+            <line x1={P.l} x2={W-P.r} y1={yy} y2={yy} stroke="#e2e8f0" strokeDasharray="3 3" />
+            <text x={P.l-6} y={yy+4} fontSize="10" fill="#94a3b8" textAnchor="end">{fmtEur(v)}</text>
+          </g>
+        );
+      })}
+      {data.map((d, i) => {
+        const cx = P.l + (i + 0.5) * (iw / data.length);
+        const hInt = (d.interest / maxY) * ih;
+        const hPrin = (d.principal / maxY) * ih;
+        const yInt = P.t + ih - hPrin;
+        const yPrin = P.t + ih - hPrin - hInt;
+        return (
+          <g key={i}>
+            <rect x={cx - bw/2} y={yInt} width={bw} height={hPrin} fill="#10b981" />
+            <rect x={cx - bw/2} y={yPrin} width={bw} height={hInt} fill="#ef4444" />
+          </g>
+        );
+      })}
+      {data.filter((_,i) => i % Math.ceil(data.length/6) === 0 || i === data.length-1).map((d, k) => {
+        const i = data.indexOf(d);
+        const cx = P.l + (i + 0.5) * (iw / data.length);
+        return <text key={k} x={cx} y={H-10} fontSize="10" fill="#94a3b8" textAnchor="middle">{d.year}</text>;
+      })}
+      <g transform={`translate(${P.l}, 4)`}>
+        <rect x="0" y="0" width="10" height="10" fill="#10b981"/><text x="14" y="9" fontSize="10" fill="#64748b">Capital</text>
+        <rect x="70" y="0" width="10" height="10" fill="#ef4444"/><text x="84" y="9" fontSize="10" fill="#64748b">Intereses</text>
+      </g>
+    </svg>
+  );
+};
+
+/* Barras horizontales simples para comparativas */
+const HBarChart = ({ data, height=200 }) => {
+  const max = Math.max(...data.map(d => d.value), 1);
+  return (
+    <div className="space-y-3" style={{minHeight: height}}>
+      {data.map((d, i) => (
+        <div key={i}>
+          <div className="flex justify-between text-xs mb-1">
+            <span>{d.label}</span>
+            <span className="font-medium">{d.display || fmtEur(d.value)}</span>
+          </div>
+          <div className="w-full h-3 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+            <div className="h-full rounded-full transition-all" style={{width: (d.value/max*100) + '%', background: d.color || '#4f46e5'}}></div>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 };
 
@@ -340,7 +456,6 @@ const KPI = ({ label, value, sub, color='slate' }) => {
 const BuyersSection = ({ buyers, setBuyers }) => {
   const update = (id, patch) => setBuyers(buyers.map(b => b.id === id ? { ...b, ...patch } : b));
   const updatePct = (id, key, val) => setBuyers(buyers.map(b => b.id === id ? { ...b, computablePct: { ...b.computablePct, [key]: val } } : b));
-
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -351,7 +466,6 @@ const BuyersSection = ({ buyers, setBuyers }) => {
         <button className="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium"
           onClick={() => buyers.length < 4 && setBuyers([...buyers, defaultBuyer(buyers.length)])} disabled={buyers.length>=4}>+ Añadir</button>
       </div>
-
       <div className="space-y-6">
         {buyers.map((b, i) => {
           const age = b.birthDate ? ((Date.now() - new Date(b.birthDate).getTime()) / (365.25*24*3600*1000)) : null;
@@ -366,24 +480,14 @@ const BuyersSection = ({ buyers, setBuyers }) => {
                     onClick={() => setBuyers(buyers.filter(x => x.id !== b.id))}>Eliminar</button>
                 )}
               </div>
-
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <TextField label="Nombre o alias" value={b.name} onChange={v => update(b.id, { name: v })} />
                 <DateField label="Fecha de nacimiento" value={b.birthDate} onChange={v => update(b.id, { birthDate: v })} />
-                <SelectField label="Comunidad autónoma" value={b.region} onChange={v => update(b.id, { region: v })}
-                  options={REGIONS.map(r => ({ value: r, label: r }))} />
+                <SelectField label="Comunidad autónoma" value={b.region} onChange={v => update(b.id, { region: v })} options={REGIONS.map(r => ({ value: r, label: r }))} />
                 <NumberField label="Personas dependientes" value={b.dependents} onChange={v => update(b.id, { dependents: v })} min={0} max={10} />
                 <SelectField label="Tipo de empleo" value={b.employmentType} onChange={v => update(b.id, { employmentType: v })}
-                  options={[
-                    { value: 'indefinido', label: 'Indefinido' },
-                    { value: 'temporal', label: 'Temporal' },
-                    { value: 'funcionario', label: 'Funcionario' },
-                    { value: 'autonomo', label: 'Autónomo' },
-                    { value: 'pensionista', label: 'Pensionista' },
-                    { value: 'otro', label: 'Otro' },
-                  ]} />
+                  options={[{value:'indefinido',label:'Indefinido'},{value:'temporal',label:'Temporal'},{value:'funcionario',label:'Funcionario'},{value:'autonomo',label:'Autónomo'},{value:'pensionista',label:'Pensionista'},{value:'otro',label:'Otro'}]} />
               </div>
-
               <div className="mt-6">
                 <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Ingresos netos mensuales</h4>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -393,7 +497,6 @@ const BuyersSection = ({ buyers, setBuyers }) => {
                   <NumberField label="Otros ingresos" value={b.otherIncome} onChange={v => update(b.id, { otherIncome: v })} suffix="€/mes" min={0} />
                 </div>
               </div>
-
               <div className="mt-6">
                 <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">% computable para el banco</h4>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -419,7 +522,6 @@ const SavingsSection = ({ savings, setSavings }) => {
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Ahorros y patrimonio</h2>
       <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">No todos los activos son líquidos. Diferencia patrimonio total de disponible.</p>
-
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Activos líquidos</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -431,18 +533,16 @@ const SavingsSection = ({ savings, setSavings }) => {
           <NumberField label="Otros líquidos" value={savings.otherLiquid} onChange={v => u('otherLiquid', v)} suffix="€" min={0} />
         </div>
       </Card>
-
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Activos ilíquidos</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <NumberField label="Planes de pensiones" value={savings.pensionPlans} onChange={v => u('pensionPlans', v)} suffix="€" min={0} help="Solo se considera líquido si marcas la casilla" />
+          <NumberField label="Planes de pensiones" value={savings.pensionPlans} onChange={v => u('pensionPlans', v)} suffix="€" min={0} help="Solo líquido si marcas la casilla" />
           <NumberField label="Otros bienes" value={savings.otherIlliquid} onChange={v => u('otherIlliquid', v)} suffix="€" min={0} />
         </div>
         <div className="mt-4">
           <Toggle label="¿Puedes disponer del plan de pensiones?" checked={savings.pensionAvailable} onChange={v => u('pensionAvailable', v)} />
         </div>
       </Card>
-
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Asignación a la compra</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -450,7 +550,6 @@ const SavingsSection = ({ savings, setSavings }) => {
           <NumberField label="Reserva de emergencia" value={savings.emergencyReserve} onChange={v => u('emergencyReserve', v)} suffix="€" min={0} help="Se suma a las necesidades" />
         </div>
       </Card>
-
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KPI label="Patrimonio total" value={fmtEur(total)} />
         <KPI label="Patrimonio líquido" value={fmtEur(liquid)} />
@@ -465,26 +564,21 @@ const DebtsSection = ({ debts, setDebts, monthlyExpenses, setMonthlyExpenses }) 
   const update = (id, patch) => setDebts(debts.map(d => d.id === id ? { ...d, ...patch } : d));
   const remove = (id) => setDebts(debts.filter(d => d.id !== id));
   const ue = (k, v) => setMonthlyExpenses({ ...monthlyExpenses, [k]: v });
-  const typeLabels = { hipoteca: 'Hipoteca', personal: 'Préstamo personal', vehiculo: 'Vehículo', tarjeta: 'Tarjeta de crédito', financiacion: 'Financiación', otro: 'Otra' };
-
+  const typeLabels = { hipoteca:'Hipoteca', personal:'Préstamo personal', vehiculo:'Vehículo', tarjeta:'Tarjeta de crédito', financiacion:'Financiación', otro:'Otra' };
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Deudas y gastos mensuales</h2>
       <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Las deudas afectan al ratio de endeudamiento; los gastos, al presupuesto familiar.</p>
-
       <Card className="p-5 mb-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-slate-900 dark:text-white">Deudas</h3>
           <button className="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium" onClick={add}>+ Añadir</button>
         </div>
-        {debts.length === 0 ? (
-          <p className="text-sm text-slate-500">Sin deudas registradas.</p>
-        ) : (
+        {debts.length === 0 ? <p className="text-sm text-slate-500">Sin deudas registradas.</p> : (
           <div className="space-y-3">
             {debts.map(d => (
               <div key={d.id} className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end border-t border-slate-100 dark:border-slate-800 pt-3 first:border-0 first:pt-0">
-                <SelectField label="Tipo" value={d.type} onChange={v => update(d.id, { type: v })}
-                  options={Object.entries(typeLabels).map(([value,label]) => ({ value, label }))} />
+                <SelectField label="Tipo" value={d.type} onChange={v => update(d.id, { type: v })} options={Object.entries(typeLabels).map(([value,label]) => ({ value, label }))} />
                 <NumberField label="Capital" value={d.outstanding} onChange={v => update(d.id, { outstanding: v })} suffix="€" min={0} />
                 <NumberField label="Cuota" value={d.monthlyPayment} onChange={v => update(d.id, { monthlyPayment: v })} suffix="€/mes" min={0} />
                 <NumberField label="Coste cancelar" value={d.cancelCost} onChange={v => update(d.id, { cancelCost: v })} suffix="€" min={0} />
@@ -497,7 +591,6 @@ const DebtsSection = ({ debts, setDebts, monthlyExpenses, setMonthlyExpenses }) 
           </div>
         )}
       </Card>
-
       <Card className="p-5">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Gastos familiares mensuales</h3>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -519,12 +612,10 @@ const PropertySection = ({ property, setProperty, tax, setTax }) => {
   const u = (k, v) => setProperty({ ...property, [k]: v });
   const ut = (k, v) => setTax({ ...tax, [k]: v });
   const totalPrice = (property.price||0) + (property.garagePrice||0) + (property.storagePrice||0);
-
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Inmueble y gastos</h2>
       <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Precio, anexos y gastos iniciales. Los impuestos son editables.</p>
-
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Datos del inmueble</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -543,7 +634,6 @@ const PropertySection = ({ property, setProperty, tax, setTax }) => {
           <strong>Precio total (vivienda + anexos):</strong> {fmtEur(totalPrice)}
         </div>
       </Card>
-
       <Card className="p-5">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-slate-900 dark:text-white">Impuestos y gastos de adquisición</h3>
@@ -574,12 +664,10 @@ const MortgageSection = ({ mortgage, setMortgage, property }) => {
   const totalPrice = (property.price||0) + (property.garagePrice||0) + (property.storagePrice||0);
   const mortgageAmount = totalPrice * (1 - mortgage.downPaymentPct / 100);
   const payment = monthlyPayment(mortgageAmount, mortgage.tin, mortgage.termYears * 12);
-
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Hipoteca y financiación</h2>
       <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Configura las condiciones. Los perfiles de LTV y plazo son parámetros editables.</p>
-
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Condiciones</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -591,7 +679,6 @@ const MortgageSection = ({ mortgage, setMortgage, property }) => {
           <NumberField label="Comisión apertura" value={mortgage.openingFeePct} onChange={v => u('openingFeePct', v)} suffix="%" min={0} max={5} step={0.1} />
           <NumberField label="Productos vinculados (anual)" value={mortgage.linkedProductsAnnual} onChange={v => u('linkedProductsAnnual', v)} suffix="€" min={0} />
         </div>
-
         {mortgage.type !== 'fijo' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
             <NumberField label="Euríbor" value={mortgage.euribor} onChange={v => u('euribor', v)} suffix="%" min={-1} max={10} step={0.05} />
@@ -599,7 +686,6 @@ const MortgageSection = ({ mortgage, setMortgage, property }) => {
             <NumberField label="Revisión" value={mortgage.revisionMonths} onChange={v => u('revisionMonths', v)} suffix="meses" min={1} max={60} />
           </div>
         )}
-
         {mortgage.type === 'mixto' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
             <NumberField label="Años tramo fijo" value={mortgage.fixedYears} onChange={v => u('fixedYears', v)} suffix="años" min={1} max={30} />
@@ -607,7 +693,6 @@ const MortgageSection = ({ mortgage, setMortgage, property }) => {
           </div>
         )}
       </Card>
-
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Criterios del banco (editables)</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -616,7 +701,6 @@ const MortgageSection = ({ mortgage, setMortgage, property }) => {
           <NumberField label="Umbral endeudamiento (0-1)" value={mortgage.debtThreshold} onChange={v => u('debtThreshold', v)} step={0.01} min={0.1} max={0.6} help={`${(mortgage.debtThreshold*100).toFixed(0)}%`} />
         </div>
       </Card>
-
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KPI label="Hipoteca estimada" value={fmtEur(mortgageAmount)} />
         <KPI label="Cuota mensual" value={fmtEur2(payment)} color="brand" />
@@ -637,7 +721,6 @@ const StressTab = ({ state }) => {
   const [rateShock, setRateShock] = useState(0);
   const [incomeDrop, setIncomeDrop] = useState(0);
   const [expenseUp, setExpenseUp] = useState(0);
-
   const base = useMemo(() => evaluateOperation(state), [state]);
   const stressed = useMemo(() => {
     const s = JSON.parse(JSON.stringify(state));
@@ -648,18 +731,24 @@ const StressTab = ({ state }) => {
     return evaluateOperation(s);
   }, [state, rateShock, incomeDrop, expenseUp]);
 
-  const compData = [
-    { name: 'Base', cuota: base.payment, ratio: base.ratioAfter * 100, margen: base.monthlyMargin },
-    { name: 'Estrés', cuota: stressed.payment, ratio: stressed.ratioAfter * 100, margen: stressed.monthlyMargin },
+  const comp = [
+    { label: 'Cuota base', value: base.payment, color: '#6366f1', display: fmtEur2(base.payment) },
+    { label: 'Cuota estresada', value: stressed.payment, color: '#ef4444', display: fmtEur2(stressed.payment) },
+    { label: 'Margen base', value: Math.max(0, base.monthlyMargin), color: '#10b981', display: fmtEur(base.monthlyMargin) },
+    { label: 'Margen estresado', value: Math.max(0, stressed.monthlyMargin), color: '#f59e0b', display: fmtEur(stressed.monthlyMargin) },
   ];
-
+  const ratioComp = [
+    { label: 'Ratio base', value: base.ratioAfter * 100, color: '#6366f1', display: fmtPct(base.ratioAfter) },
+    { label: 'Ratio estresado', value: stressed.ratioAfter * 100, color: '#ef4444', display: fmtPct(stressed.ratioAfter) },
+    { label: 'Umbral', value: base.threshold * 100, color: '#94a3b8', display: fmtPct(base.threshold) },
+  ];
   return (
     <div className="space-y-4">
       <Card className="p-5">
         <h4 className="font-semibold mb-4">Pruebas de resistencia</h4>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
-            <label className={labelCls}>Subida tipos: +{rateShock.toFixed(1)} pp</label>
+            <label className={labelCls}>Subida tipos: +{rateShock.toFixed(2)} pp</label>
             <input type="range" min={0} max={3} step={0.25} value={rateShock} onChange={e => setRateShock(Number(e.target.value))} className="w-full" />
           </div>
           <div>
@@ -672,32 +761,21 @@ const StressTab = ({ state }) => {
           </div>
         </div>
       </Card>
-
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KPI label="Cuota estresada" value={fmtEur2(stressed.payment)} sub={`Base: ${fmtEur2(base.payment)}`} />
         <KPI label="Ratio estresado" value={fmtPct(stressed.ratioAfter)} color={stressed.ratioOk ? 'emerald' : 'red'} sub={`Umbral ${fmtPct(stressed.threshold)}`} />
         <KPI label="Margen estresado" value={fmtEur(stressed.monthlyMargin)} color={stressed.monthlyMargin > 0 ? 'emerald' : 'red'} sub={`Base: ${fmtEur(base.monthlyMargin)}`} />
       </div>
-
-      <Card className="p-5">
-        <h4 className="font-semibold mb-3">Comparativa base vs. estrés</h4>
-        <div style={{height: 280}}>
-          <ResponsiveContainer>
-            <BarChart data={compData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="name" />
-              <YAxis yAxisId="left" tickFormatter={v => fmtEur(v)} tick={{fontSize: 11}} width={90} />
-              <YAxis yAxisId="right" orientation="right" tickFormatter={v => v.toFixed(0)+'%'} />
-              <Tooltip />
-              <Legend />
-              <Bar yAxisId="left" dataKey="cuota" fill="#6366f1" name="Cuota (€)" />
-              <Bar yAxisId="left" dataKey="margen" fill="#10b981" name="Margen (€)" />
-              <Bar yAxisId="right" dataKey="ratio" fill="#ef4444" name="Ratio (%)" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
-
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card className="p-5">
+          <h4 className="font-semibold mb-3">Cuota y margen</h4>
+          <HBarChart data={comp} />
+        </Card>
+        <Card className="p-5">
+          <h4 className="font-semibold mb-3">Ratios de endeudamiento</h4>
+          <HBarChart data={ratioComp} />
+        </Card>
+      </div>
       <Card className={"p-5 border-2 " + (stressed.allOk ? 'border-emerald-300' : 'border-red-300')}>
         <strong>Resultado estresado: {stressed.verdictLabel}</strong>
         {stressed.reasons.length > 0 && (
@@ -713,7 +791,6 @@ const StressTab = ({ state }) => {
 const ResultsSection = ({ state, result, maxPrice }) => {
   const [tab, setTab] = useState('summary');
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#0ea5e9', '#ec4899'];
-
   const pieData = [
     { name: 'Entrada', value: Math.max(0, result.downPayment) },
     { name: 'Hipoteca', value: result.mortgageAmount },
@@ -727,7 +804,6 @@ const ResultsSection = ({ state, result, maxPrice }) => {
     { name: 'Reformas + Mob.', value: (result.reforms||0) + (result.furniture||0) },
     { name: 'Apertura', value: result.openingFee },
   ].filter(x => x.value > 0);
-
   const yearlyData = useMemo(() => {
     const s = result.schedule;
     const years = {};
@@ -740,21 +816,24 @@ const ResultsSection = ({ state, result, maxPrice }) => {
     });
     return Object.values(years);
   }, [result.schedule]);
-
   const verdictBg = {
     emerald: 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-100',
     amber: 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-100',
     red: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100',
     slate: 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700',
   }[result.verdictColor];
-
   const tabs = [['summary','Resumen'],['costs','Gastos'],['amort','Amortización'],['maxprice','Precios máximos'],['stress','Estrés']];
-
+  const maxPriceBars = [
+    { label: 'Ahorros', value: maxPrice.savings, color: '#6366f1' },
+    { label: 'Ingresos', value: maxPrice.income, color: '#10b981' },
+    { label: 'LTV máximo', value: maxPrice.ltv, color: '#f59e0b' },
+    { label: 'Edad / plazo', value: maxPrice.age, color: '#8b5cf6' },
+    { label: 'Conjunto (viable)', value: maxPrice.all, color: '#4f46e5' },
+  ];
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Resultados y análisis</h2>
       <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Los cálculos se actualizan al modificar los datos.</p>
-
       <div className={"rounded-2xl border-2 p-5 mb-6 " + verdictBg}>
         <div className="flex items-start gap-4">
           <div className="text-3xl">
@@ -770,7 +849,6 @@ const ResultsSection = ({ state, result, maxPrice }) => {
           </div>
         </div>
       </div>
-
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <KPI label="Precio analizado" value={fmtEur(result.totalPrice)} />
         <KPI label="Precio máximo" value={fmtEur(maxPrice.all)} color="brand" sub="todas las restricciones" />
@@ -781,30 +859,17 @@ const ResultsSection = ({ state, result, maxPrice }) => {
         <KPI label="Margen mensual" value={fmtEur(result.monthlyMargin)} color={result.monthlyMargin > 0 ? 'emerald' : 'red'} />
         <KPI label="Necesario" value={fmtEur(result.totalNeeded)} color={result.liquidityGap <= 0 ? 'emerald' : 'red'} sub={`Disponible: ${fmtEur(result.available)}`} />
       </div>
-
       <div className="flex flex-wrap gap-2 mb-4">
         {tabs.map(([k,l]) => (
           <button key={k} className={"px-3 py-2 rounded-lg text-sm font-medium transition " + (tab===k?'bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-200':'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800')} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
-
       {tab === 'summary' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <Card className="p-5">
             <h4 className="font-semibold mb-3">Distribución entrada / hipoteca</h4>
-            <div style={{height: 260}}>
-              <ResponsiveContainer>
-                <PieChart>
-                  <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={60} outerRadius={95} paddingAngle={2}>
-                    {pieData.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}
-                  </Pie>
-                  <Tooltip formatter={v => fmtEur(v)} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
+            <DonutChart data={pieData} colors={COLORS} />
           </Card>
-
           <Card className="p-5">
             <h4 className="font-semibold mb-3">Flujo mensual estimado</h4>
             <div className="space-y-2 text-sm">
@@ -822,7 +887,6 @@ const ResultsSection = ({ state, result, maxPrice }) => {
           </Card>
         </div>
       )}
-
       {tab === 'costs' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <Card className="p-5">
@@ -845,52 +909,19 @@ const ResultsSection = ({ state, result, maxPrice }) => {
           </Card>
           <Card className="p-5">
             <h4 className="font-semibold mb-3">Composición de gastos</h4>
-            <div style={{height: 320}}>
-              <ResponsiveContainer>
-                <PieChart>
-                  <Pie data={costPie} dataKey="value" nameKey="name" outerRadius={100}>
-                    {costPie.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip formatter={v => fmtEur(v)} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
+            <DonutChart data={costPie} colors={COLORS} size={220} />
           </Card>
         </div>
       )}
-
       {tab === 'amort' && (
         <div className="space-y-4">
           <Card className="p-5">
             <h4 className="font-semibold mb-3">Evolución del capital pendiente</h4>
-            <div style={{height: 300}}>
-              <ResponsiveContainer>
-                <AreaChart data={yearlyData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="year" tick={{fontSize: 12}} />
-                  <YAxis tickFormatter={v => fmtEur(v)} tick={{fontSize: 11}} width={90} />
-                  <Tooltip formatter={v => fmtEur(v)} labelFormatter={l => `Año ${l}`} />
-                  <Area type="monotone" dataKey="balance" stroke="#6366f1" fill="#c7d2fe" name="Capital pendiente" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+            <AreaChartSVG data={yearlyData} />
           </Card>
           <Card className="p-5">
             <h4 className="font-semibold mb-3">Intereses vs. capital por año</h4>
-            <div style={{height: 300}}>
-              <ResponsiveContainer>
-                <BarChart data={yearlyData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="year" tick={{fontSize: 12}} />
-                  <YAxis tickFormatter={v => fmtEur(v)} tick={{fontSize: 11}} width={90} />
-                  <Tooltip formatter={v => fmtEur(v)} labelFormatter={l => `Año ${l}`} />
-                  <Legend />
-                  <Bar dataKey="interest" stackId="a" fill="#ef4444" name="Intereses" />
-                  <Bar dataKey="principal" stackId="a" fill="#10b981" name="Capital" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            <StackedBarChart data={yearlyData} />
           </Card>
           <Card className="p-5 text-sm">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -902,11 +933,11 @@ const ResultsSection = ({ state, result, maxPrice }) => {
           </Card>
         </div>
       )}
-
       {tab === 'maxprice' && (
         <Card className="p-5">
           <h4 className="font-semibold mb-4">Precio máximo por tipo de restricción</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          <HBarChart data={maxPriceBars} />
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-6">
             <KPI label="Ahorros" value={fmtEur(maxPrice.savings)} />
             <KPI label="Ingresos" value={fmtEur(maxPrice.income)} />
             <KPI label="LTV máximo" value={fmtEur(maxPrice.ltv)} />
@@ -916,7 +947,6 @@ const ResultsSection = ({ state, result, maxPrice }) => {
           <p className={helpCls + " mt-4"}>El precio máximo conjunto se calcula con búsqueda binaria sobre una función que verifica simultáneamente todas las restricciones.</p>
         </Card>
       )}
-
       {tab === 'stress' && <StressTab state={state} />}
     </div>
   );
@@ -926,7 +956,6 @@ const ResultsSection = ({ state, result, maxPrice }) => {
 const SavedSection = ({ state, setState, list, setList }) => {
   const [name, setName] = useState('');
   const fileRef = useRef();
-
   const save = () => {
     const n = name.trim() || 'Simulación ' + new Date().toLocaleString('es-ES');
     const id = 'sim_' + Date.now();
@@ -936,14 +965,12 @@ const SavedSection = ({ state, setState, list, setList }) => {
     setName('');
     alert('Simulación guardada: ' + n);
   };
-
   const load = (id) => {
     const s = list[id];
     if (!s) return;
     if (!confirm(`¿Cargar "${s.name}"?`)) return;
     setState({ ...INITIAL_STATE, ...s.state });
   };
-
   const del = (id) => {
     if (!confirm('¿Eliminar?')) return;
     const n = { ...list };
@@ -951,7 +978,6 @@ const SavedSection = ({ state, setState, list, setList }) => {
     setList(n);
     localStorage.setItem(LS_LIST, JSON.stringify(n));
   };
-
   const exportJson = (id) => {
     const data = id ? list[id] : { current: state, saved: list };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -962,7 +988,6 @@ const SavedSection = ({ state, setState, list, setList }) => {
     a.click();
     URL.revokeObjectURL(url);
   };
-
   const importJson = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -983,12 +1008,10 @@ const SavedSection = ({ state, setState, list, setList }) => {
     };
     reader.readAsText(file);
   };
-
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Simulaciones guardadas</h2>
       <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Todo se guarda en tu navegador (localStorage).</p>
-
       <Card className="p-5 mb-6">
         <div className="flex flex-col md:flex-row gap-3">
           <input className={inputCls + " flex-1"} placeholder="Nombre" value={name} onChange={e => setName(e.target.value)} />
@@ -998,7 +1021,6 @@ const SavedSection = ({ state, setState, list, setList }) => {
           <input ref={fileRef} type="file" accept=".json" hidden onChange={importJson} />
         </div>
       </Card>
-
       {Object.keys(list).length === 0 ? (
         <p className="text-sm text-slate-500">No hay simulaciones guardadas.</p>
       ) : (
@@ -1029,10 +1051,8 @@ function App() {
   const [dark, setDark] = useState(false);
   const [list, setList] = useState(loadList);
   const [showAviso, setShowAviso] = useState(true);
-
   useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify(state)); }, [state]);
   useEffect(() => { document.documentElement.classList.toggle('dark', dark); }, [dark]);
-
   const result = useMemo(() => evaluateOperation(state), [state]);
   const maxPrice = useMemo(() => ({
     savings: computeMaxPrice(state, 'savings'),
@@ -1041,7 +1061,6 @@ function App() {
     age: computeMaxPrice(state, 'age'),
     all: computeMaxPrice(state, 'all'),
   }), [state]);
-
   const tabs = [
     { id: 'buyers', label: 'Compradores', icon: '👥' },
     { id: 'savings', label: 'Ahorros', icon: '💰' },
@@ -1051,7 +1070,6 @@ function App() {
     { id: 'results', label: 'Resultados', icon: '📊' },
     { id: 'saved', label: 'Guardadas', icon: '💾' },
   ];
-
   const progress = useMemo(() => {
     let done = 0, total = 0;
     const check = (v) => { total++; if (v) done++; };
@@ -1063,7 +1081,6 @@ function App() {
     check(result.computableIncome > 0);
     return Math.round((done / total) * 100);
   }, [state, result]);
-
   return (
     <div className="min-h-screen flex flex-col lg:flex-row">
       <aside className="lg:w-72 lg:fixed lg:inset-y-0 bg-white dark:bg-slate-900 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800 overflow-y-auto">
@@ -1076,7 +1093,6 @@ function App() {
             </div>
           </div>
         </div>
-
         <nav className="p-3 space-y-1">
           {tabs.map(t => (
             <div key={t.id}
@@ -1086,7 +1102,6 @@ function App() {
             </div>
           ))}
         </nav>
-
         <div className="p-5 border-t border-slate-200 dark:border-slate-800">
           <div className="flex items-center justify-between text-xs text-slate-500 mb-2">
             <span>Progreso</span><span className="font-semibold">{progress}%</span>
@@ -1099,7 +1114,6 @@ function App() {
           </button>
         </div>
       </aside>
-
       <main className="lg:ml-72 flex-1 p-4 md:p-8 max-w-6xl mx-auto w-full">
         {showAviso && (
           <Card className="p-4 mb-6 border-l-4 border-amber-400 bg-amber-50/50 dark:bg-amber-900/10">
@@ -1112,7 +1126,6 @@ function App() {
             </div>
           </Card>
         )}
-
         {tab === 'buyers' && <BuyersSection buyers={state.buyers} setBuyers={v => setState({ ...state, buyers: v })} />}
         {tab === 'savings' && <SavingsSection savings={state.savings} setSavings={v => setState({ ...state, savings: v })} />}
         {tab === 'debts' && <DebtsSection debts={state.debts} setDebts={v => setState({ ...state, debts: v })} monthlyExpenses={state.monthlyExpenses} setMonthlyExpenses={v => setState({ ...state, monthlyExpenses: v })} />}
@@ -1120,7 +1133,6 @@ function App() {
         {tab === 'mortgage' && <MortgageSection mortgage={state.mortgage} setMortgage={v => setState({ ...state, mortgage: v })} property={state.property} />}
         {tab === 'results' && <ResultsSection state={state} result={result} maxPrice={maxPrice} />}
         {tab === 'saved' && <SavedSection state={state} setState={setState} list={list} setList={setList} />}
-
         <footer className="mt-12 pt-6 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
             <span>Simulador de Viabilidad Hipotecaria · Datos solo en tu navegador.</span>
@@ -1131,7 +1143,6 @@ function App() {
     </div>
   );
 }
-
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 </script>
 </body>
