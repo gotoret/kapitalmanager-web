@@ -62,8 +62,7 @@ const amortizationSchedule = (principal, annualRatePct, months) => {
 
 const totalInterest = (rows) => rows.reduce((s, r) => s + r.interest, 0);
 
-/* ITP por CCAA — tipo GENERAL de vivienda de segunda mano.
-   Valores orientativos vigentes en 2026. Verificar normativa. */
+/* ITP por CCAA — tipo GENERAL vivienda segunda mano */
 const ITP_BY_REGION = {
   'Andalucía': 7, 'Aragón': 8, 'Asturias': 8, 'Baleares': 8, 'Canarias': 6.5,
   'Cantabria': 10, 'Castilla-La Mancha': 9, 'Castilla y León': 8, 'Cataluña': 10,
@@ -94,12 +93,27 @@ const computeComputableIncome = (buyers) => buyers.reduce((sum, b) => {
 const computeRawIncome = (buyers) => buyers.reduce((s, b) =>
   s + (b.monthlyNetSalary||0) + (b.variableIncome||0) + (b.rentalIncome||0) + (b.otherIncome||0), 0);
 
+/* Ahorros individuales */
 const computeLiquidSavings = (s) => {
+  if (!s) return 0;
   let total = (s.cash||0)+(s.deposits||0)+(s.funds||0)+(s.stocks||0)+(s.crypto||0)+(s.otherLiquid||0);
   if (s.pensionAvailable) total += (s.pensionPlans||0);
   return total;
 };
-const computeTotalPatrimony = (s) => (s.cash||0)+(s.deposits||0)+(s.funds||0)+(s.stocks||0)+(s.crypto||0)+(s.pensionPlans||0)+(s.otherLiquid||0)+(s.otherIlliquid||0);
+const computeTotalPatrimony = (s) => {
+  if (!s) return 0;
+  return (s.cash||0)+(s.deposits||0)+(s.funds||0)+(s.stocks||0)+(s.crypto||0)+(s.pensionPlans||0)+(s.otherLiquid||0)+(s.otherIlliquid||0);
+};
+
+/* Agregación de ahorros de todos los compradores */
+const aggregateSavings = (buyers) => {
+  const keys = ['cash','deposits','funds','stocks','crypto','pensionPlans','otherLiquid','otherIlliquid','willingToUse','emergencyReserve'];
+  const agg = {};
+  keys.forEach(k => { agg[k] = buyers.reduce((s, b) => s + (Number(b.savings?.[k]) || 0), 0); });
+  agg.pensionAvailable = buyers.some(b => b.savings?.pensionAvailable);
+  return agg;
+};
+
 const computeDebtTotal = (debts) => debts.reduce((s, d) => s + (d.monthlyPayment||0), 0);
 const computeMonthlyExpenses = (e) => Object.values(e).reduce((s, v) => s + (Number(v)||0), 0);
 
@@ -115,7 +129,10 @@ const evaluateOperation = (state, override = {}) => {
   const price = override.price ?? state.property.price;
   const termYears = override.termYears ?? state.mortgage.termYears;
   const tin = override.tin ?? state.mortgage.tin;
-  const { buyers, debts, monthlyExpenses, savings, mortgage: m, tax, property } = state;
+  const { buyers, debts, monthlyExpenses, mortgage: m, tax, property } = state;
+
+  // Ahorros agregados de todos los compradores
+  const savings = aggregateSavings(buyers);
 
   const months = termYears * 12;
   const downPaymentPct = override.downPaymentPct ?? m.downPaymentPct;
@@ -199,7 +216,8 @@ const evaluateOperation = (state, override = {}) => {
     ratioBefore, ratioAfter, monthlyMargin, threshold, linkedAnnual,
     ageOk, maxAgeReached, maxAge, ratioOk, liquidityOk, ltvOk, allOk,
     verdict, verdictLabel, verdictColor, reasons,
-    ltv: totalPrice > 0 ? mortgageAmount / totalPrice : 0
+    ltv: totalPrice > 0 ? mortgageAmount / totalPrice : 0,
+    aggregateSavings: savings
   };
 };
 
@@ -224,6 +242,13 @@ const computeMaxPrice = (state, binding) => {
 };
 
 /* ---------- ESTADO INICIAL ---------- */
+const emptySavings = () => ({
+  cash: 0, deposits: 0, funds: 0, stocks: 0, crypto: 0,
+  pensionPlans: 0, otherLiquid: 0, otherIlliquid: 0,
+  willingToUse: 0, emergencyReserve: 0, pensionAvailable: false,
+  willingCustom: false // si el usuario ha personalizado "Dinero que destinarás"
+});
+
 const defaultBuyer = (i) => ({
   id: 'b' + i + '_' + Math.random().toString(36).slice(2, 7),
   name: i === 0 ? 'Titular 1' : `Titular ${i+1}`,
@@ -231,17 +256,17 @@ const defaultBuyer = (i) => ({
   region: 'Madrid',
   dependents: 0,
   employmentType: 'indefinido',
-  monthlyNetSalary: 2500,
+  monthlyNetSalary: i === 0 ? 2500 : 0,
   variableIncome: 0,
   rentalIncome: 0,
   otherIncome: 0,
-  computablePct: { salary: 100, variable: 80, rental: 80, other: 100 }
+  computablePct: { salary: 100, variable: 80, rental: 80, other: 100 },
+  savings: { ...emptySavings(), cash: i === 0 ? 40000 : 0, willingToUse: i === 0 ? 40000 : 0, emergencyReserve: i === 0 ? 8000 : 0 }
 });
 
 const INITIAL_STATE = {
   simName: 'Mi simulación',
   buyers: [defaultBuyer(0)],
-  savings: { cash: 40000, deposits: 0, funds: 0, stocks: 0, crypto: 0, pensionPlans: 0, otherLiquid: 0, otherIlliquid: 0, willingToUse: 40000, emergencyReserve: 8000, pensionAvailable: false },
   debts: [],
   monthlyExpenses: { food: 400, utilities: 150, transport: 150, education: 0, insurance: 80, children: 0, otherHome: 0, other: 100 },
   property: { price: 250000, region: 'Madrid', isNew: false, garagePrice: 0, storagePrice: 0, reforms: 0, furniture: 0, agencyFee: 0, otherInitialCosts: 0 },
@@ -249,8 +274,8 @@ const INITIAL_STATE = {
   mortgage: { downPaymentPct: 20, termYears: 30, type: 'fijo', tin: 3.25, euribor: 3.5, spread: 1.0, revisionMonths: 12, fixedYears: 5, postFixedTin: 4.0, openingFeePct: 0.5, linkedProductsAnnual: 600, maxLtv: 80, maxAgeAtMaturity: 75, debtThreshold: 0.35 }
 };
 
-const LS_KEY = 'simulador_hipoteca_v1';
-const LS_LIST = 'simulador_hipoteca_list_v1';
+const LS_KEY = 'simulador_hipoteca_v2';
+const LS_LIST = 'simulador_hipoteca_list_v2';
 const loadCurrent = () => { try { const r = localStorage.getItem(LS_KEY); if (r) return { ...INITIAL_STATE, ...JSON.parse(r) }; } catch(e){} return INITIAL_STATE; };
 const loadList = () => { try { return JSON.parse(localStorage.getItem(LS_LIST) || '{}'); } catch(e) { return {}; } };
 
@@ -261,12 +286,10 @@ const inputCls = "w-full px-3 py-2 rounded-lg border border-slate-300 dark:borde
 const labelCls = "block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1";
 const helpCls = "text-xs text-slate-500 dark:text-slate-400 mt-1";
 
-/* Etiqueta con icono de info y tooltip flotante */
 const LabelWithTooltip = ({ label, tooltip }) => {
   const [show, setShow] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0, placement: 'top' });
   const ref = useRef(null);
-
   const handleEnter = () => {
     if (!ref.current) return;
     const rect = ref.current.getBoundingClientRect();
@@ -278,40 +301,24 @@ const LabelWithTooltip = ({ label, tooltip }) => {
     });
     setShow(true);
   };
-
   return (
     <>
       <label className={labelCls}>
-        <span
-          ref={ref}
+        <span ref={ref}
           className="inline-flex items-center gap-1 cursor-help border-b border-dotted border-slate-400 dark:border-slate-500"
-          onMouseEnter={handleEnter}
-          onMouseLeave={() => setShow(false)}
-          onFocus={handleEnter}
-          onBlur={() => setShow(false)}
-          tabIndex={0}
-        >
+          onMouseEnter={handleEnter} onMouseLeave={() => setShow(false)}
+          onFocus={handleEnter} onBlur={() => setShow(false)} tabIndex={0}>
           {label}
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
-            className="w-3.5 h-3.5 text-slate-400 inline-block">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-slate-400 inline-block">
             <path fillRule="evenodd" d="M18 10A8 8 0 1 1 2 10a8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z" clipRule="evenodd" />
           </svg>
         </span>
       </label>
       {show && tooltip && (
-        <div
-          className="fixed z-50 max-w-xs px-3 py-2 text-xs rounded-lg bg-slate-900 dark:bg-slate-700 text-white shadow-xl pointer-events-none"
-          style={{
-            top: pos.top,
-            left: pos.left,
-            transform: pos.placement === 'top'
-              ? 'translate(-50%, -100%)'
-              : 'translate(-50%, 0)'
-          }}
-        >
+        <div className="fixed z-50 max-w-xs px-3 py-2 text-xs rounded-lg bg-slate-900 dark:bg-slate-700 text-white shadow-xl pointer-events-none"
+          style={{ top: pos.top, left: pos.left, transform: pos.placement === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)' }}>
           {tooltip}
-          <div className={"absolute left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-slate-900 dark:bg-slate-700 " +
-            (pos.placement === 'top' ? '-bottom-1' : '-top-1')} />
+          <div className={"absolute left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-slate-900 dark:bg-slate-700 " + (pos.placement === 'top' ? '-bottom-1' : '-top-1')} />
         </div>
       )}
     </>
@@ -363,11 +370,7 @@ const Toggle = ({ label, checked, onChange, tooltip }) => {
     if (!ref.current) return;
     const rect = ref.current.getBoundingClientRect();
     const placement = (rect.top < 180) ? 'bottom' : 'top';
-    setPos({
-      top: placement === 'top' ? rect.top - 8 : rect.bottom + 8,
-      left: Math.min(rect.left + rect.width / 2, window.innerWidth - 160),
-      placement
-    });
+    setPos({ top: placement === 'top' ? rect.top - 8 : rect.bottom + 8, left: Math.min(rect.left + rect.width / 2, window.innerWidth - 160), placement });
     setShow(true);
   };
   return (
@@ -380,14 +383,10 @@ const Toggle = ({ label, checked, onChange, tooltip }) => {
         {label}
       </span>
       {show && tooltip && (
-        <div
-          className="fixed z-50 max-w-xs px-3 py-2 text-xs rounded-lg bg-slate-900 dark:bg-slate-700 text-white shadow-xl pointer-events-none"
-          style={{ top: pos.top, left: pos.left,
-            transform: pos.placement === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)' }}
-        >
+        <div className="fixed z-50 max-w-xs px-3 py-2 text-xs rounded-lg bg-slate-900 dark:bg-slate-700 text-white shadow-xl pointer-events-none"
+          style={{ top: pos.top, left: pos.left, transform: pos.placement === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)' }}>
           {tooltip}
-          <div className={"absolute left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-slate-900 dark:bg-slate-700 " +
-            (pos.placement === 'top' ? '-bottom-1' : '-top-1')} />
+          <div className={"absolute left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-slate-900 dark:bg-slate-700 " + (pos.placement === 'top' ? '-bottom-1' : '-top-1')} />
         </div>
       )}
     </label>
@@ -410,7 +409,7 @@ const KPI = ({ label, value, sub, color='slate' }) => {
 };
 
 /* =========================================================
-   GRÁFICOS SVG PUROS
+   GRÁFICOS SVG
 ========================================================= */
 const DonutChart = ({ data, colors, size=200 }) => {
   const total = data.reduce((s, d) => s + Math.max(0, d.value), 0);
@@ -463,8 +462,7 @@ const AreaChartSVG = ({ data, height=240 }) => {
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{height}}>
       {[...Array(ticks+1)].map((_, i) => {
-        const v = (maxY / ticks) * i;
-        const yy = y(v);
+        const v = (maxY / ticks) * i; const yy = y(v);
         return (
           <g key={i}>
             <line x1={P.l} x2={W-P.r} y1={yy} y2={yy} stroke="#e2e8f0" strokeDasharray="3 3" />
@@ -492,8 +490,7 @@ const StackedBarChart = ({ data, height=260 }) => {
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{height}}>
       {[...Array(ticks+1)].map((_, i) => {
-        const v = (maxY / ticks) * i;
-        const yy = y(v);
+        const v = (maxY / ticks) * i; const yy = y(v);
         return (
           <g key={i}>
             <line x1={P.l} x2={W-P.r} y1={yy} y2={yy} stroke="#e2e8f0" strokeDasharray="3 3" />
@@ -557,7 +554,7 @@ const BuyersSection = ({ buyers, setBuyers }) => {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Compradores e ingresos</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Añade hasta 4 titulares. Pasa el cursor sobre cada campo para ver su explicación.</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Añade hasta 4 titulares. Cada uno tiene sus propios ingresos y ahorros.</p>
         </div>
         <button className="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium"
           onClick={() => buyers.length < 4 && setBuyers([...buyers, defaultBuyer(buyers.length)])} disabled={buyers.length>=4}>+ Añadir</button>
@@ -577,104 +574,29 @@ const BuyersSection = ({ buyers, setBuyers }) => {
                 )}
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <TextField
-                  label="Nombre o alias"
-                  tooltip="Nombre identificativo del titular. No se envía a ningún servidor; solo se usa en tu navegador para distinguir compradores."
-                  value={b.name}
-                  onChange={v => update(b.id, { name: v })}
-                />
-                <DateField
-                  label="Fecha de nacimiento"
-                  tooltip="Se usa para calcular la edad actual y la edad al vencimiento del préstamo. Muchos bancos exigen que no se superen los 70–75 años al finalizar la hipoteca."
-                  value={b.birthDate}
-                  onChange={v => update(b.id, { birthDate: v })}
-                />
-                <SelectField
-                  label="Comunidad autónoma"
-                  tooltip="Comunidad autónoma de residencia del titular. Puede afectar a la fiscalidad (ITP, deducciones autonómicas) y a los criterios bancarios."
-                  value={b.region}
-                  onChange={v => update(b.id, { region: v })}
-                  options={REGIONS.map(r => ({ value: r, label: r }))}
-                />
-                <NumberField
-                  label="Personas dependientes"
-                  tooltip="Número de hijos o personas a tu cargo. Afecta al presupuesto familiar disponible y, en algunas CCAA, a bonificaciones fiscales."
-                  value={b.dependents}
-                  onChange={v => update(b.id, { dependents: v })}
-                  min={0} max={10}
-                />
-                <SelectField
-                  label="Tipo de empleo"
-                  tooltip="Los bancos valoran la estabilidad laboral. Indefinido y funcionario se consideran más estables que temporal o autónomo, lo que puede afectar al % de financiación."
-                  value={b.employmentType}
-                  onChange={v => update(b.id, { employmentType: v })}
-                  options={[{value:'indefinido',label:'Indefinido'},{value:'temporal',label:'Temporal'},{value:'funcionario',label:'Funcionario'},{value:'autonomo',label:'Autónomo'},{value:'pensionista',label:'Pensionista'},{value:'otro',label:'Otro'}]}
-                />
+                <TextField label="Nombre o alias" tooltip="Nombre identificativo del titular. Solo se usa en tu navegador." value={b.name} onChange={v => update(b.id, { name: v })} />
+                <DateField label="Fecha de nacimiento" tooltip="Se usa para calcular edad actual y edad al vencimiento. Habitual máx. 70–75 años al final." value={b.birthDate} onChange={v => update(b.id, { birthDate: v })} />
+                <SelectField label="Comunidad autónoma" tooltip="Puede afectar a fiscalidad (ITP, deducciones) y criterios bancarios." value={b.region} onChange={v => update(b.id, { region: v })} options={REGIONS.map(r => ({ value: r, label: r }))} />
+                <NumberField label="Personas dependientes" tooltip="Hijos o personas a tu cargo. Afecta al presupuesto y a bonificaciones fiscales." value={b.dependents} onChange={v => update(b.id, { dependents: v })} min={0} max={10} />
+                <SelectField label="Tipo de empleo" tooltip="Los bancos valoran la estabilidad: indefinido y funcionario son más favorables." value={b.employmentType} onChange={v => update(b.id, { employmentType: v })}
+                  options={[{value:'indefinido',label:'Indefinido'},{value:'temporal',label:'Temporal'},{value:'funcionario',label:'Funcionario'},{value:'autonomo',label:'Autónomo'},{value:'pensionista',label:'Pensionista'},{value:'otro',label:'Otro'}]} />
               </div>
               <div className="mt-6">
                 <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Ingresos netos mensuales</h4>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <NumberField
-                    label="Nómina neta"
-                    tooltip="Salario neto mensual que recibes en cuenta (después de IRPF y Seguridad Social). Es el ingreso principal que computan los bancos."
-                    value={b.monthlyNetSalary}
-                    onChange={v => update(b.id, { monthlyNetSalary: v })}
-                    suffix="€/mes" min={0}
-                  />
-                  <NumberField
-                    label="Variables / bonus"
-                    tooltip="Ingresos variables: bonus, comisiones, horas extra. Los bancos suelen computar solo un 70–80% de estos ingresos por su variabilidad."
-                    value={b.variableIncome}
-                    onChange={v => update(b.id, { variableIncome: v })}
-                    suffix="€/mes" min={0}
-                  />
-                  <NumberField
-                    label="Alquileres"
-                    tooltip="Rentas netas mensuales por alquiler de inmuebles. Los bancos suelen computar un 70–80% del importe neto."
-                    value={b.rentalIncome}
-                    onChange={v => update(b.id, { rentalIncome: v })}
-                    suffix="€/mes" min={0}
-                  />
-                  <NumberField
-                    label="Otros ingresos"
-                    tooltip="Otros ingresos recurrentes: pensiones, ayudas, ingresos de actividades secundarias. Los bancos valoran su recurrencia y estabilidad."
-                    value={b.otherIncome}
-                    onChange={v => update(b.id, { otherIncome: v })}
-                    suffix="€/mes" min={0}
-                  />
+                  <NumberField label="Nómina neta" tooltip="Salario neto mensual tras IRPF y SS. Ingreso principal computable." value={b.monthlyNetSalary} onChange={v => update(b.id, { monthlyNetSalary: v })} suffix="€/mes" min={0} />
+                  <NumberField label="Variables / bonus" tooltip="Bonus, comisiones, horas extra. Habitual computar 70–80%." value={b.variableIncome} onChange={v => update(b.id, { variableIncome: v })} suffix="€/mes" min={0} />
+                  <NumberField label="Alquileres" tooltip="Rentas netas mensuales por alquiler. Habitual computar 70–80%." value={b.rentalIncome} onChange={v => update(b.id, { rentalIncome: v })} suffix="€/mes" min={0} />
+                  <NumberField label="Otros ingresos" tooltip="Pensiones, ayudas, actividades secundarias. Valora recurrencia." value={b.otherIncome} onChange={v => update(b.id, { otherIncome: v })} suffix="€/mes" min={0} />
                 </div>
               </div>
               <div className="mt-6">
                 <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">% computable para el banco</h4>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <NumberField
-                    label="Nómina"
-                    tooltip="Porcentaje de la nómina que el banco tiene en cuenta para el cálculo del ratio. Suele ser 100%."
-                    value={b.computablePct.salary}
-                    onChange={v => updatePct(b.id, 'salary', v)}
-                    suffix="%" min={0} max={100}
-                  />
-                  <NumberField
-                    label="Variables"
-                    tooltip="Porcentaje de los ingresos variables que el banco computa. Habitual 70–80% por la incertidumbre de cobrarlos."
-                    value={b.computablePct.variable}
-                    onChange={v => updatePct(b.id, 'variable', v)}
-                    suffix="%" min={0} max={100}
-                  />
-                  <NumberField
-                    label="Alquileres"
-                    tooltip="Porcentaje del alquiler neto que el banco computa. Habitual 70–80% para cubrir vacíos e impagos."
-                    value={b.computablePct.rental}
-                    onChange={v => updatePct(b.id, 'rental', v)}
-                    suffix="%" min={0} max={100}
-                  />
-                  <NumberField
-                    label="Otros"
-                    tooltip="Porcentaje de otros ingresos que el banco computa. Depende del tipo y recurrencia; consulta con tu entidad."
-                    value={b.computablePct.other}
-                    onChange={v => updatePct(b.id, 'other', v)}
-                    suffix="%" min={0} max={100}
-                  />
+                  <NumberField label="Nómina" tooltip="Porcentaje de la nómina que cuenta el banco. Habitual 100%." value={b.computablePct.salary} onChange={v => updatePct(b.id, 'salary', v)} suffix="%" min={0} max={100} />
+                  <NumberField label="Variables" tooltip="Porcentaje de variables computado. Habitual 70–80%." value={b.computablePct.variable} onChange={v => updatePct(b.id, 'variable', v)} suffix="%" min={0} max={100} />
+                  <NumberField label="Alquileres" tooltip="Porcentaje del alquiler neto computado. Habitual 70–80%." value={b.computablePct.rental} onChange={v => updatePct(b.id, 'rental', v)} suffix="%" min={0} max={100} />
+                  <NumberField label="Otros" tooltip="Porcentaje de otros ingresos computado. Depende del tipo." value={b.computablePct.other} onChange={v => updatePct(b.id, 'other', v)} suffix="%" min={0} max={100} />
                 </div>
               </div>
             </Card>
@@ -685,104 +607,135 @@ const BuyersSection = ({ buyers, setBuyers }) => {
   );
 };
 
-const SavingsSection = ({ savings, setSavings, onUserEditWilling, willingIsCustom }) => {
-  const u = (k, v) => setSavings({ ...savings, [k]: v });
-  const liquid = computeLiquidSavings(savings);
-  const total = computeTotalPatrimony(savings);
+/* Sección de ahorros por comprador */
+const SavingsSection = ({ buyers, setBuyers }) => {
+  const updateSavings = (buyerId, key, value) => {
+    setBuyers(buyers.map(b => b.id === buyerId ? { ...b, savings: { ...b.savings, [key]: value } } : b));
+  };
+  const toggleWillingCustom = (buyerId) => {
+    setBuyers(buyers.map(b => b.id === buyerId ? { ...b, savings: { ...b.savings, willingCustom: !b.savings.willingCustom } } : b));
+  };
+  const resyncWilling = (buyerId) => {
+    setBuyers(buyers.map(b => {
+      if (b.id !== buyerId) return b;
+      const liquid = computeLiquidSavings(b.savings);
+      return { ...b, savings: { ...b.savings, willingToUse: liquid, willingCustom: false } };
+    }));
+  };
+
+  // Sincronización automática: si el usuario no ha personalizado, willingToUse = líquido
+  useEffect(() => {
+    buyers.forEach(b => {
+      if (b.savings.willingCustom) return;
+      const liquid = computeLiquidSavings(b.savings);
+      if (liquid !== b.savings.willingToUse) {
+        updateSavings(b.id, 'willingToUse', liquid);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    buyers.map(b => [b.id, b.savings.cash, b.savings.deposits, b.savings.funds, b.savings.stocks, b.savings.crypto, b.savings.otherLiquid, b.savings.pensionPlans, b.savings.pensionAvailable, b.savings.willingCustom].join(':')).join('|')
+  ]);
+
+  const agg = aggregateSavings(buyers);
+  const totalPatrimonyAgg = computeTotalPatrimony(agg);
+  const liquidAgg = computeLiquidSavings(agg);
+
   return (
     <div>
-      <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Ahorros y patrimonio</h2>
-      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">No todos los activos son líquidos. Pasa el cursor sobre cada campo para ver su explicación.</p>
-      <Card className="p-5 mb-6">
-        <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Activos líquidos</h3>
+      <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Ahorros y patrimonio por comprador</h2>
+      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Cada titular declara sus propios activos. Los resultados agregados se calculan automáticamente.</p>
+
+      {/* Resumen agregado */}
+      <Card className="p-5 mb-6 bg-brand-50/50 dark:bg-brand-900/10 border-brand-200 dark:border-brand-800">
+        <h3 className="font-semibold text-slate-900 dark:text-white mb-3">Resumen conjunto</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <NumberField
-            label="Cuentas bancarias"
-            tooltip="Dinero disponible en cuentas corrientes y de ahorro. Totalmente líquido y utilizable para la entrada."
-            value={savings.cash} onChange={v => u('cash', v)} suffix="€" min={0}
-          />
-          <NumberField
-            label="Depósitos"
-            tooltip="Depósitos a plazo fijo. Líquidos solo si no tienen penalización por cancelación anticipada; revisa las condiciones."
-            value={savings.deposits} onChange={v => u('deposits', v)} suffix="€" min={0}
-          />
-          <NumberField
-            label="Fondos de inversión"
-            tooltip="Fondos de inversión. Se pueden vender en 1–3 días, aunque el valor puede fluctuar. Se consideran líquidos."
-            value={savings.funds} onChange={v => u('funds', v)} suffix="€" min={0}
-          />
-          <NumberField
-            label="Acciones / ETF"
-            tooltip="Acciones, ETF y otros instrumentos cotizados. Liquidez en 2–3 días hábiles, valor sujeto a mercado."
-            value={savings.stocks} onChange={v => u('stocks', v)} suffix="€" min={0}
-          />
-          <NumberField
-            label="Criptomonedas"
-            tooltip="Valor actual de criptoactivos. Alta volatilidad; algunos bancos no las aceptan como origen de fondos sin justificación."
-            value={savings.crypto} onChange={v => u('crypto', v)} suffix="€" min={0}
-          />
-          <NumberField
-            label="Otros líquidos"
-            tooltip="Otros activos que puedas convertir en dinero a corto plazo (letras del Tesoro, pagarés, etc.)."
-            value={savings.otherLiquid} onChange={v => u('otherLiquid', v)} suffix="€" min={0}
-          />
+          <div>
+            <div className="text-xs uppercase text-slate-500 font-medium">Patrimonio total</div>
+            <div className="text-xl font-bold text-slate-900 dark:text-white">{fmtEur(totalPatrimonyAgg)}</div>
+          </div>
+          <div>
+            <div className="text-xs uppercase text-slate-500 font-medium">Patrimonio líquido</div>
+            <div className="text-xl font-bold text-slate-900 dark:text-white">{fmtEur(liquidAgg)}</div>
+          </div>
+          <div>
+            <div className="text-xs uppercase text-slate-500 font-medium">Disponible para la compra</div>
+            <div className="text-xl font-bold text-brand-600 dark:text-brand-400">{fmtEur(agg.willingToUse > 0 ? Math.min(liquidAgg, agg.willingToUse) : liquidAgg)}</div>
+          </div>
         </div>
       </Card>
-      <Card className="p-5 mb-6">
-        <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Activos ilíquidos</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <NumberField
-            label="Planes de pensiones"
-            tooltip="Valor del plan de pensiones. NO se considera líquido por defecto: rescatarlo anticipadamente tributa como renta del trabajo y solo procede en supuestos legales concretos."
-            value={savings.pensionPlans} onChange={v => u('pensionPlans', v)} suffix="€" min={0}
-          />
-          <NumberField
-            label="Otros bienes"
-            tooltip="Otros bienes no financieros: coches, obras de arte, joyas, etc. Se incluyen en el patrimonio total pero no en el líquido disponible."
-            value={savings.otherIlliquid} onChange={v => u('otherIlliquid', v)} suffix="€" min={0}
-          />
-        </div>
-        <div className="mt-4">
-          <Toggle
-            label="¿Puedes disponer del plan de pensiones?"
-            tooltip="Marca si vas a rescatar el plan (por ejemplo, por jubilación o supuesto de liquidez legal). En ese caso se contabilizará como disponible, pero tributa en IRPF."
-            checked={savings.pensionAvailable}
-            onChange={v => u('pensionAvailable', v)}
-          />
-        </div>
-      </Card>
-      <Card className="p-5 mb-6">
-        <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Asignación a la compra</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <NumberField
-            label="Dinero que destinarás"
-            tooltip="Cantidad que estás dispuesto a destinar a la compra. Si dejas el valor sincronizado, se actualiza automáticamente con tu patrimonio líquido total."
-            value={savings.willingToUse}
-            onChange={v => { onUserEditWilling(); u('willingToUse', v); }}
-            suffix="€" min={0}
-            help={willingIsCustom
-              ? 'Valor personalizado. Pulsa el botón para volver a sincronizar con el líquido total.'
-              : 'Se sincroniza automáticamente con el patrimonio líquido total.'}
-          />
-          <NumberField
-            label="Reserva de emergencia"
-            tooltip="Colchón de seguridad que quieres mantener intacto tras la compra. Se suma a las necesidades de dinero, pero no se gasta."
-            value={savings.emergencyReserve} onChange={v => u('emergencyReserve', v)} suffix="€" min={0}
-          />
-        </div>
-        {willingIsCustom && (
-          <button
-            className="mt-3 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-medium"
-            onClick={() => { setSavings({ ...savings, willingToUse: computeLiquidSavings(savings) }); onUserEditWilling(true, true); }}
-          >
-            ↻ Volver a sincronizar con líquido total
-          </button>
-        )}
-      </Card>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <KPI label="Patrimonio total" value={fmtEur(total)} />
-        <KPI label="Patrimonio líquido" value={fmtEur(liquid)} />
-        <KPI label="Disponible para la compra" value={fmtEur(savings.willingToUse > 0 ? Math.min(liquid, savings.willingToUse) : liquid)} color="brand" />
+
+      <div className="space-y-6">
+        {buyers.map((b, i) => {
+          const liquid = computeLiquidSavings(b.savings);
+          const total = computeTotalPatrimony(b.savings);
+          return (
+            <Card key={b.id} className="p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-slate-900 dark:text-white">
+                  Comprador {i+1} · <span className="text-brand-600 dark:text-brand-400">{b.name}</span>
+                </h3>
+                <div className="text-xs text-slate-500">
+                  Líquido: <strong className="text-slate-700 dark:text-slate-300">{fmtEur(liquid)}</strong> ·
+                  Total: <strong className="text-slate-700 dark:text-slate-300">{fmtEur(total)}</strong>
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Activos líquidos</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <NumberField label="Cuentas bancarias" tooltip="Dinero en cuentas corrientes y de ahorro. Totalmente líquido." value={b.savings.cash} onChange={v => updateSavings(b.id, 'cash', v)} suffix="€" min={0} />
+                  <NumberField label="Depósitos" tooltip="Depósitos a plazo. Líquidos si no tienen penalización por cancelación anticipada." value={b.savings.deposits} onChange={v => updateSavings(b.id, 'deposits', v)} suffix="€" min={0} />
+                  <NumberField label="Fondos de inversión" tooltip="Fondos. Vendibles en 1–3 días; valor fluctuante. Se consideran líquidos." value={b.savings.funds} onChange={v => updateSavings(b.id, 'funds', v)} suffix="€" min={0} />
+                  <NumberField label="Acciones / ETF" tooltip="Cotizados. Liquidez en 2–3 días; valor sujeto a mercado." value={b.savings.stocks} onChange={v => updateSavings(b.id, 'stocks', v)} suffix="€" min={0} />
+                  <NumberField label="Criptomonedas" tooltip="Alta volatilidad. Algunos bancos exigen justificación del origen." value={b.savings.crypto} onChange={v => updateSavings(b.id, 'crypto', v)} suffix="€" min={0} />
+                  <NumberField label="Otros líquidos" tooltip="Letras, pagarés u otros activos convertibles a corto plazo." value={b.savings.otherLiquid} onChange={v => updateSavings(b.id, 'otherLiquid', v)} suffix="€" min={0} />
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Activos ilíquidos</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <NumberField label="Planes de pensiones" tooltip="Solo líquido si marcas la casilla. El rescate anticipado tributa." value={b.savings.pensionPlans} onChange={v => updateSavings(b.id, 'pensionPlans', v)} suffix="€" min={0} />
+                  <NumberField label="Otros bienes" tooltip="Vehículos, arte, joyas, etc. Cuentan en patrimonio total, no en líquido." value={b.savings.otherIlliquid} onChange={v => updateSavings(b.id, 'otherIlliquid', v)} suffix="€" min={0} />
+                </div>
+                <div className="mt-4">
+                  <Toggle label="¿Puedes disponer del plan de pensiones?" tooltip="Marca si vas a rescatarlo (jubilación o supuesto legal). Tributa en IRPF." checked={b.savings.pensionAvailable} onChange={v => updateSavings(b.id, 'pensionAvailable', v)} />
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Asignación a la compra</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <NumberField
+                    label="Dinero que destinarás"
+                    tooltip="Cantidad que este titular aporta a la compra. Si no lo personalizas, se sincroniza con su líquido total."
+                    value={b.savings.willingToUse}
+                    onChange={v => { updateSavings(b.id, 'willingToUse', v); updateSavings(b.id, 'willingCustom', true); }}
+                    suffix="€" min={0}
+                    help={b.savings.willingCustom
+                      ? 'Valor personalizado. Pulsa el botón para resincronizar.'
+                      : 'Se sincroniza automáticamente con el líquido total.'}
+                  />
+                  <NumberField
+                    label="Reserva de emergencia"
+                    tooltip="Colchón que este titular quiere mantener intacto. Se suma a las necesidades conjuntas."
+                    value={b.savings.emergencyReserve}
+                    onChange={v => updateSavings(b.id, 'emergencyReserve', v)}
+                    suffix="€" min={0}
+                  />
+                </div>
+                {b.savings.willingCustom && (
+                  <button
+                    className="mt-3 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-medium"
+                    onClick={() => resyncWilling(b.id)}>
+                    ↻ Volver a sincronizar con líquido total
+                  </button>
+                )}
+              </div>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );
@@ -807,33 +760,12 @@ const DebtsSection = ({ debts, setDebts, monthlyExpenses, setMonthlyExpenses }) 
           <div className="space-y-3">
             {debts.map(d => (
               <div key={d.id} className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end border-t border-slate-100 dark:border-slate-800 pt-3 first:border-0 first:pt-0">
-                <SelectField
-                  label="Tipo"
-                  tooltip="Tipo de deuda. Los bancos revisan el CIRBE; cualquier deuda declarada afecta al ratio de endeudamiento."
-                  value={d.type} onChange={v => update(d.id, { type: v })}
-                  options={Object.entries(typeLabels).map(([value,label]) => ({ value, label }))}
-                />
-                <NumberField
-                  label="Capital"
-                  tooltip="Capital pendiente de la deuda. Si la cancelas con ahorros, se descuenta de tu patrimonio disponible."
-                  value={d.outstanding} onChange={v => update(d.id, { outstanding: v })} suffix="€" min={0}
-                />
-                <NumberField
-                  label="Cuota"
-                  tooltip="Cuota mensual actual. Se suma a la nueva hipoteca para calcular el ratio de endeudamiento."
-                  value={d.monthlyPayment} onChange={v => update(d.id, { monthlyPayment: v })} suffix="€/mes" min={0}
-                />
-                <NumberField
-                  label="Coste cancelar"
-                  tooltip="Coste estimado de cancelación anticipada (comisión + intereses pendientes si aplica). Solo se aplica si marcas 'Cancelable'."
-                  value={d.cancelCost} onChange={v => update(d.id, { cancelCost: v })} suffix="€" min={0}
-                />
+                <SelectField label="Tipo" tooltip="Los bancos revisan CIRBE. Toda deuda declarada afecta al ratio." value={d.type} onChange={v => update(d.id, { type: v })} options={Object.entries(typeLabels).map(([value,label]) => ({ value, label }))} />
+                <NumberField label="Capital" tooltip="Capital pendiente. Si la cancelas, se descuenta del disponible." value={d.outstanding} onChange={v => update(d.id, { outstanding: v })} suffix="€" min={0} />
+                <NumberField label="Cuota" tooltip="Cuota mensual actual. Se suma a la nueva hipoteca para el ratio." value={d.monthlyPayment} onChange={v => update(d.id, { monthlyPayment: v })} suffix="€/mes" min={0} />
+                <NumberField label="Coste cancelar" tooltip="Comisión + intereses si cancelas anticipadamente. Aplica solo si marcas Cancelable." value={d.cancelCost} onChange={v => update(d.id, { cancelCost: v })} suffix="€" min={0} />
                 <div className="flex items-center h-full pb-2">
-                  <Toggle
-                    label="Cancelable"
-                    tooltip="Marca si esta deuda se puede cancelar antes de la compra. En ese caso, su capital y coste se descuentan del dinero disponible."
-                    checked={d.cancelable} onChange={v => update(d.id, { cancelable: v })}
-                  />
+                  <Toggle label="Cancelable" tooltip="Marca si esta deuda se cancela antes de la compra." checked={d.cancelable} onChange={v => update(d.id, { cancelable: v })} />
                 </div>
                 <button className="px-3 py-2 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 text-sm dark:bg-red-900/30 dark:text-red-300" onClick={() => remove(d.id)}>×</button>
               </div>
@@ -843,16 +775,16 @@ const DebtsSection = ({ debts, setDebts, monthlyExpenses, setMonthlyExpenses }) 
       </Card>
       <Card className="p-5">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Gastos familiares mensuales</h3>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">Estos gastos NO computan en el ratio bancario, pero sí en tu presupuesto real disponible cada mes.</p>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">No computan en el ratio bancario, pero sí en tu presupuesto real disponible.</p>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <NumberField label="Alimentación" tooltip="Supermercado, comida fuera de casa y productos de alimentación." value={monthlyExpenses.food} onChange={v => ue('food', v)} suffix="€" min={0} />
+          <NumberField label="Alimentación" tooltip="Supermercado y comida fuera de casa." value={monthlyExpenses.food} onChange={v => ue('food', v)} suffix="€" min={0} />
           <NumberField label="Suministros" tooltip="Luz, agua, gas, internet y telefonía." value={monthlyExpenses.utilities} onChange={v => ue('utilities', v)} suffix="€" min={0} />
-          <NumberField label="Transporte" tooltip="Combustible, transporte público, seguros de coche, mantenimiento y aparcamiento." value={monthlyExpenses.transport} onChange={v => ue('transport', v)} suffix="€" min={0} />
-          <NumberField label="Educación" tooltip="Colegios, universidad, material escolar, clases particulares y actividades extraescolares." value={monthlyExpenses.education} onChange={v => ue('education', v)} suffix="€" min={0} />
-          <NumberField label="Seguros" tooltip="Seguros no vinculados a la vivienda (vida, hogar, coche, salud, etc.) que ya pagas actualmente." value={monthlyExpenses.insurance} onChange={v => ue('insurance', v)} suffix="€" min={0} />
-          <NumberField label="Hijos" tooltip="Gastos específicos de hijos que no estén cubiertos en otras categorías (ropa, ocio, etc.)." value={monthlyExpenses.children} onChange={v => ue('children', v)} suffix="€" min={0} />
-          <NumberField label="Otras viviendas" tooltip="Gastos de otras propiedades que mantengas (comunidad, IBI, mantenimiento). No incluyas la nueva vivienda aquí." value={monthlyExpenses.otherHome} onChange={v => ue('otherHome', v)} suffix="€" min={0} />
-          <NumberField label="Otros gastos" tooltip="Otros gastos recurrentes: ocio, suscripciones, cuidado personal, imprevistos medios, etc." value={monthlyExpenses.other} onChange={v => ue('other', v)} suffix="€" min={0} />
+          <NumberField label="Transporte" tooltip="Combustible, transporte público, seguro y mantenimiento del coche." value={monthlyExpenses.transport} onChange={v => ue('transport', v)} suffix="€" min={0} />
+          <NumberField label="Educación" tooltip="Colegios, universidad, material, clases, extraescolares." value={monthlyExpenses.education} onChange={v => ue('education', v)} suffix="€" min={0} />
+          <NumberField label="Seguros" tooltip="Seguros no vinculados a la vivienda nueva (vida, coche, salud)." value={monthlyExpenses.insurance} onChange={v => ue('insurance', v)} suffix="€" min={0} />
+          <NumberField label="Hijos" tooltip="Gastos específicos de hijos no cubiertos en otras categorías." value={monthlyExpenses.children} onChange={v => ue('children', v)} suffix="€" min={0} />
+          <NumberField label="Otras viviendas" tooltip="Gastos de propiedades existentes (comunidad, IBI, mantenimiento)." value={monthlyExpenses.otherHome} onChange={v => ue('otherHome', v)} suffix="€" min={0} />
+          <NumberField label="Otros gastos" tooltip="Ocio, suscripciones, imprevistos medios." value={monthlyExpenses.other} onChange={v => ue('other', v)} suffix="€" min={0} />
         </div>
       </Card>
     </div>
@@ -871,53 +803,15 @@ const PropertySection = ({ property, setProperty, tax, setTax }) => {
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Datos del inmueble</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <NumberField
-            label="Precio de compraventa"
-            tooltip="Precio de la vivienda sin contar garaje, trastero ni gastos. Es la base para el cálculo de impuestos y del LTV."
-            value={property.price} onChange={v => u('price', v)} suffix="€" min={0}
-          />
-          <SelectField
-            label="Comunidad autónoma"
-            tooltip="Ubicación del inmueble. Determina el ITP aplicable (vivienda usada) y otras bonificaciones autonómicas."
-            value={property.region} onChange={v => u('region', v)}
-            options={REGIONS.map(r => ({ value: r, label: r }))}
-          />
-          <SelectField
-            label="Tipo de vivienda"
-            tooltip="Segunda mano → ITP (Impuesto de Transmisiones Patrimoniales). Obra nueva → IVA (10%) + AJD (Actos Jurídicos Documentados)."
-            value={property.isNew ? 'new' : 'used'} onChange={v => u('isNew', v === 'new')}
-            options={[{ value: 'used', label: 'Segunda mano (ITP)' }, { value: 'new', label: 'Obra nueva (IVA + AJD)' }]}
-          />
-          <NumberField
-            label="Plaza de garaje"
-            tooltip="Precio del garaje si se compra junto a la vivienda. Se suma al precio total y tributa también."
-            value={property.garagePrice} onChange={v => u('garagePrice', v)} suffix="€" min={0}
-          />
-          <NumberField
-            label="Trastero"
-            tooltip="Precio del trastero si se compra junto a la vivienda. Se suma al precio total y tributa también."
-            value={property.storagePrice} onChange={v => u('storagePrice', v)} suffix="€" min={0}
-          />
-          <NumberField
-            label="Comisión inmobiliaria"
-            tooltip="Honorarios de la agencia inmobiliaria. Suele ser un % del precio (3–5%) y lleva IVA si el vendedor es empresa."
-            value={property.agencyFee} onChange={v => u('agencyFee', v)} suffix="€" min={0}
-          />
-          <NumberField
-            label="Reformas"
-            tooltip="Presupuesto estimado de reformas antes de entrar a vivir. Se suma al dinero necesario."
-            value={property.reforms} onChange={v => u('reforms', v)} suffix="€" min={0}
-          />
-          <NumberField
-            label="Mobiliario"
-            tooltip="Coste estimado del mobiliario y equipamiento inicial de la vivienda."
-            value={property.furniture} onChange={v => u('furniture', v)} suffix="€" min={0}
-          />
-          <NumberField
-            label="Otros gastos iniciales"
-            tooltip="Otros gastos del inicio: mudanza, cambios de suministros, pequeños arreglos, comunidad inicial, etc."
-            value={property.otherInitialCosts} onChange={v => u('otherInitialCosts', v)} suffix="€" min={0}
-          />
+          <NumberField label="Precio de compraventa" tooltip="Precio de la vivienda sin anexos ni gastos. Base para impuestos y LTV." value={property.price} onChange={v => u('price', v)} suffix="€" min={0} />
+          <SelectField label="Comunidad autónoma" tooltip="Ubicación del inmueble. Determina el ITP aplicable." value={property.region} onChange={v => u('region', v)} options={REGIONS.map(r => ({ value: r, label: r }))} />
+          <SelectField label="Tipo de vivienda" tooltip="Segunda mano → ITP. Obra nueva → IVA 10% + AJD." value={property.isNew ? 'new' : 'used'} onChange={v => u('isNew', v === 'new')} options={[{ value: 'used', label: 'Segunda mano (ITP)' }, { value: 'new', label: 'Obra nueva (IVA + AJD)' }]} />
+          <NumberField label="Plaza de garaje" tooltip="Precio del garaje si va junto a la vivienda." value={property.garagePrice} onChange={v => u('garagePrice', v)} suffix="€" min={0} />
+          <NumberField label="Trastero" tooltip="Precio del trastero si va junto a la vivienda." value={property.storagePrice} onChange={v => u('storagePrice', v)} suffix="€" min={0} />
+          <NumberField label="Comisión inmobiliaria" tooltip="Honorarios de la agencia (3–5% del precio + IVA)." value={property.agencyFee} onChange={v => u('agencyFee', v)} suffix="€" min={0} />
+          <NumberField label="Reformas" tooltip="Presupuesto de reformas antes de entrar a vivir." value={property.reforms} onChange={v => u('reforms', v)} suffix="€" min={0} />
+          <NumberField label="Mobiliario" tooltip="Mobiliario y equipamiento inicial." value={property.furniture} onChange={v => u('furniture', v)} suffix="€" min={0} />
+          <NumberField label="Otros gastos iniciales" tooltip="Mudanza, suministros, arreglos iniciales." value={property.otherInitialCosts} onChange={v => u('otherInitialCosts', v)} suffix="€" min={0} />
         </div>
         <div className="mt-4 p-3 rounded-lg bg-brand-50 dark:bg-brand-900/20 text-sm">
           <strong>Precio total (vivienda + anexos):</strong> {fmtEur(totalPrice)}
@@ -932,7 +826,7 @@ const PropertySection = ({ property, setProperty, tax, setTax }) => {
           </div>
         </div>
         <div className="p-3 mb-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-xs text-amber-800 dark:text-amber-200">
-          ⚠️ Tipos orientativos de vivienda de segunda mano. Muchas CCAA aplican tipos reducidos (jóvenes &lt;35, familia numerosa, VPO, discapacidad) que <strong>no se aplican automáticamente</strong>. Verifica la normativa vigente y ajústalo en modo Manual si procede.
+          ⚠️ Tipos orientativos de vivienda de segunda mano. Muchas CCAA aplican tipos reducidos (jóvenes, familia numerosa, VPO) no aplicados aquí. Verifica la normativa vigente.
         </div>
         {tax.mode === 'auto' && !property.isNew && (
           <div className="p-3 mb-4 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-xs text-slate-600 dark:text-slate-300">
@@ -940,42 +834,13 @@ const PropertySection = ({ property, setProperty, tax, setTax }) => {
           </div>
         )}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <NumberField
-            label="ITP (%)"
-            tooltip="Impuesto de Transmisiones Patrimoniales. Solo aplica a vivienda de segunda mano. Varía por CCAA y puede tener tipos reducidos según perfil y precio."
-            value={tax.mode === 'auto' ? autoItp : tax.itpPct} onChange={v => ut('itpPct', v)} suffix="%" min={0} max={20} step={0.1}
-            help={tax.mode==='auto'?'Automático según CCAA':'Valor personalizado'}
-          />
-          <NumberField
-            label="IVA (%)"
-            tooltip="Solo para obra nueva. Tipo general 10% para vivienda libre; 4% para VPO. Editable si tu caso es especial."
-            value={tax.ivaPct} onChange={v => ut('ivaPct', v)} suffix="%" min={0} max={30} step={0.1}
-          />
-          <NumberField
-            label="AJD (%)"
-            tooltip="Actos Jurídicos Documentados. Solo en obra nueva. Varía por CCAA (0,5%–1,5% típicamente)."
-            value={tax.ajdPct} onChange={v => ut('ajdPct', v)} suffix="%" min={0} max={5} step={0.1}
-          />
-          <NumberField
-            label="Notaría"
-            tooltip="Honorarios del notario por la escritura pública de compraventa. Suele estar entre 600 y 1.200 € según precio."
-            value={tax.notary} onChange={v => ut('notary', v)} suffix="€" min={0}
-          />
-          <NumberField
-            label="Registro"
-            tooltip="Inscripción en el Registro de la Propiedad. Suele estar entre 400 y 700 € según precio y CCAA."
-            value={tax.registry} onChange={v => ut('registry', v)} suffix="€" min={0}
-          />
-          <NumberField
-            label="Tasación"
-            tooltip="Informe de tasación oficial que exige el banco para conceder la hipoteca. Suele costar 250–500 €."
-            value={tax.appraisal} onChange={v => ut('appraisal', v)} suffix="€" min={0}
-          />
-          <NumberField
-            label="Gestoría"
-            tooltip="Honorarios de gestoría por tramitar escrituras, inscripción y, si procede, la constitución de la hipoteca."
-            value={tax.gestoria} onChange={v => ut('gestoria', v)} suffix="€" min={0}
-          />
+          <NumberField label="ITP (%)" tooltip="ITP solo vivienda usada. Varía por CCAA; hay tipos reducidos según perfil." value={tax.mode === 'auto' ? autoItp : tax.itpPct} onChange={v => ut('itpPct', v)} suffix="%" min={0} max={20} step={0.1} help={tax.mode==='auto'?'Automático según CCAA':'Personalizado'} />
+          <NumberField label="IVA (%)" tooltip="Solo obra nueva. 10% vivienda libre, 4% VPO." value={tax.ivaPct} onChange={v => ut('ivaPct', v)} suffix="%" min={0} max={30} step={0.1} />
+          <NumberField label="AJD (%)" tooltip="Solo obra nueva. Varía por CCAA (0,5%–1,5%)." value={tax.ajdPct} onChange={v => ut('ajdPct', v)} suffix="%" min={0} max={5} step={0.1} />
+          <NumberField label="Notaría" tooltip="Honorarios notario. 600–1.200 € típico." value={tax.notary} onChange={v => ut('notary', v)} suffix="€" min={0} />
+          <NumberField label="Registro" tooltip="Inscripción en el Registro de la Propiedad. 400–700 €." value={tax.registry} onChange={v => ut('registry', v)} suffix="€" min={0} />
+          <NumberField label="Tasación" tooltip="Informe oficial exigido por el banco. 250–500 €." value={tax.appraisal} onChange={v => ut('appraisal', v)} suffix="€" min={0} />
+          <NumberField label="Gestoría" tooltip="Honorarios de gestoría por trámites." value={tax.gestoria} onChange={v => ut('gestoria', v)} suffix="€" min={0} />
         </div>
       </Card>
     </div>
@@ -990,96 +855,37 @@ const MortgageSection = ({ mortgage, setMortgage, property }) => {
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Hipoteca y financiación</h2>
-      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Configura las condiciones. Los perfiles de LTV y plazo son parámetros editables.</p>
+      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Configura las condiciones. Los perfiles son editables.</p>
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Condiciones</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <NumberField
-            label="Entrada (%)"
-            tooltip="Porcentaje del precio que aportas de tu bolsillo. El banco financia el resto hasta el LTV máximo permitido. Habitual 20%."
-            value={mortgage.downPaymentPct} onChange={v => u('downPaymentPct', v)} suffix="%" min={0} max={100} step={1}
-            help={`≈ ${fmtEur(totalPrice * mortgage.downPaymentPct / 100)}`}
-          />
-          <NumberField
-            label="Plazo (años)"
-            tooltip="Duración del préstamo. A más plazo, cuota más baja pero más intereses totales y mayor edad al vencimiento. Habitual 25–30 años."
-            value={mortgage.termYears} onChange={v => u('termYears', v)} min={1} max={40} suffix="años"
-          />
-          <SelectField
-            label="Tipo de interés"
-            tooltip="Fijo: TIN constante toda la vida. Variable: Euríbor + diferencial, revisable. Mixto: tramo fijo + tramo variable."
-            value={mortgage.type} onChange={v => u('type', v)}
-            options={[{ value: 'fijo', label: 'Fijo' }, { value: 'variable', label: 'Variable' }, { value: 'mixto', label: 'Mixto' }]}
-          />
-          <NumberField
-            label="TIN anual"
-            tooltip="Tipo de Interés Nominal anual. En fijo es el tipo pactado; en variable, es el tipo vigente actual (Euríbor + diferencial)."
-            value={mortgage.tin} onChange={v => u('tin', v)} suffix="%" min={0} max={20} step={0.05}
-          />
-          <NumberField
-            label="Comisión apertura"
-            tooltip="Comisión que cobra el banco al formalizar la hipoteca. Suele ser 0%–1% del capital prestado."
-            value={mortgage.openingFeePct} onChange={v => u('openingFeePct', v)} suffix="%" min={0} max={5} step={0.1}
-          />
-          <NumberField
-            label="Productos vinculados (anual)"
-            tooltip="Coste anual de seguros, tarjetas y otros productos que el banco exige para aplicar la bonificación del tipo."
-            value={mortgage.linkedProductsAnnual} onChange={v => u('linkedProductsAnnual', v)} suffix="€" min={0}
-          />
+          <NumberField label="Entrada (%)" tooltip="Porcentaje aportado de tu bolsillo. El banco financia el resto hasta el LTV máximo. Habitual 20%." value={mortgage.downPaymentPct} onChange={v => u('downPaymentPct', v)} suffix="%" min={0} max={100} step={1} help={`≈ ${fmtEur(totalPrice * mortgage.downPaymentPct / 100)}`} />
+          <NumberField label="Plazo (años)" tooltip="Duración. Más plazo = cuota menor pero más intereses y mayor edad al vencimiento. Habitual 25–30 años." value={mortgage.termYears} onChange={v => u('termYears', v)} min={1} max={40} suffix="años" />
+          <SelectField label="Tipo de interés" tooltip="Fijo: TIN constante. Variable: Euríbor + diferencial revisable. Mixto: tramo fijo + variable." value={mortgage.type} onChange={v => u('type', v)} options={[{ value: 'fijo', label: 'Fijo' }, { value: 'variable', label: 'Variable' }, { value: 'mixto', label: 'Mixto' }]} />
+          <NumberField label="TIN anual" tooltip="Tipo de Interés Nominal anual. En fijo el pactado; en variable el vigente actual." value={mortgage.tin} onChange={v => u('tin', v)} suffix="%" min={0} max={20} step={0.05} />
+          <NumberField label="Comisión apertura" tooltip="Comisión del banco al formalizar. Habitual 0%–1%." value={mortgage.openingFeePct} onChange={v => u('openingFeePct', v)} suffix="%" min={0} max={5} step={0.1} />
+          <NumberField label="Productos vinculados (anual)" tooltip="Coste anual de seguros/tarjetas para aplicar la bonificación." value={mortgage.linkedProductsAnnual} onChange={v => u('linkedProductsAnnual', v)} suffix="€" min={0} />
         </div>
         {mortgage.type !== 'fijo' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-            <NumberField
-              label="Euríbor"
-              tooltip="Valor del Euríbor a 12 meses de referencia. Se revisa periódicamente; aquí puedes simular distintos valores."
-              value={mortgage.euribor} onChange={v => u('euribor', v)} suffix="%" min={-1} max={10} step={0.05}
-            />
-            <NumberField
-              label="Diferencial"
-              tooltip="Margen que añade el banco al Euríbor. Habitual entre 0,5% y 1,5% según perfil y vinculaciones."
-              value={mortgage.spread} onChange={v => u('spread', v)} suffix="%" min={0} max={5} step={0.05}
-            />
-            <NumberField
-              label="Revisión"
-              tooltip="Frecuencia con la que se revisa el tipo: semestral (6), anual (12), etc. Habitual 12 meses."
-              value={mortgage.revisionMonths} onChange={v => u('revisionMonths', v)} suffix="meses" min={1} max={60}
-            />
+            <NumberField label="Euríbor" tooltip="Euríbor 12M de referencia. Se revisa periódicamente." value={mortgage.euribor} onChange={v => u('euribor', v)} suffix="%" min={-1} max={10} step={0.05} />
+            <NumberField label="Diferencial" tooltip="Margen que añade el banco al Euríbor. Habitual 0,5%–1,5%." value={mortgage.spread} onChange={v => u('spread', v)} suffix="%" min={0} max={5} step={0.05} />
+            <NumberField label="Revisión" tooltip="Frecuencia de revisión. Habitual 12 meses." value={mortgage.revisionMonths} onChange={v => u('revisionMonths', v)} suffix="meses" min={1} max={60} />
           </div>
         )}
         {mortgage.type === 'mixto' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-            <NumberField
-              label="Años tramo fijo"
-              tooltip="Número de años iniciales con tipo fijo antes de pasar al tramo variable. Habitual 5–10 años."
-              value={mortgage.fixedYears} onChange={v => u('fixedYears', v)} suffix="años" min={1} max={30}
-            />
-            <NumberField
-              label="TIN posterior"
-              tooltip="Tipo de interés aplicable tras el tramo fijo. Se suele expresar como Euríbor + diferencial."
-              value={mortgage.postFixedTin} onChange={v => u('postFixedTin', v)} suffix="%" min={0} max={20} step={0.05}
-            />
+            <NumberField label="Años tramo fijo" tooltip="Años iniciales a tipo fijo. Habitual 5–10 años." value={mortgage.fixedYears} onChange={v => u('fixedYears', v)} suffix="años" min={1} max={30} />
+            <NumberField label="TIN posterior" tooltip="Tipo tras el tramo fijo. Euríbor + diferencial." value={mortgage.postFixedTin} onChange={v => u('postFixedTin', v)} suffix="%" min={0} max={20} step={0.05} />
           </div>
         )}
       </Card>
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Criterios del banco (editables)</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <NumberField
-            label="LTV máximo"
-            tooltip="Loan-to-Value: porcentaje máximo del valor del inmueble que el banco financia. Habitual 80% primera vivienda, 70% segunda."
-            value={mortgage.maxLtv} onChange={v => u('maxLtv', v)} suffix="%" min={0} max={100} step={1}
-          />
-          <NumberField
-            label="Edad máxima al vencimiento"
-            tooltip="Edad máxima que puede tener el titular cuando termine la hipoteca. Habitual 70–75 años; algunas entidades amplían a 80."
-            value={mortgage.maxAgeAtMaturity} onChange={v => u('maxAgeAtMaturity', v)} suffix="años" min={50} max={90}
-          />
-          <NumberField
-            label="Umbral endeudamiento"
-            tooltip="Ratio máximo de cuotas financieras sobre ingresos computables que estás dispuesto a aceptar. Habitual 0,35 (35%)."
-            value={mortgage.debtThreshold} onChange={v => u('debtThreshold', v)} step={0.01} min={0.1} max={0.6}
-            help={`${(mortgage.debtThreshold*100).toFixed(0)}%`}
-          />
+          <NumberField label="LTV máximo" tooltip="Loan-to-Value: % máximo del inmueble que el banco financia. Habitual 80% primera vivienda, 70% segunda." value={mortgage.maxLtv} onChange={v => u('maxLtv', v)} suffix="%" min={0} max={100} step={1} />
+          <NumberField label="Edad máxima al vencimiento" tooltip="Edad máxima del titular al terminar la hipoteca. Habitual 70–75 años." value={mortgage.maxAgeAtMaturity} onChange={v => u('maxAgeAtMaturity', v)} suffix="años" min={50} max={90} />
+          <NumberField label="Umbral endeudamiento" tooltip="Ratio máximo cuotas/ingresos computables. Habitual 0,35 (35%)." value={mortgage.debtThreshold} onChange={v => u('debtThreshold', v)} step={0.01} min={0.1} max={0.6} help={`${(mortgage.debtThreshold*100).toFixed(0)}%`} />
         </div>
       </Card>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1097,6 +903,81 @@ const Row = ({ label, value, bold, color }) => (
     <span>{label}</span><span>{fmtEur(value)}</span>
   </div>
 );
+
+/* Tabla de aportación por comprador */
+const BuyersBreakdown = ({ buyers }) => {
+  const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444'];
+  const totalLiquid = buyers.reduce((s, b) => s + computeLiquidSavings(b.savings), 0);
+  const totalPatrimony = buyers.reduce((s, b) => s + computeTotalPatrimony(b.savings), 0);
+  const totalWilling = buyers.reduce((s, b) => s + (Number(b.savings.willingToUse) || 0), 0);
+  const totalEmergency = buyers.reduce((s, b) => s + (Number(b.savings.emergencyReserve) || 0), 0);
+  const totalIncome = buyers.reduce((s, b) =>
+    s + (b.monthlyNetSalary||0) + (b.variableIncome||0) + (b.rentalIncome||0) + (b.otherIncome||0), 0);
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-5">
+        <h4 className="font-semibold mb-4">Aportación por comprador</h4>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 dark:border-slate-800 text-left">
+                <th className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-400">Comprador</th>
+                <th className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-400 text-right">Ingresos/mes</th>
+                <th className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-400 text-right">Líquido</th>
+                <th className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-400 text-right">Patrimonio total</th>
+                <th className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-400 text-right">Aporta</th>
+                <th className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-400 text-right">% del total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {buyers.map((b, i) => {
+                const liquid = computeLiquidSavings(b.savings);
+                const patrimony = computeTotalPatrimony(b.savings);
+                const willing = Number(b.savings.willingToUse) || 0;
+                const income = (b.monthlyNetSalary||0) + (b.variableIncome||0) + (b.rentalIncome||0) + (b.otherIncome||0);
+                const pct = totalWilling > 0 ? willing / totalWilling : 0;
+                return (
+                  <tr key={b.id} className="border-b border-slate-100 dark:border-slate-800">
+                    <td className="py-2 pr-3">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full" style={{background: COLORS[i % COLORS.length]}}></span>
+                        <span className="font-medium">{b.name}</span>
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3 text-right">{fmtEur(income)}</td>
+                    <td className="py-2 pr-3 text-right">{fmtEur(liquid)}</td>
+                    <td className="py-2 pr-3 text-right">{fmtEur(patrimony)}</td>
+                    <td className="py-2 pr-3 text-right font-semibold text-brand-600 dark:text-brand-400">{fmtEur(willing)}</td>
+                    <td className="py-2 pr-3 text-right">{fmtPct(pct, 0)}</td>
+                  </tr>
+                );
+              })}
+              <tr className="font-bold border-t-2 border-slate-300 dark:border-slate-700">
+                <td className="py-2 pr-3">TOTAL</td>
+                <td className="py-2 pr-3 text-right">{fmtEur(totalIncome)}</td>
+                <td className="py-2 pr-3 text-right">{fmtEur(totalLiquid)}</td>
+                <td className="py-2 pr-3 text-right">{fmtEur(totalPatrimony)}</td>
+                <td className="py-2 pr-3 text-right text-brand-600 dark:text-brand-400">{fmtEur(totalWilling)}</td>
+                <td className="py-2 pr-3 text-right">100%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {buyers.length > 1 && totalWilling > 0 && (
+        <Card className="p-5">
+          <h4 className="font-semibold mb-3">Reparto de la aportación</h4>
+          <DonutChart
+            data={buyers.map((b, i) => ({ name: b.name, value: Number(b.savings.willingToUse) || 0 }))}
+            colors={COLORS}
+          />
+        </Card>
+      )}
+    </div>
+  );
+};
 
 const StressTab = ({ state }) => {
   const [rateShock, setRateShock] = useState(0);
@@ -1202,7 +1083,7 @@ const ResultsSection = ({ state, result, maxPrice }) => {
     red: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100',
     slate: 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700',
   }[result.verdictColor];
-  const tabs = [['summary','Resumen'],['costs','Gastos'],['amort','Amortización'],['maxprice','Precios máximos'],['stress','Estrés']];
+  const tabs = [['summary','Resumen'],['buyers','Por comprador'],['costs','Gastos'],['amort','Amortización'],['maxprice','Precios máximos'],['stress','Estrés']];
   const maxPriceBars = [
     { label: 'Ahorros', value: maxPrice.savings, color: '#6366f1' },
     { label: 'Ingresos', value: maxPrice.income, color: '#10b981' },
@@ -1267,6 +1148,7 @@ const ResultsSection = ({ state, result, maxPrice }) => {
           </Card>
         </div>
       )}
+      {tab === 'buyers' && <BuyersBreakdown buyers={state.buyers} />}
       {tab === 'costs' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <Card className="p-5">
@@ -1281,7 +1163,7 @@ const ResultsSection = ({ state, result, maxPrice }) => {
               <Row label="Comisión inmobiliaria" value={result.acq.agency} />
               <Row label="Reformas + Mobiliario" value={(result.reforms||0)+(result.furniture||0)} />
               <Row label="Apertura hipoteca" value={result.openingFee} />
-              <Row label="Reserva de emergencia" value={state.savings.emergencyReserve} />
+              <Row label="Reserva de emergencia" value={state.buyers.reduce((s,b) => s + (Number(b.savings.emergencyReserve)||0), 0)} />
               <Row label="Total necesario" value={result.totalNeeded} bold />
               <Row label="Disponible" value={result.available} />
               <Row label="Déficit / Excedente" value={-result.liquidityGap} bold color={result.liquidityGap <= 0 ? 'emerald' : 'red'} />
@@ -1431,22 +1313,9 @@ function App() {
   const [dark, setDark] = useState(false);
   const [list, setList] = useState(loadList);
   const [showAviso, setShowAviso] = useState(true);
-  const [willingIsCustom, setWillingIsCustom] = useState(false);
 
   useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify(state)); }, [state]);
   useEffect(() => { document.documentElement.classList.toggle('dark', dark); }, [dark]);
-
-  useEffect(() => {
-    if (willingIsCustom) return;
-    const liquidTotal = computeLiquidSavings(state.savings);
-    if (liquidTotal !== state.savings.willingToUse) {
-      setState(prev => ({ ...prev, savings: { ...prev.savings, willingToUse: liquidTotal } }));
-    }
-  }, [
-    state.savings.cash, state.savings.deposits, state.savings.funds,
-    state.savings.stocks, state.savings.crypto, state.savings.otherLiquid,
-    state.savings.pensionPlans, state.savings.pensionAvailable, willingIsCustom
-  ]);
 
   const result = useMemo(() => evaluateOperation(state), [state]);
   const maxPrice = useMemo(() => ({
@@ -1472,7 +1341,7 @@ function App() {
     const check = (v) => { total++; if (v) done++; };
     check(state.buyers.length > 0);
     state.buyers.forEach(b => { check(b.monthlyNetSalary > 0); check(b.birthDate); });
-    check(state.savings.cash > 0 || state.savings.willingToUse > 0);
+    check(state.buyers.some(b => computeLiquidSavings(b.savings) > 0));
     check(state.property.price > 0);
     check(state.mortgage.tin >= 0 && state.mortgage.termYears > 0);
     check(result.computableIncome > 0);
@@ -1526,17 +1395,7 @@ function App() {
           </Card>
         )}
         {tab === 'buyers' && <BuyersSection buyers={state.buyers} setBuyers={v => setState({ ...state, buyers: v })} />}
-        {tab === 'savings' && (
-          <SavingsSection
-            savings={state.savings}
-            setSavings={v => setState({ ...state, savings: v })}
-            onUserEditWilling={(force, resync) => {
-              if (resync) setWillingIsCustom(false);
-              else setWillingIsCustom(true);
-            }}
-            willingIsCustom={willingIsCustom}
-          />
-        )}
+        {tab === 'savings' && <SavingsSection buyers={state.buyers} setBuyers={v => setState({ ...state, buyers: v })} />}
         {tab === 'debts' && <DebtsSection debts={state.debts} setDebts={v => setState({ ...state, debts: v })} monthlyExpenses={state.monthlyExpenses} setMonthlyExpenses={v => setState({ ...state, monthlyExpenses: v })} />}
         {tab === 'property' && <PropertySection property={state.property} setProperty={v => setState({ ...state, property: v })} tax={state.tax} setTax={v => setState({ ...state, tax: v })} />}
         {tab === 'mortgage' && <MortgageSection mortgage={state.mortgage} setMortgage={v => setState({ ...state, mortgage: v })} property={state.property} />}
@@ -1545,7 +1404,7 @@ function App() {
         <footer className="mt-12 pt-6 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
             <span>Simulador de Viabilidad Hipotecaria · Datos solo en tu navegador.</span>
-            <button className="hover:text-brand-600" onClick={() => { if (confirm('¿Resetear todo?')) { localStorage.clear(); setState(INITIAL_STATE); setList({}); setWillingIsCustom(false); } }}>Resetear</button>
+            <button className="hover:text-brand-600" onClick={() => { if (confirm('¿Resetear todo?')) { localStorage.clear(); setState(INITIAL_STATE); setList({}); } }}>Resetear</button>
           </div>
         </footer>
       </main>
