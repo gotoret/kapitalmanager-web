@@ -46,6 +46,21 @@ const monthlyPayment = (principal, annualRatePct, months) => {
   return (principal * r * f) / (f - 1);
 };
 
+/* Meses necesarios para pagar 'principal' a cuota fija 'targetPayment' */
+const monthsForPayment = (principal, annualRatePct, targetPayment) => {
+  if (principal <= 0) return 0;
+  if (targetPayment <= 0) return 0;
+  const r = annualRatePct / 100 / 12;
+  if (r === 0) return Math.ceil(principal / targetPayment);
+  // Interés mensual: si targetPayment <= balance * r, la deuda crecería → imposible
+  if (targetPayment <= principal * r) return Infinity;
+  // n = -ln(1 - P*r/payment) / ln(1+r)
+  const x = 1 - (principal * r) / targetPayment;
+  if (x <= 0) return Infinity;
+  const n = -Math.log(x) / Math.log(1 + r);
+  return Math.ceil(n);
+};
+
 const amortizationSchedule = (principal, annualRatePct, months) => {
   const payment = monthlyPayment(principal, annualRatePct, months);
   const r = annualRatePct / 100 / 12;
@@ -56,6 +71,23 @@ const amortizationSchedule = (principal, annualRatePct, months) => {
     const principalPart = Math.min(payment - interest, balance);
     balance = Math.max(0, balance - principalPart);
     rows.push({ month: m, payment, interest, principal: principalPart, balance });
+  }
+  return rows;
+};
+
+/* Cuadro a cuota fija y plazo variable (hasta 60 años máximo) */
+const amortizationScheduleFixedPayment = (principal, annualRatePct, targetPayment) => {
+  const r = annualRatePct / 100 / 12;
+  if (principal <= 0 || targetPayment <= 0) return [];
+  let balance = principal;
+  const rows = [];
+  const maxMonths = 12 * 60;
+  for (let m = 1; m <= maxMonths; m++) {
+    const interest = balance * r;
+    const principalPart = Math.min(targetPayment - interest, balance);
+    balance = Math.max(0, balance - principalPart);
+    rows.push({ month: m, payment: targetPayment, interest, principal: principalPart, balance });
+    if (balance < 0.01) break;
   }
   return rows;
 };
@@ -197,7 +229,6 @@ const findDuplicateMortgageDebts = (buyers, debts) => {
   return duplicates;
 };
 
-/* ---------- INMUEBLES EN PROPIEDAD ---------- */
 const summarizeProperties = (buyers) => {
   const all = [];
   buyers.forEach(b => {
@@ -213,12 +244,11 @@ const summarizeProperties = (buyers) => {
     const totalPct = p.ownerships.reduce((s, o) => s + (Number(o.pct) || 0), 0);
     const netEquity = Math.max(0, (Number(p.marketValue)||0) - (Number(p.mortgageOutstanding)||0));
 
-    /* Renta neta computable para el banco cuando el inmueble está alquilado */
-    const grossRent = Number(p.netRentalIncome) || 0;                 // tratamos el campo como renta BRUTA mensual
+    const grossRent = Number(p.netRentalIncome) || 0;
     const computablePct = p.rentalComputablePct != null ? Number(p.rentalComputablePct) : 80;
     const expenses = Number(p.rentalMonthlyExpenses) || 0;
     const computableRent = grossRent * (computablePct / 100);
-    const netComputableRent = Math.max(0, computableRent - expenses);  // sin restar la hipoteca (eso se hace en el ratio)
+    const netComputableRent = Math.max(0, computableRent - expenses);
 
     const perOwner = p.ownerships.map(o => {
       const pct = totalPct > 0 ? (Number(o.pct)||0) / totalPct : 0;
@@ -282,11 +312,8 @@ const summarizeProperties = (buyers) => {
   });
 
   const keptProperties = enriched.filter(p => p.planToSell === 'keep');
-  // Renta neta computable total de todos los inmuebles conservados
   const rentalNetComputableMonthly = keptProperties.reduce((s, p) => s + p.netComputableRent, 0);
-  // Renta bruta total (para referencia)
   const rentalGrossMonthly = keptProperties.reduce((s, p) => s + p.grossRent, 0);
-  // Cuotas hipotecarias de inmuebles en propiedad (a computar en deudas)
   const propertyMortgagePayments = enriched.reduce((s, p) => s + (Number(p.mortgageMonthlyPayment) || 0), 0);
 
   return {
@@ -298,15 +325,12 @@ const summarizeProperties = (buyers) => {
   };
 };
 
-/* ---------- DEUDAS (evitando duplicados) ---------- */
 const computeDebtTotalRaw = (debts) => debts.reduce((s, d) => s + (d.monthlyPayment||0), 0);
-
 const computeDebtTotal = (debts, buyers) => {
   const dupes = findDuplicateMortgageDebts(buyers, debts);
   const dupeIds = new Set(dupes.map(d => d.debtId));
   return debts.reduce((s, d) => s + (dupeIds.has(d.id) ? 0 : (d.monthlyPayment||0)), 0);
 };
-
 const computeMonthlyExpenses = (e) => Object.values(e).reduce((s, v) => s + (Number(v)||0), 0);
 
 const ageAtMaturity = (birthDateISO, termYears) => {
@@ -315,6 +339,111 @@ const ageAtMaturity = (birthDateISO, termYears) => {
   if (isNaN(birth.getTime())) return null;
   const ageNow = (Date.now() - birth.getTime()) / (365.25 * 24 * 3600 * 1000);
   return ageNow + termYears;
+};
+
+/* ---------- CÁLCULO DEL CUADRO CON CUOTA OBJETIVO ---------- */
+/* Construye el cuadro de la nueva hipoteca aplicando:
+   - Si targetPaymentBefore > 0: plazo se recalcula para que la cuota = targetPaymentBefore
+   - Si targetPaymentAfter > 0 y hay amortización: tras la amortización, plazo restante se recalcula
+     para que la cuota = targetPaymentAfter
+   - Si no se especifica, comportamiento clásico (plazo fijo, cuota francesa). */
+const buildMortgageSchedule = (mortgageAmount, annualRatePct, baseMonths, amortizations, opts = {}) => {
+  const { targetPaymentBefore = 0, targetPaymentAfter = 0 } = opts;
+  const r = annualRatePct / 100 / 12;
+
+  // Determinar plazo base (o a partir de cuota objetivo)
+  let months = baseMonths;
+  let basePayment;
+  if (targetPaymentBefore > 0 && mortgageAmount > 0) {
+    const n = monthsForPayment(mortgageAmount, annualRatePct, targetPaymentBefore);
+    if (isFinite(n) && n > 0) { months = n; basePayment = targetPaymentBefore; }
+    else { basePayment = monthlyPayment(mortgageAmount, annualRatePct, baseMonths); }
+  } else {
+    basePayment = monthlyPayment(mortgageAmount, annualRatePct, baseMonths);
+  }
+
+  // Cuadro base
+  let schedule = [];
+  let balance = mortgageAmount;
+  for (let m = 1; m <= months; m++) {
+    const interest = balance * r;
+    const principalPart = Math.min(basePayment - interest, balance);
+    balance = Math.max(0, balance - principalPart);
+    schedule.push({ month: m, payment: basePayment, interest, principal: principalPart, balance });
+    if (balance < 0.01) break;
+  }
+
+  // Aplicar amortizaciones en orden
+  if (amortizations && amortizations.length > 0) {
+    const active = amortizations
+      .filter(a => a.amount > 0 && a.month > 0 && a.mode !== 'none')
+      .sort((a, b) => a.month - b.month);
+    for (const a of active) {
+      const atMonth = a.month;
+      if (atMonth > schedule.length) continue;
+
+      const head = schedule.slice(0, atMonth).map(row => ({ ...row }));
+      const lastBefore = head[head.length - 1];
+      const newBalance = Math.max(0, lastBefore.balance - a.amount);
+      const amortRow = {
+        month: atMonth,
+        payment: lastBefore.payment,
+        interest: lastBefore.interest,
+        principal: lastBefore.principal + (lastBefore.balance - newBalance),
+        balance: newBalance,
+        isAmortization: true,
+        amortizationAmount: a.amount,
+      };
+      let currentSchedule = [...head.slice(0, -1), amortRow];
+      if (newBalance <= 0) { schedule = currentSchedule; continue; }
+
+      // Aplicar el modo. Pero si targetPaymentAfter está definido, sobrescribe reduce_cuota
+      let effectiveMode = a.mode;
+      let targetAfter = 0;
+      if (targetPaymentAfter > 0 && a.mode === 'reduce_cuota') {
+        // Si hay objetivo de cuota tras amortizar, lo respetamos
+        targetAfter = targetPaymentAfter;
+      }
+
+      if (effectiveMode === 'reduce_cuota') {
+        let newPayment;
+        let remainingMonths;
+        if (targetAfter > 0) {
+          // Calcular plazo para nueva cuota objetivo
+          const n = monthsForPayment(newBalance, annualRatePct, targetAfter);
+          if (isFinite(n) && n > 0) { remainingMonths = n; newPayment = targetAfter; }
+          else {
+            remainingMonths = Math.max(1, schedule.length - atMonth);
+            newPayment = monthlyPayment(newBalance, annualRatePct, remainingMonths);
+          }
+        } else {
+          remainingMonths = Math.max(1, schedule.length - atMonth);
+          newPayment = monthlyPayment(newBalance, annualRatePct, remainingMonths);
+        }
+        let bal = newBalance;
+        for (let i = 1; i <= remainingMonths; i++) {
+          const interest = bal * r;
+          const pp = Math.min(newPayment - interest, bal);
+          bal = Math.max(0, bal - pp);
+          currentSchedule.push({ month: atMonth + i, payment: newPayment, interest, principal: pp, balance: bal });
+          if (bal < 0.01) break;
+        }
+      } else if (effectiveMode === 'reduce_plazo') {
+        const oldPayment = lastBefore.payment;
+        let bal = newBalance;
+        let m = atMonth + 1;
+        while (bal > 0.01 && m <= atMonth + 12 * 60) {
+          const interest = bal * r;
+          const pp = Math.min(oldPayment - interest, bal);
+          bal = Math.max(0, bal - pp);
+          currentSchedule.push({ month: m, payment: oldPayment, interest, principal: pp, balance: bal });
+          m++;
+        }
+      }
+      schedule = currentSchedule;
+    }
+  }
+  return schedule;
 };
 
 const evaluateOperation = (state, override = {}) => {
@@ -365,38 +494,42 @@ const evaluateOperation = (state, override = {}) => {
   const liquidityGap = totalRequired - available;
   const liquidityGapWithoutReserve = totalNeeded - available;
 
-  /* ===== Amortización con cuadro completo ===== */
+  /* ===== Construcción del cuadro con/sin cuota objetivo ===== */
+  const targetPaymentBefore = Number(m.targetPaymentBefore) || 0;
+  const targetPaymentAfter = Number(m.targetPaymentAfter) || 0;
+  const amortizations = props.amortizations || [];
+
   const baseSchedule = amortizationSchedule(mortgageAmount, tin, months);
   const basePayment = monthlyPayment(mortgageAmount, tin, months);
   const baseInterestTotal = totalInterest(baseSchedule);
 
-  const amortizations = props.amortizations || [];
-  const schedule = applyAllAmortizations(baseSchedule, amortizations, tin);
+  const schedule = buildMortgageSchedule(mortgageAmount, tin, months, amortizations, {
+    targetPaymentBefore,
+    targetPaymentAfter,
+  });
   const interestTotal = totalInterest(schedule);
 
+  const firstRow = schedule[0] || { payment: basePayment };
+  const payment = firstRow.payment;
+  const effectiveMonths = schedule.length;
+  const effectiveYears = effectiveMonths / 12;
+
+  // Cuota después de la primera amortización (si reduce_cuota)
   const firstAmort = amortizations.filter(a => a.amount > 0 && a.mode === 'reduce_cuota').sort((a,b) => a.month - b.month)[0];
-  let payment = basePayment;
-  let paymentAfterFirstAmort = basePayment;
+  let paymentAfterFirstAmort = payment;
   if (firstAmort) {
     const row = schedule.find(r => r.month === firstAmort.month + 1);
     if (row) paymentAfterFirstAmort = row.payment;
   }
-  const effectiveMonths = schedule.length;
-  const effectiveYears = effectiveMonths / 12;
 
   const totalAmortizedBySales = amortizations.reduce((s, a) => s + (a.mode === 'none' ? 0 : a.amount), 0);
   const totalKeptFromSales = amortizations.reduce((s, a) => s + (a.mode === 'none' ? 0 : a.keep), 0);
 
-  /* ===== INGRESOS COMPUTABLES =====
-     Ingresos laborales + renta neta computable de inmuebles alquilados */
   const salaryIncomeComputable = computeComputableIncome(buyers);
   const rentalIncomeComputable = props.rentalNetComputableMonthly;
   const computableIncome = salaryIncomeComputable + rentalIncomeComputable;
   const rawIncome = computeRawIncome(buyers) + props.rentalGrossMonthly;
 
-  /* ===== DEUDAS =====
-     Deudas de la pestaña + cuotas hipotecarias de inmuebles en propiedad.
-     Se EXCLUYEN las deudas duplicadas con esas hipotecas. */
   const existingDebtDebtsOnly = computeDebtTotal(debts, buyers);
   const existingDebtPropertiesOnly = props.propertyMortgagePayments;
   const existingDebt = existingDebtDebtsOnly + existingDebtPropertiesOnly;
@@ -407,7 +540,6 @@ const evaluateOperation = (state, override = {}) => {
 
   const monthlyExpensesTotal = computeMonthlyExpenses(monthlyExpenses);
 
-  /* ===== RATIOS ===== */
   const ratioBefore = computableIncome > 0 ? existingDebt / computableIncome : 0;
   const totalDebtAfter = existingDebt + payment;
   const ratioAfter = computableIncome > 0 ? totalDebtAfter / computableIncome : 0;
@@ -465,6 +597,7 @@ const evaluateOperation = (state, override = {}) => {
     schedule, baseSchedule,
     interestTotal, baseInterestTotal,
     months, effectiveMonths, effectiveYears, tin, maxLtv,
+    targetPaymentBefore, targetPaymentAfter,
     amortizations, totalAmortizedBySales, totalKeptFromSales,
     salaryIncomeComputable, rentalIncomeComputable,
     computableIncome, rawIncome,
@@ -525,11 +658,9 @@ const emptyProperty = (ownerId) => ({
   sellCosts: 0,
   sellTaxes: 0,
   sellMonth: 24,
-  // Campos de alquiler (plan keep)
-  netRentalIncome: 0,          // renta BRUTA mensual
-  rentalComputablePct: 80,     // % computable por el banco
-  rentalMonthlyExpenses: 0,    // gastos mensuales (comunidad, IBI, seguro, gestión)
-  // Campos de venta (plan sell_after)
+  netRentalIncome: 0,
+  rentalComputablePct: 80,
+  rentalMonthlyExpenses: 0,
   sellAmortizeMode: 'reduce_cuota',
   sellAmortizePct: 100
 });
@@ -557,11 +688,16 @@ const INITIAL_STATE = {
   monthlyExpenses: { food: 400, utilities: 150, transport: 150, education: 0, insurance: 80, children: 0, otherHome: 0, other: 100 },
   property: { price: 250000, region: 'Madrid', isNew: false, garagePrice: 0, storagePrice: 0, reforms: 0, furniture: 0, agencyFee: 0, otherInitialCosts: 0 },
   tax: { mode: 'auto', itpPct: 6, ivaPct: 10, ajdPct: 1.5, notary: 900, registry: 500, appraisal: 350, gestoria: 400 },
-  mortgage: { downPaymentPct: 20, termYears: 30, type: 'fijo', tin: 3.25, euribor: 3.5, spread: 1.0, revisionMonths: 12, fixedYears: 5, postFixedTin: 4.0, openingFeePct: 0.5, linkedProductsAnnual: 600, maxLtv: 80, maxAgeAtMaturity: 75, debtThreshold: 0.35 }
+  mortgage: {
+    downPaymentPct: 20, termYears: 30, type: 'fijo', tin: 3.25,
+    euribor: 3.5, spread: 1.0, revisionMonths: 12, fixedYears: 5, postFixedTin: 4.0,
+    openingFeePct: 0.5, linkedProductsAnnual: 600, maxLtv: 80, maxAgeAtMaturity: 75, debtThreshold: 0.35,
+    targetPaymentBefore: 0, targetPaymentAfter: 0
+  }
 };
 
-const LS_KEY = 'simulador_hipoteca_v7';
-const LS_LIST = 'simulador_hipoteca_list_v7';
+const LS_KEY = 'simulador_hipoteca_v8';
+const LS_LIST = 'simulador_hipoteca_list_v8';
 const loadCurrent = () => { try { const r = localStorage.getItem(LS_KEY); if (r) return { ...INITIAL_STATE, ...JSON.parse(r) }; } catch(e){} return INITIAL_STATE; };
 const loadList = () => { try { return JSON.parse(localStorage.getItem(LS_LIST) || '{}'); } catch(e) { return {}; } };
 
@@ -722,7 +858,7 @@ const KPI = ({ label, value, sub, color='slate' }) => {
 };
 
 /* =========================================================
-   GRÁFICOS SVG
+   GRÁFICOS
 ========================================================= */
 const DonutChart = ({ data, colors, size=200 }) => {
   const total = data.reduce((s, d) => s + Math.max(0, d.value), 0);
@@ -882,7 +1018,7 @@ const BuyersSection = ({ buyers, setBuyers }) => {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Compradores e ingresos</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Añade hasta 4 titulares. Cada uno tiene sus propios ingresos y ahorros.</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Añade hasta 4 titulares.</p>
         </div>
         <button className="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium"
           onClick={() => buyers.length < 4 && setBuyers([...buyers, defaultBuyer(buyers.length)])} disabled={buyers.length>=4}>+ Añadir</button>
@@ -902,20 +1038,20 @@ const BuyersSection = ({ buyers, setBuyers }) => {
                 )}
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <TextField label="Nombre o alias" tooltip="Nombre identificativo del titular. Solo se usa en tu navegador." value={b.name} onChange={v => update(b.id, { name: v })} />
-                <DateField label="Fecha de nacimiento" tooltip="Se usa para calcular edad actual y edad al vencimiento." value={b.birthDate} onChange={v => update(b.id, { birthDate: v })} />
-                <SelectField label="Comunidad autónoma" tooltip="Puede afectar a fiscalidad (ITP, deducciones) y criterios bancarios." value={b.region} onChange={v => update(b.id, { region: v })} options={REGIONS.map(r => ({ value: r, label: r }))} />
-                <NumberField label="Personas dependientes" tooltip="Hijos o personas a tu cargo." value={b.dependents} onChange={v => update(b.id, { dependents: v })} min={0} max={10} />
+                <TextField label="Nombre o alias" tooltip="Nombre identificativo." value={b.name} onChange={v => update(b.id, { name: v })} />
+                <DateField label="Fecha de nacimiento" tooltip="Para calcular edad al vencimiento." value={b.birthDate} onChange={v => update(b.id, { birthDate: v })} />
+                <SelectField label="Comunidad autónoma" tooltip="Afecta a fiscalidad." value={b.region} onChange={v => update(b.id, { region: v })} options={REGIONS.map(r => ({ value: r, label: r }))} />
+                <NumberField label="Personas dependientes" tooltip="Personas a tu cargo." value={b.dependents} onChange={v => update(b.id, { dependents: v })} min={0} max={10} />
                 <SelectField label="Tipo de empleo" tooltip="Los bancos valoran la estabilidad." value={b.employmentType} onChange={v => update(b.id, { employmentType: v })}
                   options={[{value:'indefinido',label:'Indefinido'},{value:'temporal',label:'Temporal'},{value:'funcionario',label:'Funcionario'},{value:'autonomo',label:'Autónomo'},{value:'pensionista',label:'Pensionista'},{value:'otro',label:'Otro'}]} />
               </div>
               <div className="mt-6">
                 <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Ingresos netos mensuales</h4>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <NumberField label="Nómina neta" tooltip="Salario neto mensual tras IRPF y SS." value={b.monthlyNetSalary} onChange={v => update(b.id, { monthlyNetSalary: v })} suffix="€/mes" min={0} />
-                  <NumberField label="Variables / bonus" tooltip="Bonus, comisiones, horas extra." value={b.variableIncome} onChange={v => update(b.id, { variableIncome: v })} suffix="€/mes" min={0} />
-                  <NumberField label="Alquileres (otros)" tooltip="Rentas netas de alquiler declaradas directamente aquí. Si tienes los inmuebles dados de alta arriba, no las dupliques." value={b.rentalIncome} onChange={v => update(b.id, { rentalIncome: v })} suffix="€/mes" min={0} />
-                  <NumberField label="Otros ingresos" tooltip="Pensiones, ayudas, actividades secundarias." value={b.otherIncome} onChange={v => update(b.id, { otherIncome: v })} suffix="€/mes" min={0} />
+                  <NumberField label="Nómina neta" tooltip="Salario neto mensual." value={b.monthlyNetSalary} onChange={v => update(b.id, { monthlyNetSalary: v })} suffix="€/mes" min={0} />
+                  <NumberField label="Variables / bonus" tooltip="Habitual computar 70–80%." value={b.variableIncome} onChange={v => update(b.id, { variableIncome: v })} suffix="€/mes" min={0} />
+                  <NumberField label="Alquileres (otros)" tooltip="Rentas que declares aquí directamente." value={b.rentalIncome} onChange={v => update(b.id, { rentalIncome: v })} suffix="€/mes" min={0} />
+                  <NumberField label="Otros ingresos" tooltip="Pensiones, ayudas." value={b.otherIncome} onChange={v => update(b.id, { otherIncome: v })} suffix="€/mes" min={0} />
                 </div>
               </div>
               <div className="mt-6">
@@ -985,8 +1121,8 @@ const SavingsSection = ({ buyers, setBuyers }) => {
                   Comprador {i+1} · <span className="text-brand-600 dark:text-brand-400">{b.name}</span>
                 </h3>
                 <div className="text-xs text-slate-500">
-                  Líquido: <strong className="text-slate-700 dark:text-slate-300">{fmtEur(liquid)}</strong> ·
-                  Total: <strong className="text-slate-700 dark:text-slate-300">{fmtEur(total)}</strong>
+                  Líquido: <strong>{fmtEur(liquid)}</strong> ·
+                  Total: <strong>{fmtEur(total)}</strong>
                 </div>
               </div>
 
@@ -1024,21 +1160,18 @@ const SavingsSection = ({ buyers, setBuyers }) => {
                       x.id === b.id ? { ...x, savings: { ...x.savings, willingToUse: v, willingCustom: true } } : x
                     ))}
                     suffix="€" min={0}
-                    help={b.savings.willingCustom
-                      ? 'Valor personalizado. Pulsa el botón para resincronizar.'
-                      : 'Se sincroniza automáticamente con el líquido total.'}
+                    help={b.savings.willingCustom ? 'Personalizado.' : 'Sincronizado con líquido total.'}
                   />
                   <NumberField
                     label="Reserva de emergencia"
-                    tooltip="Colchón que quieres mantener intacto tras la compra. NO se paga."
+                    tooltip="Colchón a mantener tras la compra. NO se paga."
                     value={b.savings.emergencyReserve}
                     onChange={v => updateSavings(b.id, 'emergencyReserve', v)}
                     suffix="€" min={0}
                   />
                 </div>
                 {b.savings.willingCustom && (
-                  <button
-                    className="mt-3 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-medium"
+                  <button className="mt-3 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-medium"
                     onClick={() => resyncWilling(b.id)}>
                     ↻ Volver a sincronizar con líquido total
                   </button>
@@ -1107,18 +1240,18 @@ const PropertiesSection = ({ buyers, setBuyers, duplicateDebts, onRemoveDuplicat
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Inmuebles en propiedad</h2>
-      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Declara inmuebles que ya posees. Pueden estar en copropiedad, usarse como garantía, venderse o mantenerse alquilados.</p>
+      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Declara inmuebles en propiedad. Pueden estar alquilados, en copropiedad o venderse.</p>
 
       {duplicateDebts && duplicateDebts.length > 0 && (
         <Card className="p-4 mb-6 bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800">
           <div className="text-sm text-amber-800 dark:text-amber-200">
-            <strong>⚠️ Posible duplicidad detectada:</strong> hay {duplicateDebts.length} deuda(s) de tipo "hipoteca" en la pestaña Deudas que coinciden en importe con la hipoteca de un inmueble. Para no contarla dos veces, la deuda duplicada <strong>se está ignorando en el cálculo del ratio</strong>. Puedes eliminar la fila duplicada si quieres limpiarlo.
+            <strong>⚠️ Posible duplicidad detectada:</strong> {duplicateDebts.length} deuda(s) de tipo "hipoteca" coincide con la hipoteca de un inmueble. Para no contarla dos veces, se está ignorando en el ratio. Puedes eliminarla:
             <div className="mt-2 space-y-1">
               {duplicateDebts.map((d, i) => (
                 <div key={i} className="flex flex-wrap items-center justify-between gap-2 text-xs bg-white/50 dark:bg-slate-900/40 px-3 py-2 rounded">
                   <span>Inmueble: <strong>{d.propertyAlias}</strong> ({d.buyerName}) — {fmtEur(d.debtAmount)}</span>
                   <button onClick={() => onRemoveDuplicateDebt(d.debtId)}
-                    className="px-2 py-1 rounded bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300 hover:bg-red-100">Eliminar deuda duplicada</button>
+                    className="px-2 py-1 rounded bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300 hover:bg-red-100">Eliminar</button>
                 </div>
               ))}
             </div>
@@ -1187,7 +1320,7 @@ const PropertiesSection = ({ buyers, setBuyers, duplicateDebts, onRemoveDuplicat
                     <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">Inmueble {j+1}</span>
-                        {isShared && <span className="px-2 py-0.5 rounded-full bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-200 text-xs">Copropiedad {ownerships.length} titulares</span>}
+                        {isShared && <span className="px-2 py-0.5 rounded-full bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-200 text-xs">Copropiedad {ownerships.length}</span>}
                       </div>
                       <button className="px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 text-xs dark:bg-red-900/30 dark:text-red-300"
                         onClick={() => removeProperty(b.id, p.id)}>Eliminar</button>
@@ -1196,8 +1329,8 @@ const PropertiesSection = ({ buyers, setBuyers, duplicateDebts, onRemoveDuplicat
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                       <TextField label="Alias" tooltip="Nombre del inmueble." value={p.alias} onChange={v => updateProperty(p.id, { alias: v })} />
                       <NumberField label="Valor de mercado" tooltip="Valor total del inmueble." value={p.marketValue} onChange={v => updateProperty(p.id, { marketValue: v })} suffix="€" min={0} />
-                      <NumberField label="Hipoteca pendiente (capital)" tooltip="Capital pendiente total. Si está pagado, deja 0." value={p.mortgageOutstanding} onChange={v => updateProperty(p.id, { mortgageOutstanding: v })} suffix="€" min={0} />
-                      <NumberField label="Cuota mensual de esta hipoteca" tooltip="Cuota mensual que pagas por la hipoteca de este inmueble. Se computa como deuda en el ratio. NO la dupliques en la pestaña Deudas." value={p.mortgageMonthlyPayment} onChange={v => updateProperty(p.id, { mortgageMonthlyPayment: v })} suffix="€/mes" min={0} />
+                      <NumberField label="Hipoteca pendiente (capital)" tooltip="Capital pendiente total." value={p.mortgageOutstanding} onChange={v => updateProperty(p.id, { mortgageOutstanding: v })} suffix="€" min={0} />
+                      <NumberField label="Cuota mensual de esta hipoteca" tooltip="Cuota mensual que pagas. Se computa como deuda. NO la dupliques en la pestaña Deudas." value={p.mortgageMonthlyPayment} onChange={v => updateProperty(p.id, { mortgageMonthlyPayment: v })} suffix="€/mes" min={0} />
                     </div>
 
                     <div className="mb-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50">
@@ -1232,14 +1365,14 @@ const PropertiesSection = ({ buyers, setBuyers, duplicateDebts, onRemoveDuplicat
                     </div>
 
                     <div className="mb-4">
-                      <Toggle label="Ofrecer como garantía adicional al banco" tooltip="Pignoración o 2ª hipoteca para reforzar la operación." checked={p.usedAsCollateral} onChange={v => updateProperty(p.id, { usedAsCollateral: v })} />
+                      <Toggle label="Ofrecer como garantía adicional al banco" tooltip="Pignoración o 2ª hipoteca." checked={p.usedAsCollateral} onChange={v => updateProperty(p.id, { usedAsCollateral: v })} />
                       {p.usedAsCollateral && (
                         <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <NumberField label="Valor que el banco computa" tooltip="Habitualmente 60%–70% de tasación." value={p.collateralValue} onChange={v => updateProperty(p.id, { collateralValue: v })} suffix="€" min={0} help={p.marketValue > 0 ? `Sugerido: ${fmtEur((p.marketValue||0)*0.7)} (70%)` : ''} />
-                          <SelectField label="¿Quién aporta la garantía?" tooltip="Reparto proporcional al % o a un titular concreto."
+                          <NumberField label="Valor que el banco computa" tooltip="Habitualmente 60%–70%." value={p.collateralValue} onChange={v => updateProperty(p.id, { collateralValue: v })} suffix="€" min={0} help={p.marketValue > 0 ? `Sugerido: ${fmtEur((p.marketValue||0)*0.7)}` : ''} />
+                          <SelectField label="¿Quién aporta la garantía?" tooltip="Reparto según % o a titular concreto."
                             value={p.collateralBuyerId || ''}
                             onChange={v => updateProperty(p.id, { collateralBuyerId: v || null })}
-                            options={[{ value: '', label: 'Reparto proporcional según %' }, ...ownerships.map(o => ({ value: o.buyerId, label: buyerName(o.buyerId) }))]} />
+                            options={[{ value: '', label: 'Reparto proporcional' }, ...ownerships.map(o => ({ value: o.buyerId, label: buyerName(o.buyerId) }))]} />
                         </div>
                       )}
                     </div>
@@ -1255,43 +1388,21 @@ const PropertiesSection = ({ buyers, setBuyers, duplicateDebts, onRemoveDuplicat
 
                     {p.planToSell === 'keep' && (
                       <div className="p-4 rounded-lg bg-brand-50/50 dark:bg-brand-900/10 border border-brand-200 dark:border-brand-800">
-                        <h4 className="text-sm font-semibold text-brand-900 dark:text-brand-200 mb-3">💰 Alquiler — lo que el banco puede computar</h4>
+                        <h4 className="text-sm font-semibold text-brand-900 dark:text-brand-200 mb-3">💰 Alquiler — lo que el banco computa</h4>
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                          <NumberField
-                            label="Renta bruta mensual"
-                            tooltip="Lo que cobras del inquilino cada mes. Si no está alquilado, deja 0."
-                            value={p.netRentalIncome}
-                            onChange={v => updateProperty(p.id, { netRentalIncome: v })}
-                            suffix="€/mes" min={0}
-                          />
-                          <NumberField
-                            label="% computable por el banco"
-                            tooltip="Porcentaje de la renta que el banco acepta como ingreso. Habitual 70%–80% para cubrir vacíos e impagos."
-                            value={p.rentalComputablePct}
-                            onChange={v => updateProperty(p.id, { rentalComputablePct: Math.max(0, Math.min(100, Number(v) || 0)) })}
-                            suffix="%" min={0} max={100} step={5}
-                            help={`${computablePct}% de ${fmtEur(grossRent)} = ${fmtEur(computableRent)}`}
-                          />
-                          <NumberField
-                            label="Gastos mensuales del inmueble"
-                            tooltip="Comunidad, IBI, seguro, gestión, mantenimiento. Se restan de la renta computable."
-                            value={p.rentalMonthlyExpenses}
-                            onChange={v => updateProperty(p.id, { rentalMonthlyExpenses: v })}
-                            suffix="€/mes" min={0}
-                          />
+                          <NumberField label="Renta bruta mensual" tooltip="Lo que cobras del inquilino." value={p.netRentalIncome} onChange={v => updateProperty(p.id, { netRentalIncome: v })} suffix="€/mes" min={0} />
+                          <NumberField label="% computable banco" tooltip="Habitual 70%–80%." value={p.rentalComputablePct} onChange={v => updateProperty(p.id, { rentalComputablePct: Math.max(0, Math.min(100, Number(v) || 0)) })} suffix="%" min={0} max={100} step={5} help={`${computablePct}% de ${fmtEur(grossRent)} = ${fmtEur(computableRent)}`} />
+                          <NumberField label="Gastos mensuales" tooltip="Comunidad, IBI, seguro, gestión." value={p.rentalMonthlyExpenses} onChange={v => updateProperty(p.id, { rentalMonthlyExpenses: v })} suffix="€/mes" min={0} />
                           <div className="rounded-lg bg-white dark:bg-slate-900 border border-brand-200 dark:border-brand-800 p-3 text-xs">
                             <div className="text-slate-500">Renta neta computable</div>
                             <div className="text-lg font-bold text-brand-600 dark:text-brand-400">{fmtEur(netComputableRent)}<span className="text-xs font-normal">/mes</span></div>
                             {mortgagePayment > 0 && (
                               <>
-                                <div className="text-slate-500 mt-1">− Cuota hipoteca: {fmtEur(mortgagePayment)}/mes</div>
+                                <div className="text-slate-500 mt-1">− Cuota: {fmtEur(mortgagePayment)}/mes</div>
                                 <div className={"mt-1 font-semibold " + (netCashFlow >= 0 ? 'text-emerald-600' : 'text-red-600')}>
                                   Flujo neto: {fmtEur(netCashFlow)}/mes
                                 </div>
                               </>
-                            )}
-                            {mortgagePayment === 0 && (
-                              <div className="text-emerald-600 mt-1 font-semibold">Flujo neto: {fmtEur(netComputableRent)}/mes</div>
                             )}
                           </div>
                         </div>
@@ -1300,9 +1411,9 @@ const PropertiesSection = ({ buyers, setBuyers, duplicateDebts, onRemoveDuplicat
 
                     {(p.planToSell === 'sell_before' || p.planToSell === 'sell_after') && (
                       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                        <NumberField label="Precio de venta previsto" tooltip="Si lo dejas a 0 se usará el valor de mercado." value={p.sellPrice} onChange={v => updateProperty(p.id, { sellPrice: v })} suffix="€" min={0} />
-                        <NumberField label="Gastos de venta" tooltip="Inmobiliaria, notaría, cancelación registral." value={p.sellCosts} onChange={v => updateProperty(p.id, { sellCosts: v })} suffix="€" min={0} />
-                        <NumberField label="Impuestos de venta" tooltip="Plusvalía municipal, IRPF ganancia." value={p.sellTaxes} onChange={v => updateProperty(p.id, { sellTaxes: v })} suffix="€" min={0} />
+                        <NumberField label="Precio de venta previsto" tooltip="Si lo dejas a 0 se usa valor de mercado." value={p.sellPrice} onChange={v => updateProperty(p.id, { sellPrice: v })} suffix="€" min={0} />
+                        <NumberField label="Gastos de venta" tooltip="Inmobiliaria, notaría." value={p.sellCosts} onChange={v => updateProperty(p.id, { sellCosts: v })} suffix="€" min={0} />
+                        <NumberField label="Impuestos de venta" tooltip="Plusvalía municipal, IRPF." value={p.sellTaxes} onChange={v => updateProperty(p.id, { sellTaxes: v })} suffix="€" min={0} />
                         {p.planToSell === 'sell_after' && (
                           <NumberField label="Mes de venta" tooltip="Mes (desde la firma) en que prevés vender." value={p.sellMonth} onChange={v => updateProperty(p.id, { sellMonth: v })} suffix="mes" min={1} max={480} />
                         )}
@@ -1315,7 +1426,7 @@ const PropertiesSection = ({ buyers, setBuyers, duplicateDebts, onRemoveDuplicat
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           <NumberField
                             label="% del neto destinado a amortizar"
-                            tooltip="Porcentaje del neto de la venta que destinarás a reducir la hipoteca nueva. El resto queda disponible."
+                            tooltip="Porcentaje del neto de la venta que destinas a reducir la hipoteca nueva."
                             value={p.sellAmortizePct}
                             onChange={v => updateProperty(p.id, { sellAmortizePct: Math.max(0, Math.min(100, Number(v) || 0)) })}
                             suffix="%" min={0} max={100} step={5}
@@ -1323,19 +1434,19 @@ const PropertiesSection = ({ buyers, setBuyers, duplicateDebts, onRemoveDuplicat
                           />
                           <SelectField
                             label="Modo de amortización"
-                            tooltip="Reduce cuota: mantiene el plazo y baja la mensualidad. Reduce plazo: mantiene la cuota y acorta la hipoteca."
+                            tooltip="Reduce cuota: mantiene plazo y baja cuota. Reduce plazo: mantiene cuota y acorta."
                             value={amortizeMode}
                             onChange={v => updateProperty(p.id, { sellAmortizeMode: v })}
                             options={[
-                              { value: 'reduce_cuota', label: 'Reducir CUOTA (mantener plazo)' },
-                              { value: 'reduce_plazo', label: 'Reducir PLAZO (mantener cuota)' },
-                              { value: 'none', label: 'No amortizar (solo obtener líquido)' }
+                              { value: 'reduce_cuota', label: 'Reducir CUOTA' },
+                              { value: 'reduce_plazo', label: 'Reducir PLAZO' },
+                              { value: 'none', label: 'No amortizar' }
                             ]}
                           />
                           <div className="rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-xs">
                             <div className="text-slate-500">Efecto</div>
                             <div className="mt-1 space-y-0.5">
-                              <div>Neto de venta: <strong>{fmtEur(netSaleAfter)}</strong></div>
+                              <div>Neto: <strong>{fmtEur(netSaleAfter)}</strong></div>
                               <div>Amortizas: <strong className="text-brand-600 dark:text-brand-400">{fmtEur(amortizeAmount)}</strong></div>
                               <div>Conservas: <strong className="text-emerald-600 dark:text-emerald-400">{fmtEur(keepAmount)}</strong></div>
                             </div>
@@ -1346,29 +1457,18 @@ const PropertiesSection = ({ buyers, setBuyers, duplicateDebts, onRemoveDuplicat
 
                     <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                       <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 p-2">
-                        <div className="text-slate-500">Patrimonio neto total</div>
+                        <div className="text-slate-500">Patrimonio neto</div>
                         <div className="font-semibold text-slate-800 dark:text-slate-200">{fmtEur(netEquity)}</div>
                       </div>
-                      {isShared && (
-                        <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 p-2">
-                          <div className="text-slate-500">Reparto por titular</div>
-                          <div className="text-slate-700 dark:text-slate-200 space-y-0.5">
-                            {ownerships.map(o => {
-                              const pct = totalPct > 0 ? (Number(o.pct)||0) / totalPct : 0;
-                              return <div key={o.buyerId}>{buyerName(o.buyerId)}: <strong>{fmtEur(netEquity * pct)}</strong> ({fmtPct(pct,0)})</div>;
-                            })}
-                          </div>
-                        </div>
-                      )}
                       {p.usedAsCollateral && (
                         <div className="rounded-lg bg-brand-50 dark:bg-brand-900/20 p-2">
-                          <div className="text-brand-700 dark:text-brand-300">Garantía aportada</div>
+                          <div className="text-brand-700 dark:text-brand-300">Garantía</div>
                           <div className="font-semibold text-brand-700 dark:text-brand-300">{fmtEur(p.collateralValue)}{p.collateralBuyerId ? ` → ${buyerName(p.collateralBuyerId)}` : ' (reparto)'}</div>
                         </div>
                       )}
                       {(p.planToSell === 'sell_before' || p.planToSell === 'sell_after') && (
                         <div className="rounded-lg bg-emerald-50 dark:bg-emerald-900/20 p-2">
-                          <div className="text-emerald-700 dark:text-emerald-300">Neto total de venta</div>
+                          <div className="text-emerald-700 dark:text-emerald-300">Neto de venta</div>
                           <div className="font-semibold text-emerald-700 dark:text-emerald-300">{fmtEur(netSaleAfter)}</div>
                         </div>
                       )}
@@ -1383,7 +1483,7 @@ const PropertiesSection = ({ buyers, setBuyers, duplicateDebts, onRemoveDuplicat
 
       <Card className="p-5 mt-6 bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800">
         <div className="text-xs text-amber-800 dark:text-amber-200">
-          <strong>⚠️ Nota:</strong> la aceptación de un inmueble como garantía adicional depende de cada banco. En copropiedad, el banco puede exigir la firma de todos o computar solo la parte del titular que aporta la garantía. Las amortizaciones parciales pueden llevar comisión (habitual 0%–0,25%).
+          <strong>⚠️ Nota:</strong> la aceptación de garantía adicional depende de cada banco. Las amortizaciones parciales pueden llevar comisión (habitual 0%–0,25%).
         </div>
       </Card>
     </div>
@@ -1399,11 +1499,11 @@ const DebtsSection = ({ debts, setDebts, monthlyExpenses, setMonthlyExpenses }) 
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Deudas y gastos mensuales</h2>
-      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Las deudas afectan al ratio de endeudamiento; los gastos, al presupuesto familiar.</p>
+      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Las deudas afectan al ratio; los gastos al presupuesto familiar.</p>
 
       <Card className="p-4 mb-6 bg-brand-50/50 dark:bg-brand-900/10 border-brand-200 dark:border-brand-800">
         <div className="text-xs text-brand-800 dark:text-brand-200">
-          💡 <strong>Aviso:</strong> si tienes un inmueble en propiedad con hipoteca, <strong>declara su cuota directamente en la pestaña "Inmuebles en propiedad"</strong>. Así se contabiliza una sola vez y el sistema detecta duplicados automáticamente.
+          💡 Si tienes un inmueble en propiedad con hipoteca, <strong>declara su cuota en la pestaña "Inmuebles en propiedad"</strong>. Se detectan duplicados automáticamente.
         </div>
       </Card>
 
@@ -1421,7 +1521,7 @@ const DebtsSection = ({ debts, setDebts, monthlyExpenses, setMonthlyExpenses }) 
                 <NumberField label="Cuota" tooltip="Cuota mensual." value={d.monthlyPayment} onChange={v => update(d.id, { monthlyPayment: v })} suffix="€/mes" min={0} />
                 <NumberField label="Coste cancelar" tooltip="Comisión + intereses." value={d.cancelCost} onChange={v => update(d.id, { cancelCost: v })} suffix="€" min={0} />
                 <div className="flex items-center h-full pb-2">
-                  <Toggle label="Cancelable" tooltip="¿Se cancela antes de la compra?" checked={d.cancelable} onChange={v => update(d.id, { cancelable: v })} />
+                  <Toggle label="Cancelable" tooltip="¿Se cancela antes?" checked={d.cancelable} onChange={v => update(d.id, { cancelable: v })} />
                 </div>
                 <button className="px-3 py-2 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 text-sm dark:bg-red-900/30 dark:text-red-300" onClick={() => remove(d.id)}>×</button>
               </div>
@@ -1431,14 +1531,14 @@ const DebtsSection = ({ debts, setDebts, monthlyExpenses, setMonthlyExpenses }) 
       </Card>
       <Card className="p-5">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Gastos familiares mensuales</h3>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">No computan en el ratio bancario, pero sí en tu presupuesto real.</p>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">No computan en el ratio bancario.</p>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <NumberField label="Alimentación" tooltip="Supermercado y comida fuera." value={monthlyExpenses.food} onChange={v => ue('food', v)} suffix="€" min={0} />
           <NumberField label="Suministros" tooltip="Luz, agua, gas, internet." value={monthlyExpenses.utilities} onChange={v => ue('utilities', v)} suffix="€" min={0} />
-          <NumberField label="Transporte" tooltip="Combustible, transporte público, coche." value={monthlyExpenses.transport} onChange={v => ue('transport', v)} suffix="€" min={0} />
+          <NumberField label="Transporte" tooltip="Combustible, transporte." value={monthlyExpenses.transport} onChange={v => ue('transport', v)} suffix="€" min={0} />
           <NumberField label="Educación" tooltip="Colegios, universidad." value={monthlyExpenses.education} onChange={v => ue('education', v)} suffix="€" min={0} />
           <NumberField label="Seguros" tooltip="Seguros no vinculados." value={monthlyExpenses.insurance} onChange={v => ue('insurance', v)} suffix="€" min={0} />
-          <NumberField label="Hijos" tooltip="Gastos específicos de hijos." value={monthlyExpenses.children} onChange={v => ue('children', v)} suffix="€" min={0} />
+          <NumberField label="Hijos" tooltip="Gastos específicos." value={monthlyExpenses.children} onChange={v => ue('children', v)} suffix="€" min={0} />
           <NumberField label="Otras viviendas" tooltip="Comunidad, IBI, mantenimiento." value={monthlyExpenses.otherHome} onChange={v => ue('otherHome', v)} suffix="€" min={0} />
           <NumberField label="Otros gastos" tooltip="Ocio, suscripciones." value={monthlyExpenses.other} onChange={v => ue('other', v)} suffix="€" min={0} />
         </div>
@@ -1490,7 +1590,7 @@ const PropertySection = ({ property, setProperty, tax, setTax }) => {
           </div>
         )}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <NumberField label="ITP (%)" tooltip="ITP solo vivienda usada." value={tax.mode === 'auto' ? autoItp : tax.itpPct} onChange={v => ut('itpPct', v)} suffix="%" min={0} max={20} step={0.1} help={tax.mode==='auto'?'Automático según CCAA':'Personalizado'} />
+          <NumberField label="ITP (%)" tooltip="ITP solo vivienda usada." value={tax.mode === 'auto' ? autoItp : tax.itpPct} onChange={v => ut('itpPct', v)} suffix="%" min={0} max={20} step={0.1} help={tax.mode==='auto'?'Automático':'Personalizado'} />
           <NumberField label="IVA (%)" tooltip="Solo obra nueva." value={tax.ivaPct} onChange={v => ut('ivaPct', v)} suffix="%" min={0} max={30} step={0.1} />
           <NumberField label="AJD (%)" tooltip="Solo obra nueva." value={tax.ajdPct} onChange={v => ut('ajdPct', v)} suffix="%" min={0} max={5} step={0.1} />
           <NumberField label="Notaría" tooltip="Honorarios notario." value={tax.notary} onChange={v => ut('notary', v)} suffix="€" min={0} />
@@ -1514,33 +1614,45 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
   const effectiveDown = totalPrice - effectiveMortgage;
   const ltvCapped = desiredMortgage > maxMortgageByLtv + 0.01;
   const effectiveLtv = totalPrice > 0 ? effectiveMortgage / totalPrice : 0;
+
   const basePayment = monthlyPayment(effectiveMortgage, mortgage.tin, mortgage.termYears * 12);
-  const baseSchedule = amortizationSchedule(effectiveMortgage, mortgage.tin, mortgage.termYears * 12);
-  const schedule = applyAllAmortizations(baseSchedule, amortizations || [], mortgage.tin);
-  const firstAmortCuota = (amortizations || []).filter(a => a.amount > 0 && a.mode === 'reduce_cuota').sort((a,b) => a.month - b.month)[0];
-  let paymentAfterAmort = basePayment;
-  if (firstAmortCuota) {
-    const row = schedule.find(r => r.month === firstAmortCuota.month + 1);
+  const targetBefore = Number(mortgage.targetPaymentBefore) || 0;
+  const targetAfter = Number(mortgage.targetPaymentAfter) || 0;
+
+  const schedule = buildMortgageSchedule(effectiveMortgage, mortgage.tin, mortgage.termYears * 12, amortizations || [], {
+    targetPaymentBefore: targetBefore,
+    targetPaymentAfter: targetAfter,
+  });
+  const effectiveMonths = schedule.length;
+  const firstRow = schedule[0] || { payment: basePayment };
+  const effectivePayment = firstRow.payment;
+
+  // Cuota tras amortizar
+  const firstAmort = (amortizations || []).filter(a => a.amount > 0 && a.mode === 'reduce_cuota').sort((a,b) => a.month - b.month)[0];
+  let paymentAfterAmort = effectivePayment;
+  if (firstAmort) {
+    const row = schedule.find(r => r.month === firstAmort.month + 1);
     if (row) paymentAfterAmort = row.payment;
   }
-  const effectiveMonths = schedule.length;
+
+  const monthsBase = targetBefore > 0 ? (isFinite(monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)) ? monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore) : mortgage.termYears * 12) : mortgage.termYears * 12;
 
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Hipoteca y financiación</h2>
-      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Configura las condiciones. La entrada depende del LTV máximo, no del tipo de vivienda.</p>
+      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Configura las condiciones. Puedes fijar cuota y dejar que el plazo se ajuste automáticamente.</p>
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Condiciones</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <NumberField
             label="Aportación inicial (% del precio)"
-            tooltip="Porcentaje del precio que pagas tú. El banco financia el resto hasta el LTV máximo. Habitual 20%."
+            tooltip="Porcentaje del precio que pagas tú. El banco financia el resto hasta el LTV máximo."
             value={mortgage.downPaymentPct}
             onChange={v => u('downPaymentPct', v)}
             suffix="%" min={0} max={100} step={1}
             help={`→ Aportas ${fmtEur(totalPrice * downPct / 100)} · Banco financia el ${100 - downPct}%`}
           />
-          <NumberField label="Plazo (años)" tooltip="Habitual 25–30 años." value={mortgage.termYears} onChange={v => u('termYears', v)} min={1} max={40} suffix="años" />
+          <NumberField label="Plazo (años)" tooltip="Duración máxima. Si fijas cuota objetivo, el plazo se recalculará." value={mortgage.termYears} onChange={v => u('termYears', v)} min={1} max={40} suffix="años" />
           <SelectField label="Tipo de interés" tooltip="Fijo, variable o mixto." value={mortgage.type} onChange={v => u('type', v)} options={[{ value: 'fijo', label: 'Fijo' }, { value: 'variable', label: 'Variable' }, { value: 'mixto', label: 'Mixto' }]} />
           <NumberField label="TIN anual" tooltip="Tipo de Interés Nominal." value={mortgage.tin} onChange={v => u('tin', v)} suffix="%" min={0} max={20} step={0.05} />
           <NumberField label="Comisión apertura" tooltip="Habitual 0%–1%." value={mortgage.openingFeePct} onChange={v => u('openingFeePct', v)} suffix="%" min={0} max={5} step={0.1} />
@@ -1560,6 +1672,50 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
           </div>
         )}
       </Card>
+
+      <Card className="p-5 mb-6 bg-gradient-to-br from-brand-50 to-white dark:from-brand-900/20 dark:to-slate-900 border-brand-200 dark:border-brand-800">
+        <h3 className="font-semibold text-slate-900 dark:text-white mb-1">🎯 Cuota mensual objetivo (opcional)</h3>
+        <p className="text-xs text-slate-600 dark:text-slate-400 mb-4">Fija la cuota que quieres pagar y el sistema ajusta el plazo para cumplirla. Deja 0 para calcular por plazo.</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <NumberField
+            label="Cuota objetivo ANTES de amortizar"
+            tooltip="Si indicas un importe aquí, el sistema recalcula el plazo de la hipoteca para que la cuota mensual sea exactamente esa cantidad (antes de cualquier amortización por venta). Deja 0 para usar el plazo indicado arriba."
+            value={mortgage.targetPaymentBefore}
+            onChange={v => u('targetPaymentBefore', Number(v) || 0)}
+            suffix="€/mes" min={0} step={10}
+            help={targetBefore > 0
+              ? `Con ${fmtEur(targetBefore)}/mes, el plazo sería de ${monthsBase} meses (${(monthsBase/12).toFixed(1)} años)`
+              : `Si no lo fijas, se usa el plazo de ${mortgage.termYears} años`}
+          />
+          <NumberField
+            label="Cuota objetivo DESPUÉS de amortizar"
+            tooltip="Si además aplicas amortizaciones por venta, el sistema recalculará el plazo restante para que la cuota resultante sea exactamente esta cantidad. Solo aplica si hay amortizaciones con modo 'Reducir cuota'. Deja 0 para calcular automáticamente."
+            value={mortgage.targetPaymentAfter}
+            onChange={v => u('targetPaymentAfter', Number(v) || 0)}
+            suffix="€/mes" min={0} step={10}
+            help={targetAfter > 0
+              ? `Tras la amortización, la cuota se ajustará a ${fmtEur(targetAfter)}/mes`
+              : 'Si no lo fijas, se reparte el capital restante en el plazo que quede'}
+            disabled={!(amortizations && amortizations.some(a => a.amount > 0 && a.mode === 'reduce_cuota'))}
+          />
+        </div>
+        {targetBefore > 0 && effectiveMortgage > 0 && targetBefore <= effectiveMortgage * (mortgage.tin/100/12) && (
+          <div className="mt-3 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-xs text-red-800 dark:text-red-200">
+            ⚠️ La cuota objetivo es menor que los intereses mensuales ({fmtEur2(effectiveMortgage * (mortgage.tin/100/12))}). La deuda nunca bajaría. Aumenta la cuota.
+          </div>
+        )}
+        {targetBefore > 0 && isFinite(monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)) && monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore) <= 12 * mortgage.termYears && (
+          <div className="mt-3 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200">
+            ✓ Con cuota de {fmtEur(targetBefore)}/mes, el plazo es {monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)} meses ({(monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)/12).toFixed(1)} años) — dentro del máximo de {mortgage.termYears} años.
+          </div>
+        )}
+        {targetBefore > 0 && isFinite(monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)) && monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore) > 12 * mortgage.termYears && (
+          <div className="mt-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200">
+            ⚠️ Con esa cuota el plazo sería {monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)} meses ({(monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)/12).toFixed(1)} años), que supera el máximo de {mortgage.termYears} años. Se recortará al plazo máximo.
+          </div>
+        )}
+      </Card>
+
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Criterios del banco (editables)</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1571,14 +1727,14 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
 
       {ltvCapped && (
         <div className="mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-200">
-          ⚠️ Has pedido una aportación inicial del <strong>{downPct}%</strong>, pero el LTV máximo configurado es del <strong>{maxLtv}%</strong>. Financiación real: <strong>{fmtPct(effectiveLtv, 0)}</strong>.
+          ⚠️ Has pedido aportación del <strong>{downPct}%</strong>, pero el LTV máximo es del <strong>{maxLtv}%</strong>. Financiación real: <strong>{fmtPct(effectiveLtv, 0)}</strong>.
         </div>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <KPI label="Aportación inicial" value={fmtEur(effectiveDown)} sub={`${fmtPct(effectiveDown / (totalPrice||1), 0)} del precio`} color="brand" />
         <KPI label="Hipoteca" value={fmtEur(effectiveMortgage)} sub={`LTV ${fmtPct(effectiveLtv, 0)}`} />
-        <KPI label={firstAmortCuota ? 'Cuota (tras amortizar)' : 'Cuota mensual'} value={fmtEur2(paymentAfterAmort)} color="brand" sub={firstAmortCuota ? `Base: ${fmtEur2(basePayment)}` : null} />
+        <KPI label={firstAmort ? 'Cuota (tras amortizar)' : (targetBefore > 0 ? 'Cuota objetivo' : 'Cuota mensual')} value={fmtEur2(paymentAfterAmort)} color="brand" sub={firstAmort ? `Inicial: ${fmtEur2(effectivePayment)}` : (targetBefore > 0 ? `Antes: ${fmtEur2(effectivePayment)}` : null)} />
         <KPI label="Plazo efectivo" value={`${(effectiveMonths/12).toFixed(1)} años`} sub={effectiveMonths < mortgage.termYears * 12 ? `Base: ${mortgage.termYears} años` : `${effectiveMonths} meses`} />
       </div>
 
@@ -1837,64 +1993,45 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Resultados y análisis</h2>
       <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Los cálculos se actualizan al modificar los datos.</p>
 
-      {/* Panel de acción: rellenar precio máximo */}
       <Card className="p-5 mb-6 bg-gradient-to-br from-brand-50 to-white dark:from-brand-900/30 dark:to-slate-900 border-brand-200 dark:border-brand-800">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div>
             <h3 className="font-semibold text-slate-900 dark:text-white text-lg">🎯 Aplicar precio máximo viable</h3>
             <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-              Rellena el precio de compraventa con el máximo que cumple <strong>todos los requisitos</strong> con tus datos actuales.
+              Rellena el precio de compraventa con el máximo que cumple <strong>todos los requisitos</strong>.
             </p>
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-          <button
-            onClick={() => applyPrice(maxPrice.all)}
-            className="px-4 py-3 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium flex flex-col items-center"
-          >
+          <button onClick={() => applyPrice(maxPrice.all)} className="px-4 py-3 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium flex flex-col items-center">
             <span>🏆 Aplicar conjunto</span>
             <span className="text-xs font-normal mt-1">{fmtEur(maxPrice.all)}</span>
           </button>
-          <button
-            onClick={() => applyPrice(maxPrice.savings)}
-            className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-sm font-medium flex flex-col items-center"
-          >
+          <button onClick={() => applyPrice(maxPrice.savings)} className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-sm font-medium flex flex-col items-center">
             <span>Ahorros</span>
             <span className="text-xs font-normal mt-1 text-slate-500">{fmtEur(maxPrice.savings)}</span>
           </button>
-          <button
-            onClick={() => applyPrice(maxPrice.income)}
-            className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-sm font-medium flex flex-col items-center"
-          >
+          <button onClick={() => applyPrice(maxPrice.income)} className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-sm font-medium flex flex-col items-center">
             <span>Ingresos</span>
             <span className="text-xs font-normal mt-1 text-slate-500">{fmtEur(maxPrice.income)}</span>
           </button>
-          <button
-            onClick={() => applyPrice(maxPrice.ltv)}
-            className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-sm font-medium flex flex-col items-center"
-          >
+          <button onClick={() => applyPrice(maxPrice.ltv)} className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-sm font-medium flex flex-col items-center">
             <span>LTV máximo</span>
             <span className="text-xs font-normal mt-1 text-slate-500">{fmtEur(maxPrice.ltv)}</span>
           </button>
-          <button
-            onClick={() => applyPrice(maxPrice.age)}
-            className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-sm font-medium flex flex-col items-center"
-          >
+          <button onClick={() => applyPrice(maxPrice.age)} className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-sm font-medium flex flex-col items-center">
             <span>Edad / plazo</span>
             <span className="text-xs font-normal mt-1 text-slate-500">{fmtEur(maxPrice.age)}</span>
           </button>
         </div>
-
         {restricting && (
           <div className="mt-4 text-xs text-slate-600 dark:text-slate-400">
-            📌 Restricción limitante: <strong className="text-brand-700 dark:text-brand-300">{restricting.label}</strong>
-            {' '}→ el precio máximo viable es <strong>{fmtEur(maxPrice.all)}</strong>
+            📌 Restricción limitante: <strong className="text-brand-700 dark:text-brand-300">{restricting.label}</strong> → precio máximo viable: <strong>{fmtEur(maxPrice.all)}</strong>
           </div>
         )}
-
         {justApplied !== null && (
           <div className="mt-3 p-2 rounded bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200">
-            ✓ Precio de compraventa actualizado a <strong>{fmtEur(justApplied)}</strong>. Los cálculos se han recalculado.
+            ✓ Precio actualizado a <strong>{fmtEur(justApplied)}</strong>. Los cálculos se han recalculado.
           </div>
         )}
       </Card>
@@ -1946,12 +2083,12 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
             <h4 className="font-semibold mb-3">Flujo mensual estimado</h4>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between"><span>Ingresos brutos</span><span>{fmtEur(result.rawIncome)}</span></div>
-              <div className="flex justify-between text-slate-600 dark:text-slate-300 text-xs"><span>· Ingresos laborales computables</span><span>{fmtEur(result.salaryIncomeComputable)}</span></div>
+              <div className="flex justify-between text-slate-600 dark:text-slate-300 text-xs"><span>· Laborales computables</span><span>{fmtEur(result.salaryIncomeComputable)}</span></div>
               <div className="flex justify-between text-slate-600 dark:text-slate-300 text-xs"><span>· Renta neta computable inmuebles</span><span>{fmtEur(result.rentalIncomeComputable)}</span></div>
-              <div className="flex justify-between text-brand-600 dark:text-brand-400 font-medium"><span>Total ingresos computables</span><span>{fmtEur(result.computableIncome)}</span></div>
+              <div className="flex justify-between text-brand-600 dark:text-brand-400 font-medium"><span>Total computables</span><span>{fmtEur(result.computableIncome)}</span></div>
               <hr className="border-slate-200 dark:border-slate-800" />
-              <div className="flex justify-between text-red-600 dark:text-red-400"><span>Deudas (pestaña Deudas)</span><span>−{fmtEur(result.existingDebtDebtsOnly)}</span></div>
-              <div className="flex justify-between text-red-600 dark:text-red-400"><span>Cuotas hipotecas de inmuebles</span><span>−{fmtEur(result.existingDebtPropertiesOnly)}</span></div>
+              <div className="flex justify-between text-red-600 dark:text-red-400"><span>Deudas (pestaña)</span><span>−{fmtEur(result.existingDebtDebtsOnly)}</span></div>
+              <div className="flex justify-between text-red-600 dark:text-red-400"><span>Cuotas hipotecas inmuebles</span><span>−{fmtEur(result.existingDebtPropertiesOnly)}</span></div>
               <div className="flex justify-between text-red-600 dark:text-red-400"><span>Nueva hipoteca</span><span>−{fmtEur(result.payment)}</span></div>
               <div className="flex justify-between text-red-600 dark:text-red-400"><span>Gastos familiares</span><span>−{fmtEur(result.monthlyExpenses)}</span></div>
               <div className="flex justify-between text-red-600 dark:text-red-400"><span>Productos vinculados</span><span>−{fmtEur((result.linkedAnnual||0)/12)}</span></div>
@@ -1961,7 +2098,7 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
               </div>
               {result.duplicateDebts && result.duplicateDebts.length > 0 && (
                 <div className="text-xs text-amber-600 dark:text-amber-400 mt-2">
-                  ⚠️ {result.duplicateDebts.length} deuda(s) duplicada(s) con hipotecas de inmuebles excluidas del cálculo.
+                  ⚠️ {result.duplicateDebts.length} deuda(s) duplicada(s) con hipotecas de inmuebles excluidas.
                 </div>
               )}
             </div>
@@ -1976,14 +2113,14 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
           <Card className="p-5">
             <h4 className="font-semibold mb-4">Inmuebles declarados</h4>
             {props.all.length === 0 ? (
-              <p className="text-sm text-slate-500">No has declarado inmuebles en propiedad.</p>
+              <p className="text-sm text-slate-500">No has declarado inmuebles.</p>
             ) : (
               <div className="space-y-3">
                 {props.all.map(p => (
                   <div key={p.id} className="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
                     <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                       <div className="font-semibold">{p.alias}</div>
-                      <div className="text-xs text-slate-500">{p.ownerships.length > 1 ? `Copropiedad · ${p.ownerships.length} titulares` : 'Titular único'}</div>
+                      <div className="text-xs text-slate-500">{p.ownerships.length > 1 ? `Copropiedad · ${p.ownerships.length}` : 'Titular único'}</div>
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                       <div>
@@ -2013,25 +2150,10 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
                         </div>
                       </div>
                     )}
-                    <div className="mt-3">
-                      <div className="text-xs uppercase text-slate-500 mb-1">Reparto entre titulares</div>
-                      <div className="text-xs space-y-0.5">
-                        {p.perOwner.map(o => (
-                          <div key={o.buyerId} className="flex justify-between">
-                            <span>{buyerName(o.buyerId)} · {fmtPct(o.pct, 0)}</span>
-                            <span>
-                              Neto: <strong>{fmtEur(o.netEquityShare)}</strong>
-                              {p.usedAsCollateral && o.collateralShare > 0 && <> · Garantía: <strong className="text-brand-600 dark:text-brand-400">{fmtEur(o.collateralShare)}</strong></>}
-                              {p.planToSell === 'keep' && o.rentalShare > 0 && <> · Renta: <strong className="text-brand-600 dark:text-brand-400">{fmtEur(o.rentalShare)}</strong></>}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
                     {(p.planToSell === 'sell_before' || p.planToSell === 'sell_after') && (
                       <div className="mt-3 text-xs">
                         <span className="px-2 py-1 rounded bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300">
-                          {p.planToSell === 'sell_before' ? 'Vender antes' : `Vender después (mes ${p.sellMonth})`} · Neto total: {fmtEur(p.saleNet)}
+                          {p.planToSell === 'sell_before' ? 'Vender antes' : `Vender después (mes ${p.sellMonth})`} · Neto: {fmtEur(p.saleNet)}
                         </span>
                       </div>
                     )}
@@ -2044,22 +2166,8 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
           {props.totalCollateralValue > 0 && (
             <Card className="p-5 bg-brand-50/50 dark:bg-brand-900/10 border-brand-200 dark:border-brand-800">
               <h4 className="font-semibold mb-3">Cobertura de garantía</h4>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                <div>
-                  <div className="text-xs uppercase text-slate-500 font-medium">Valor inmueble nuevo</div>
-                  <div className="font-bold text-lg">{fmtEur(result.totalPrice)}</div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase text-slate-500 font-medium">Garantía adicional</div>
-                  <div className="font-bold text-lg text-brand-600 dark:text-brand-400">{fmtEur(props.totalCollateralValue)}</div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase text-slate-500 font-medium">Hipoteca solicitada</div>
-                  <div className="font-bold text-lg">{fmtEur(result.mortgageAmount)}</div>
-                </div>
-              </div>
-              <p className="text-xs text-slate-600 dark:text-slate-400 mt-3">
-                Ratio de cobertura total: <strong>{result.collateralCoverageRatio.toFixed(2)}x</strong>
+              <p className="text-xs text-slate-600 dark:text-slate-400">
+                Ratio de cobertura: <strong>{result.collateralCoverageRatio.toFixed(2)}x</strong> (valor inmueble nuevo + garantía adicional / hipoteca solicitada)
               </p>
             </Card>
           )}
@@ -2067,16 +2175,16 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
           {props.liquidFromSalesBefore > 0 && (
             <Card className="p-5 bg-emerald-50/50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800">
               <h4 className="font-semibold mb-2">Ventas antes de la compra</h4>
-              <p className="text-sm">Líquido obtenido con ventas previstas antes de la compra: <strong>{fmtEur(props.liquidFromSalesBefore)}</strong></p>
+              <p className="text-sm">Líquido de ventas antes: <strong>{fmtEur(props.liquidFromSalesBefore)}</strong></p>
             </Card>
           )}
 
           {props.netFromSalesAfter > 0 && (
             <Card className="p-5 bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800">
               <h4 className="font-semibold mb-2">Ventas después de la compra</h4>
-              <p className="text-sm">Se prevé vender inmuebles tras la compra por un neto total de <strong>{fmtEur(props.netFromSalesAfter)}</strong>.</p>
+              <p className="text-sm">Se prevé vender por un neto total de <strong>{fmtEur(props.netFromSalesAfter)}</strong>.</p>
               {result.totalAmortizedBySales > 0 && (
-                <p className="text-sm mt-2">De ese neto, <strong className="text-brand-600 dark:text-brand-400">{fmtEur(result.totalAmortizedBySales)}</strong> se destinan a amortizar la hipoteca y <strong className="text-emerald-600 dark:text-emerald-400">{fmtEur(result.totalKeptFromSales)}</strong> se conservan.</p>
+                <p className="text-sm mt-2">Se amortizan <strong className="text-brand-600 dark:text-brand-400">{fmtEur(result.totalAmortizedBySales)}</strong> y se conservan <strong className="text-emerald-600 dark:text-emerald-400">{fmtEur(result.totalKeptFromSales)}</strong>.</p>
               )}
             </Card>
           )}
@@ -2084,38 +2192,33 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
       )}
 
       {tab === 'costs' && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card className="p-5">
-              <h4 className="font-semibold mb-1">Desglose de la operación</h4>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">Distingue lo que se <strong>paga</strong> de lo que se <strong>conserva</strong>.</p>
-              <div className="space-y-2 text-sm">
-                <div className="text-xs uppercase text-slate-500 font-semibold mt-2">Se paga al vendedor, banco e impuestos</div>
-                <Row label="Aportación inicial (entrada)" value={result.downPayment} />
-                <Row label="ITP" value={result.acq.itp} />
-                <Row label="IVA" value={result.acq.iva} />
-                <Row label="AJD" value={result.acq.ajd} />
-                <Row label="Notaría + Registro + Tasación + Gestoría" value={result.acq.fixed} />
-                <Row label="Comisión inmobiliaria" value={result.acq.agency} />
-                <Row label="Reformas + Mobiliario" value={(result.reforms||0)+(result.furniture||0)} />
-                <Row label="Apertura hipoteca" value={result.openingFee} />
-                <Row label="Gastos de compra (subtotal)" value={result.acquisitionCosts} bold />
-                <div className="text-xs uppercase text-slate-500 font-semibold mt-4">Se conserva en tu cuenta</div>
-                <Row label="Reserva de emergencia" value={result.emergencyReserve} />
-                <Row label="Total a tener disponible" value={result.totalRequired} bold />
-                <div className="text-xs uppercase text-slate-500 font-semibold mt-4">Tu situación</div>
-                <Row label="Disponible (líquido + ventas antes)" value={result.available} />
-                <Row label="Déficit / Excedente total" value={-result.liquidityGap} bold color={result.liquidityGap <= 0 ? 'emerald' : 'red'} />
-              </div>
-            </Card>
-            <Card className="p-5">
-              <h4 className="font-semibold mb-3">Composición de gastos de compra</h4>
-              <DonutChart data={costPie} colors={COLORS} size={220} />
-              <div className="mt-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-xs text-slate-600 dark:text-slate-300">
-                <strong>ℹ️ Aclaración:</strong> la <em>aportación inicial</em> es la parte del precio que no financia el banco (100% − LTV). Los <em>impuestos y gastos</em> son obligatorios aparte. La <em>reserva de emergencia</em> es dinero que decides no gastar.
-              </div>
-            </Card>
-          </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Card className="p-5">
+            <h4 className="font-semibold mb-1">Desglose de la operación</h4>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">Lo que se <strong>paga</strong> vs lo que se <strong>conserva</strong>.</p>
+            <div className="space-y-2 text-sm">
+              <div className="text-xs uppercase text-slate-500 font-semibold mt-2">Se paga</div>
+              <Row label="Aportación inicial (entrada)" value={result.downPayment} />
+              <Row label="ITP" value={result.acq.itp} />
+              <Row label="IVA" value={result.acq.iva} />
+              <Row label="AJD" value={result.acq.ajd} />
+              <Row label="Notaría + Registro + Tasación + Gestoría" value={result.acq.fixed} />
+              <Row label="Comisión inmobiliaria" value={result.acq.agency} />
+              <Row label="Reformas + Mobiliario" value={(result.reforms||0)+(result.furniture||0)} />
+              <Row label="Apertura hipoteca" value={result.openingFee} />
+              <Row label="Gastos de compra" value={result.acquisitionCosts} bold />
+              <div className="text-xs uppercase text-slate-500 font-semibold mt-4">Se conserva</div>
+              <Row label="Reserva de emergencia" value={result.emergencyReserve} />
+              <Row label="Total a tener disponible" value={result.totalRequired} bold />
+              <div className="text-xs uppercase text-slate-500 font-semibold mt-4">Tu situación</div>
+              <Row label="Disponible" value={result.available} />
+              <Row label="Déficit / Excedente" value={-result.liquidityGap} bold color={result.liquidityGap <= 0 ? 'emerald' : 'red'} />
+            </div>
+          </Card>
+          <Card className="p-5">
+            <h4 className="font-semibold mb-3">Composición de gastos</h4>
+            <DonutChart data={costPie} colors={COLORS} size={220} />
+          </Card>
         </div>
       )}
 
@@ -2123,17 +2226,15 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
         <div className="space-y-4">
           {hasAmortizations && (
             <Card className="p-5 bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800">
-              <h4 className="font-semibold mb-3">📌 Amortizaciones planificadas por venta de inmuebles</h4>
+              <h4 className="font-semibold mb-3">📌 Amortizaciones planificadas</h4>
               <div className="space-y-2 text-sm">
                 {result.amortizations.filter(a => a.amount > 0 && a.mode !== 'none').map((a, i) => (
                   <div key={i} className="flex flex-wrap justify-between items-center gap-2 py-1 border-b border-amber-200/50 dark:border-amber-800/50 last:border-0">
-                    <div><strong>{a.propertyAlias}</strong> · mes {a.month} (año {Math.ceil(a.month/12)})</div>
+                    <div><strong>{a.propertyAlias}</strong> · mes {a.month}</div>
                     <div className="flex gap-3 text-xs">
                       <span>Amortizas: <strong className="text-brand-600 dark:text-brand-400">{fmtEur(a.amount)}</strong></span>
                       <span>Conservas: <strong className="text-emerald-600 dark:text-emerald-400">{fmtEur(a.keep)}</strong></span>
-                      <span className="px-2 py-0.5 rounded bg-white dark:bg-slate-900">
-                        {a.mode === 'reduce_cuota' ? '↓ Cuota' : '↓ Plazo'}
-                      </span>
+                      <span className="px-2 py-0.5 rounded bg-white dark:bg-slate-900">{a.mode === 'reduce_cuota' ? '↓ Cuota' : '↓ Plazo'}</span>
                     </div>
                   </div>
                 ))}
@@ -2152,21 +2253,21 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card className="p-5">
-              <h4 className="font-semibold mb-3">Escenario base (sin amortizaciones)</h4>
+              <h4 className="font-semibold mb-3">Escenario base (plazo fijo)</h4>
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div><div className="text-xs uppercase text-slate-500">Cuota</div><div className="font-bold">{fmtEur2(result.basePayment)}</div></div>
-                <div><div className="text-xs uppercase text-slate-500">Intereses totales</div><div className="font-bold">{fmtEur(result.baseInterestTotal)}</div></div>
+                <div><div className="text-xs uppercase text-slate-500">Intereses</div><div className="font-bold">{fmtEur(result.baseInterestTotal)}</div></div>
                 <div><div className="text-xs uppercase text-slate-500">Meses</div><div className="font-bold">{result.months}</div></div>
-                <div><div className="text-xs uppercase text-slate-500">Coste hipoteca</div><div className="font-bold">{fmtEur(result.mortgageAmount + result.baseInterestTotal)}</div></div>
+                <div><div className="text-xs uppercase text-slate-500">Coste</div><div className="font-bold">{fmtEur(result.mortgageAmount + result.baseInterestTotal)}</div></div>
               </div>
             </Card>
             <Card className="p-5 bg-emerald-50/50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800">
-              <h4 className="font-semibold mb-3">Con amortizaciones por ventas</h4>
+              <h4 className="font-semibold mb-3">Con tu configuración</h4>
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><div className="text-xs uppercase text-slate-500">Cuota final</div><div className="font-bold">{fmtEur2(result.paymentAfterFirstAmort)}</div></div>
-                <div><div className="text-xs uppercase text-slate-500">Intereses totales</div><div className="font-bold">{fmtEur(result.interestTotal)}</div></div>
+                <div><div className="text-xs uppercase text-slate-500">Cuota</div><div className="font-bold">{fmtEur2(result.payment)}</div></div>
+                <div><div className="text-xs uppercase text-slate-500">Intereses</div><div className="font-bold">{fmtEur(result.interestTotal)}</div></div>
                 <div><div className="text-xs uppercase text-slate-500">Meses</div><div className="font-bold">{result.effectiveMonths}</div></div>
-                <div><div className="text-xs uppercase text-slate-500">Coste hipoteca</div><div className="font-bold">{fmtEur(result.mortgageAmount + result.interestTotal)}</div></div>
+                <div><div className="text-xs uppercase text-slate-500">Coste</div><div className="font-bold">{fmtEur(result.mortgageAmount + result.interestTotal)}</div></div>
               </div>
               {hasAmortizations && (
                 <div className="mt-3 pt-3 border-t border-emerald-200 dark:border-emerald-800 text-sm">
@@ -2198,7 +2299,6 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
             <KPI label="Edad / plazo" value={fmtEur(maxPrice.age)} />
             <KPI label="Conjunto" value={fmtEur(maxPrice.all)} color="brand" />
           </div>
-          <p className={helpCls + " mt-4"}>El precio máximo conjunto se calcula con búsqueda binaria sobre una función que verifica simultáneamente todas las restricciones.</p>
         </Card>
       )}
 
@@ -2257,19 +2357,19 @@ const SavedSection = ({ state, setState, list, setList }) => {
   };
 
   const exportAll = () => {
-    const payload = { _type: 'simulador_hipoteca_backup', _version: 7, exportedAt: new Date().toISOString(), current: state, saved: list };
+    const payload = { _type: 'simulador_hipoteca_backup', _version: 8, exportedAt: new Date().toISOString(), current: state, saved: list };
     downloadFile(JSON.stringify(payload, null, 2), `simulador-backup-${Date.now()}.json`);
-    showMessage('ok', `Exportado: simulación actual + ${Object.keys(list).length} guardadas`);
+    showMessage('ok', `Exportado: actual + ${Object.keys(list).length} guardadas`);
   };
   const exportCurrent = () => {
-    const payload = { _type: 'simulador_hipoteca_current', _version: 7, exportedAt: new Date().toISOString(), state };
+    const payload = { _type: 'simulador_hipoteca_current', _version: 8, exportedAt: new Date().toISOString(), state };
     downloadFile(JSON.stringify(payload, null, 2), `simulador-actual-${Date.now()}.json`);
     showMessage('ok', 'Simulación actual exportada');
   };
   const exportSingle = (id) => {
     const s = list[id];
     if (!s) return;
-    const payload = { _type: 'simulador_hipoteca_single', _version: 7, exportedAt: new Date().toISOString(), simulation: s };
+    const payload = { _type: 'simulador_hipoteca_single', _version: 8, exportedAt: new Date().toISOString(), simulation: s };
     downloadFile(JSON.stringify(payload, null, 2), `simulacion-${s.name.replace(/[^a-z0-9]/gi,'_')}-${Date.now()}.json`);
     showMessage('ok', 'Exportada: ' + s.name);
   };
@@ -2293,10 +2393,10 @@ const SavedSection = ({ state, setState, list, setList }) => {
           localStorage.setItem(LS_LIST, JSON.stringify(mergedSaved));
           importedCount = Object.keys(data.saved || {}).length;
           if (data.current) { setState(normalizeState(data.current)); loadedCurrent = true; }
-          showMessage('ok', `Backup importado: ${importedCount} simulaciones${loadedCurrent ? ' + simulación actual cargada' : ''}.`);
+          showMessage('ok', `Backup importado: ${importedCount} simulaciones${loadedCurrent ? ' + actual cargada' : ''}.`);
         } else if (type === 'simulador_hipoteca_current' || (data.state && !data.name)) {
           setState(normalizeState(data.state));
-          showMessage('ok', 'Simulación actual importada y cargada.');
+          showMessage('ok', 'Simulación actual importada.');
         } else if (type === 'simulador_hipoteca_single' || (data.simulation && data.simulation.state)) {
           const sim = data.simulation;
           const id = sim.id || ('sim_' + Date.now());
@@ -2308,10 +2408,10 @@ const SavedSection = ({ state, setState, list, setList }) => {
           setState(normalizeState(data));
           showMessage('ok', 'Estado cargado directamente.');
         } else {
-          showMessage('error', 'Formato de archivo no reconocido.');
+          showMessage('error', 'Formato no reconocido.');
         }
       } catch (err) {
-        showMessage('error', 'Error al leer el archivo: ' + err.message);
+        showMessage('error', 'Error al leer archivo: ' + err.message);
       } finally {
         if (fileRef.current) fileRef.current.value = '';
       }
@@ -2322,7 +2422,7 @@ const SavedSection = ({ state, setState, list, setList }) => {
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Simulaciones guardadas</h2>
-      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Todo se guarda en tu navegador (localStorage). Exporta para hacer copias de seguridad.</p>
+      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Todo se guarda en tu navegador (localStorage). Exporta para backup.</p>
 
       {message && (
         <div className={"mb-4 p-3 rounded-lg text-sm border " + (message.type === 'ok' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200')}>
@@ -2340,12 +2440,10 @@ const SavedSection = ({ state, setState, list, setList }) => {
 
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-1">Copia de seguridad</h3>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-          <strong>Exportar todo</strong>: simulación actual + guardadas. <strong>Exportar actual</strong>: solo lo que tienes en pantalla. <strong>Importar</strong>: acepta los tres formatos.
-        </p>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">Exportar todo / actual / individual. Importar acepta los tres.</p>
         <div className="flex flex-col md:flex-row gap-3">
           <button className="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium" onClick={exportAll}>📦 Exportar todo</button>
-          <button className="px-4 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-sm font-medium" onClick={exportCurrent}>📄 Exportar solo actual</button>
+          <button className="px-4 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-sm font-medium" onClick={exportCurrent}>📄 Exportar actual</button>
           <button className="px-4 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-sm font-medium" onClick={() => fileRef.current.click()}>📥 Importar JSON</button>
           <input ref={fileRef} type="file" accept=".json,application/json" hidden onChange={importJson} />
         </div>
@@ -2357,7 +2455,7 @@ const SavedSection = ({ state, setState, list, setList }) => {
           {Object.keys(list).length > 0 && <span className="ml-2 text-sm font-normal text-slate-500">({Object.keys(list).length})</span>}
         </h3>
         {Object.keys(list).length === 0 ? (
-          <p className="text-sm text-slate-500">No hay simulaciones guardadas todavía.</p>
+          <p className="text-sm text-slate-500">No hay simulaciones guardadas.</p>
         ) : (
           <div className="space-y-3">
             {Object.values(list).sort((a,b) => b.savedAt.localeCompare(a.savedAt)).map(s => (
