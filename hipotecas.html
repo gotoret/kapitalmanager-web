@@ -1531,6 +1531,38 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
 
   const monthsBase = targetBefore > 0 ? (isFinite(monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)) ? monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore) : mortgage.termYears * 12) : mortgage.termYears * 12;
 
+  // --- NUEVA FUNCIÓN: Calcular cuota objetivo tras amortizar ---
+  const calculateAutoTargetAfter = () => {
+    if (!amortizations || amortizations.length === 0) return;
+    
+    const firstAmortToReduce = amortizations
+      .filter(a => a.amount > 0 && a.mode === 'reduce_cuota')
+      .sort((a, b) => a.month - b.month)[0];
+
+    if (!firstAmortToReduce) return;
+
+    const scheduleBefore = buildMortgageSchedule(effectiveMortgage, mortgage.tin, mortgage.termYears * 12, [], {
+      targetPaymentBefore: targetBefore,
+    });
+
+    const amortMonth = firstAmortToReduce.month;
+    let balanceAtAmort = effectiveMortgage;
+
+    if (amortMonth > 0 && amortMonth <= scheduleBefore.length) {
+       balanceAtAmort = scheduleBefore[amortMonth - 1].balance;
+    } else if (scheduleBefore.length > 0) {
+       balanceAtAmort = scheduleBefore[scheduleBefore.length - 1].balance;
+    }
+
+    const newBalance = Math.max(0, balanceAtAmort - firstAmortToReduce.amount);
+    const monthsRemaining = (mortgage.termYears * 12) - amortMonth;
+
+    if (monthsRemaining > 0 && newBalance > 0) {
+      const autoPayment = monthlyPayment(newBalance, mortgage.tin, monthsRemaining);
+      u('targetPaymentAfter', Math.round(autoPayment));
+    }
+  };
+
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Hipoteca y financiación</h2>
@@ -1574,18 +1606,31 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
               ? `Con ${fmtEur(targetBefore)}/mes, el plazo sería de ${monthsBase} meses (${(monthsBase/12).toFixed(1)} años)`
               : `Si no lo fijas, se usa el plazo de ${mortgage.termYears} años`}
           />
-          <NumberField
-            label="Cuota objetivo DESPUÉS de amortizar"
-            tooltip="Si aplicas amortizaciones con modo 'Reducir cuota', el sistema recalcula el plazo restante para que la cuota sea esta cantidad."
-            value={mortgage.targetPaymentAfter}
-            onChange={v => u('targetPaymentAfter', Number(v) || 0)}
-            suffix="€/mes" min={0} step={10}
-            help={targetAfter > 0
-              ? `Tras la amortización, la cuota se ajustará a ${fmtEur(targetAfter)}/mes`
-              : 'Si no lo fijas, se reparte el capital restante en el plazo que quede'}
-            disabled={!(amortizations && amortizations.some(a => a.amount > 0 && a.mode === 'reduce_cuota'))}
-          />
+          
+          <div className="relative">
+            <NumberField
+              label="Cuota objetivo DESPUÉS de amortizar"
+              tooltip="Si aplicas amortizaciones con modo 'Reducir cuota', el sistema recalcula el plazo restante para que la cuota sea esta cantidad."
+              value={mortgage.targetPaymentAfter}
+              onChange={v => u('targetPaymentAfter', Number(v) || 0)}
+              suffix="€/mes" min={0} step={10}
+              help={targetAfter > 0
+                ? `Tras la amortización, la cuota se ajustará a ${fmtEur(targetAfter)}/mes`
+                : 'Si no lo fijas, se reparte el capital restante en el plazo que quede'}
+              disabled={!(amortizations && amortizations.some(a => a.amount > 0 && a.mode === 'reduce_cuota'))}
+            />
+            {/* BOTÓN NUEVO */}
+            {amortizations && amortizations.some(a => a.amount > 0 && a.mode === 'reduce_cuota') && (
+              <button 
+                onClick={calculateAutoTargetAfter}
+                className="absolute -bottom-7 right-0 text-xs font-medium text-brand-600 hover:text-brand-800 dark:text-brand-400 dark:hover:text-brand-300 flex items-center gap-1 no-print transition-colors"
+              >
+                ✨ Calcular cuota automáticamente
+              </button>
+            )}
+          </div>
         </div>
+        
         {targetBefore > 0 && effectiveMortgage > 0 && targetBefore <= effectiveMortgage * (mortgage.tin/100/12) && (
           <div className="mt-3 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-xs text-red-800 dark:text-red-200">
             ⚠️ La cuota objetivo es menor que los intereses mensuales ({fmtEur2(effectiveMortgage * (mortgage.tin/100/12))}). La deuda nunca bajaría. Aumenta la cuota.
