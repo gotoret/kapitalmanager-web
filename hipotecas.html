@@ -102,20 +102,11 @@ const amortizationSchedule = (principal, annualRatePct, months) => {
 
 const totalInterest = (rows) => rows.reduce((s, r) => s + r.interest, 0);
 
-/* Construye el cuadro con soporte de cuota objetivo y amortizaciones */
-const buildMortgageSchedule = (mortgageAmount, annualRatePct, baseMonths, amortizations, opts = {}) => {
-  const { targetPaymentBefore = 0, targetPaymentAfter = 0 } = opts;
+/* Construye el cuadro con soporte de amortizaciones */
+const buildMortgageSchedule = (mortgageAmount, annualRatePct, baseMonths, amortizations) => {
   const r = annualRatePct / 100 / 12;
-
   let months = baseMonths;
-  let basePayment;
-  if (targetPaymentBefore > 0 && mortgageAmount > 0) {
-    const n = monthsForPayment(mortgageAmount, annualRatePct, targetPaymentBefore);
-    if (isFinite(n) && n > 0 && n <= 12 * 40) { months = n; basePayment = targetPaymentBefore; }
-    else { basePayment = monthlyPayment(mortgageAmount, annualRatePct, baseMonths); }
-  } else {
-    basePayment = monthlyPayment(mortgageAmount, annualRatePct, baseMonths);
-  }
+  let basePayment = monthlyPayment(mortgageAmount, annualRatePct, baseMonths);
 
   let schedule = [];
   let balance = mortgageAmount;
@@ -154,16 +145,9 @@ const buildMortgageSchedule = (mortgageAmount, annualRatePct, baseMonths, amorti
       if (newBalance <= 0) { schedule = currentSchedule; continue; }
 
       if (a.mode === 'reduce_cuota') {
-        let newPayment = 0;
-        let remainingMonths = 0;
-        if (targetPaymentAfter > 0) {
-          const n = monthsForPayment(newBalance, annualRatePct, targetPaymentAfter);
-          if (isFinite(n) && n > 0 && n <= 12 * 40) { remainingMonths = n; newPayment = targetPaymentAfter; }
-          else { remainingMonths = Math.max(1, schedule.length - atMonth); newPayment = monthlyPayment(newBalance, annualRatePct, remainingMonths); }
-        } else {
-          remainingMonths = Math.max(1, schedule.length - atMonth);
-          newPayment = monthlyPayment(newBalance, annualRatePct, remainingMonths);
-        }
+        let remainingMonths = Math.max(1, schedule.length - atMonth);
+        let newPayment = monthlyPayment(newBalance, annualRatePct, remainingMonths);
+        
         let bal = newBalance;
         for (let i = 1; i <= remainingMonths; i++) {
           const interest = bal * r;
@@ -417,18 +401,13 @@ const evaluateOperation = (state, override = {}) => {
   const liquidityGap = totalRequired - available;
   const liquidityGapWithoutReserve = totalNeeded - available;
 
-  const targetPaymentBefore = Number(m.targetPaymentBefore) || 0;
-  const targetPaymentAfter = Number(m.targetPaymentAfter) || 0;
   const amortizations = props.amortizations || [];
 
   const baseSchedule = amortizationSchedule(mortgageAmount, tin, months);
   const basePayment = monthlyPayment(mortgageAmount, tin, months);
   const baseInterestTotal = totalInterest(baseSchedule);
 
-  const schedule = buildMortgageSchedule(mortgageAmount, tin, months, amortizations, {
-    targetPaymentBefore,
-    targetPaymentAfter,
-  });
+  const schedule = buildMortgageSchedule(mortgageAmount, tin, months, amortizations);
   
   const interestTotal = totalInterest(schedule);
   const firstRow = schedule[0] || { payment: basePayment };
@@ -514,7 +493,6 @@ const evaluateOperation = (state, override = {}) => {
     payment: effectivePayment, paymentAfterFirstAmort, basePayment,
     schedule, baseSchedule, interestTotal, baseInterestTotal,
     months, effectiveMonths, effectiveYears, tin, maxLtv,
-    targetPaymentBefore, targetPaymentAfter,
     amortizations, totalAmortizedBySales, totalKeptFromSales,
     salaryIncomeComputable, rentalIncomeComputable,
     computableIncome, rawIncome,
@@ -608,8 +586,7 @@ const INITIAL_STATE = {
   mortgage: {
     downPaymentPct: 20, termYears: 30, type: 'fijo', tin: 3.25,
     euribor: 3.5, spread: 1.0, revisionMonths: 12, fixedYears: 5, postFixedTin: 4.0,
-    openingFeePct: 0.5, linkedProductsAnnual: 600, maxLtv: 80, maxAgeAtMaturity: 75, debtThreshold: 0.35,
-    targetPaymentBefore: 0, targetPaymentAfter: 0
+    openingFeePct: 0.5, linkedProductsAnnual: 600, maxLtv: 80, maxAgeAtMaturity: 75, debtThreshold: 0.35
   }
 };
 
@@ -1511,13 +1488,8 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
   const effectiveLtv = totalPrice > 0 ? effectiveMortgage / totalPrice : 0;
 
   const basePayment = monthlyPayment(effectiveMortgage, mortgage.tin, mortgage.termYears * 12);
-  const targetBefore = Number(mortgage.targetPaymentBefore) || 0;
-  const targetAfter = Number(mortgage.targetPaymentAfter) || 0;
 
-  const schedule = buildMortgageSchedule(effectiveMortgage, mortgage.tin, mortgage.termYears * 12, amortizations || [], {
-    targetPaymentBefore: targetBefore,
-    targetPaymentAfter: targetAfter,
-  });
+  const schedule = buildMortgageSchedule(effectiveMortgage, mortgage.tin, mortgage.termYears * 12, amortizations || []);
   const effectiveMonths = schedule.length;
   const firstRow = schedule[0] || { payment: basePayment };
   const effectivePayment = firstRow.payment;
@@ -1529,49 +1501,15 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
     if (row) paymentAfterAmort = row.payment;
   }
 
-  const monthsBase = targetBefore > 0 ? (isFinite(monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)) ? monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore) : mortgage.termYears * 12) : mortgage.termYears * 12;
-
-  // --- NUEVA FUNCIÓN: Calcular cuota objetivo tras amortizar ---
-  const calculateAutoTargetAfter = () => {
-    if (!amortizations || amortizations.length === 0) return;
-    
-    const firstAmortToReduce = amortizations
-      .filter(a => a.amount > 0 && a.mode === 'reduce_cuota')
-      .sort((a, b) => a.month - b.month)[0];
-
-    if (!firstAmortToReduce) return;
-
-    const scheduleBefore = buildMortgageSchedule(effectiveMortgage, mortgage.tin, mortgage.termYears * 12, [], {
-      targetPaymentBefore: targetBefore,
-    });
-
-    const amortMonth = firstAmortToReduce.month;
-    let balanceAtAmort = effectiveMortgage;
-
-    if (amortMonth > 0 && amortMonth <= scheduleBefore.length) {
-       balanceAtAmort = scheduleBefore[amortMonth - 1].balance;
-    } else if (scheduleBefore.length > 0) {
-       balanceAtAmort = scheduleBefore[scheduleBefore.length - 1].balance;
-    }
-
-    const newBalance = Math.max(0, balanceAtAmort - firstAmortToReduce.amount);
-    const monthsRemaining = (mortgage.termYears * 12) - amortMonth;
-
-    if (monthsRemaining > 0 && newBalance > 0) {
-      const autoPayment = monthlyPayment(newBalance, mortgage.tin, monthsRemaining);
-      u('targetPaymentAfter', Math.round(autoPayment));
-    }
-  };
-
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Hipoteca y financiación</h2>
-      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Configura las condiciones. Puedes fijar cuota y dejar que el plazo se ajuste automáticamente.</p>
+      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Configura las condiciones de tu préstamo hipotecario.</p>
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Condiciones</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <NumberField label="Aportación inicial (% del precio)" tooltip="Porcentaje del precio que pagas tú." value={mortgage.downPaymentPct} onChange={v => u('downPaymentPct', v)} suffix="%" min={0} max={100} step={1} help={`→ Aportas ${fmtEur(totalPrice * downPct / 100)} · Banco financia el ${100 - downPct}%`} />
-          <NumberField label="Plazo (años)" tooltip="Duración máxima. Si fijas cuota objetivo, se recalcula." value={mortgage.termYears} onChange={v => u('termYears', v)} min={1} max={40} suffix="años" />
+          <NumberField label="Plazo (años)" tooltip="Duración del préstamo." value={mortgage.termYears} onChange={v => u('termYears', v)} min={1} max={40} suffix="años" />
           <SelectField label="Tipo de interés" tooltip="Fijo, variable o mixto." value={mortgage.type} onChange={v => u('type', v)} options={[{ value: 'fijo', label: 'Fijo' }, { value: 'variable', label: 'Variable' }, { value: 'mixto', label: 'Mixto' }]} />
           <NumberField label="TIN anual" tooltip="Tipo de Interés Nominal." value={mortgage.tin} onChange={v => u('tin', v)} suffix="%" min={0} max={20} step={0.05} />
           <NumberField label="Comisión apertura" tooltip="Habitual 0%–1%." value={mortgage.openingFeePct} onChange={v => u('openingFeePct', v)} suffix="%" min={0} max={5} step={0.1} />
@@ -1588,62 +1526,6 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
             <NumberField label="Años tramo fijo" tooltip="Habitual 5–10 años." value={mortgage.fixedYears} onChange={v => u('fixedYears', v)} suffix="años" min={1} max={30} />
             <NumberField label="TIN posterior" tooltip="Tipo tras el tramo fijo." value={mortgage.postFixedTin} onChange={v => u('postFixedTin', v)} suffix="%" min={0} max={20} step={0.05} />
-          </div>
-        )}
-      </Card>
-
-      <Card className="p-5 mb-6 bg-gradient-to-br from-brand-50 to-white dark:from-brand-900/20 dark:to-slate-900 border-brand-200 dark:border-brand-800">
-        <h3 className="font-semibold text-slate-900 dark:text-white mb-1">🎯 Cuota mensual objetivo (opcional)</h3>
-        <p className="text-xs text-slate-600 dark:text-slate-400 mb-4">Fija la cuota y el sistema ajusta el plazo. Deja 0 para calcular por plazo.</p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <NumberField
-            label="Cuota objetivo ANTES de amortizar"
-            tooltip="Si indicas importe, el sistema recalcula el plazo para que la cuota sea esa cantidad."
-            value={mortgage.targetPaymentBefore}
-            onChange={v => u('targetPaymentBefore', Number(v) || 0)}
-            suffix="€/mes" min={0} step={10}
-            help={targetBefore > 0
-              ? `Con ${fmtEur(targetBefore)}/mes, el plazo sería de ${monthsBase} meses (${(monthsBase/12).toFixed(1)} años)`
-              : `Si no lo fijas, se usa el plazo de ${mortgage.termYears} años`}
-          />
-          
-          <div className="relative">
-            <NumberField
-              label="Cuota objetivo DESPUÉS de amortizar"
-              tooltip="Si aplicas amortizaciones con modo 'Reducir cuota', el sistema recalcula el plazo restante para que la cuota sea esta cantidad."
-              value={mortgage.targetPaymentAfter}
-              onChange={v => u('targetPaymentAfter', Number(v) || 0)}
-              suffix="€/mes" min={0} step={10}
-              help={targetAfter > 0
-                ? `Tras la amortización, la cuota se ajustará a ${fmtEur(targetAfter)}/mes`
-                : 'Si no lo fijas, se reparte el capital restante en el plazo que quede'}
-              disabled={!(amortizations && amortizations.some(a => a.amount > 0 && a.mode === 'reduce_cuota'))}
-            />
-            {/* BOTÓN NUEVO */}
-            {amortizations && amortizations.some(a => a.amount > 0 && a.mode === 'reduce_cuota') && (
-              <button 
-                onClick={calculateAutoTargetAfter}
-                className="absolute -bottom-7 right-0 text-xs font-medium text-brand-600 hover:text-brand-800 dark:text-brand-400 dark:hover:text-brand-300 flex items-center gap-1 no-print transition-colors"
-              >
-                ✨ Calcular cuota automáticamente
-              </button>
-            )}
-          </div>
-        </div>
-        
-        {targetBefore > 0 && effectiveMortgage > 0 && targetBefore <= effectiveMortgage * (mortgage.tin/100/12) && (
-          <div className="mt-3 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-xs text-red-800 dark:text-red-200">
-            ⚠️ La cuota objetivo es menor que los intereses mensuales ({fmtEur2(effectiveMortgage * (mortgage.tin/100/12))}). La deuda nunca bajaría. Aumenta la cuota.
-          </div>
-        )}
-        {targetBefore > 0 && isFinite(monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)) && monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore) <= 12 * mortgage.termYears && (
-          <div className="mt-3 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200">
-            ✓ Con cuota de {fmtEur(targetBefore)}/mes, el plazo es {monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)} meses ({(monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)/12).toFixed(1)} años) — dentro del máximo de {mortgage.termYears} años.
-          </div>
-        )}
-        {targetBefore > 0 && isFinite(monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)) && monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore) > 12 * mortgage.termYears && (
-          <div className="mt-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200">
-            ⚠️ Con esa cuota el plazo sería {monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)} meses ({(monthsForPayment(effectiveMortgage, mortgage.tin, targetBefore)/12).toFixed(1)} años), que supera el máximo de {mortgage.termYears} años. Se recortará al plazo máximo.
           </div>
         )}
       </Card>
@@ -1666,7 +1548,7 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <KPI label="Aportación inicial" value={fmtEur(effectiveDown)} sub={`${fmtPct(effectiveDown / (totalPrice||1), 0)} del precio`} color="brand" />
         <KPI label="Hipoteca" value={fmtEur(effectiveMortgage)} sub={`LTV ${fmtPct(effectiveLtv, 0)}`} />
-        <KPI label={firstAmort ? 'Cuota (tras amortizar)' : (targetBefore > 0 ? 'Cuota objetivo' : 'Cuota mensual')} value={fmtEur2(paymentAfterAmort)} color="brand" sub={firstAmort ? `Inicial: ${fmtEur2(effectivePayment)}` : (targetBefore > 0 ? `Antes: ${fmtEur2(effectivePayment)}` : null)} />
+        <KPI label={firstAmort ? 'Cuota (tras amortizar)' : 'Cuota mensual'} value={fmtEur2(paymentAfterAmort)} color="brand" sub={firstAmort ? `Inicial: ${fmtEur2(effectivePayment)}` : null} />
         <KPI label="Plazo efectivo" value={`${(effectiveMonths/12).toFixed(1)} años`} sub={effectiveMonths < mortgage.termYears * 12 ? `Base: ${mortgage.termYears} años` : `${effectiveMonths} meses`} />
       </div>
 
@@ -2187,18 +2069,57 @@ const SavedSection = ({ state, setState, list, setList }) => {
     localStorage.setItem(LS_LIST, JSON.stringify(n));
   };
 
+  const exportFile = () => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
+    const a = document.createElement('a');
+    a.href = dataStr;
+    a.download = `simulacion_hipoteca_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showMessage('ok', 'Archivo exportado correctamente.');
+  };
+
+  const importFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target.result);
+        setState(normalizeState(json));
+        showMessage('ok', 'Archivo importado correctamente.');
+      } catch (err) {
+        showMessage('error', 'Error al leer el archivo JSON.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = null; // Reset input
+  };
+
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Simulaciones guardadas</h2>
       {message && <div className={"mb-4 p-3 rounded-lg text-sm border " + (message.type === 'ok' ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800')}>{message.text}</div>}
+      
       <Card className="p-5 mb-6">
-        <div className="flex flex-col md:flex-row gap-3">
+        <div className="flex flex-col md:flex-row gap-3 mb-4">
           <input className={inputCls + " flex-1"} placeholder="Nombre (opcional)" value={name} onChange={e => setName(e.target.value)} />
-          <button className="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium" onClick={save}>Guardar</button>
+          <button className="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium" onClick={save}>Guardar en navegador</button>
+        </div>
+        <div className="flex flex-col md:flex-row gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
+          <button className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium flex-1" onClick={exportFile}>
+            ⬇️ Exportar JSON (Descargar archivo)
+          </button>
+          <button className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium flex-1" onClick={() => fileRef.current.click()}>
+            ⬆️ Importar JSON (Subir archivo)
+          </button>
+          <input type="file" ref={fileRef} className="hidden" accept=".json" onChange={importFile} />
         </div>
       </Card>
+
       <Card className="p-5">
-        {Object.keys(list).length === 0 ? <p className="text-sm text-slate-500">No hay simulaciones guardadas.</p> : (
+        {Object.keys(list).length === 0 ? <p className="text-sm text-slate-500">No hay simulaciones guardadas en el navegador.</p> : (
           <div className="space-y-3">
             {Object.values(list).sort((a,b) => b.savedAt.localeCompare(a.savedAt)).map(s => (
               <div key={s.id} className="flex flex-col md:flex-row md:items-center gap-3 p-3 rounded-xl border border-slate-200">
