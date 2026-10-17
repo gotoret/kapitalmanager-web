@@ -102,6 +102,94 @@ const amortizationSchedule = (principal, annualRatePct, months) => {
 
 const totalInterest = (rows) => rows.reduce((s, r) => s + r.interest, 0);
 
+/* Construye el cuadro con soporte de cuota objetivo y amortizaciones */
+const buildMortgageSchedule = (mortgageAmount, annualRatePct, baseMonths, amortizations, opts = {}) => {
+  const { targetPaymentBefore = 0, targetPaymentAfter = 0 } = opts;
+  const r = annualRatePct / 100 / 12;
+
+  let months = baseMonths;
+  let basePayment;
+  if (targetPaymentBefore > 0 && mortgageAmount > 0) {
+    const n = monthsForPayment(mortgageAmount, annualRatePct, targetPaymentBefore);
+    if (isFinite(n) && n > 0 && n <= 12 * 40) { months = n; basePayment = targetPaymentBefore; }
+    else { basePayment = monthlyPayment(mortgageAmount, annualRatePct, baseMonths); }
+  } else {
+    basePayment = monthlyPayment(mortgageAmount, annualRatePct, baseMonths);
+  }
+
+  let schedule = [];
+  let balance = mortgageAmount;
+  for (let m = 1; m <= months; m++) {
+    const interest = balance * r;
+    const principalPart = Math.min(basePayment - interest, balance);
+    balance = Math.max(0, balance - principalPart);
+    schedule.push({ month: m, payment: basePayment, interest, principal: principalPart, balance });
+    if (balance < 0.01) break;
+  }
+
+  if (amortizations && amortizations.length > 0) {
+    const active = amortizations
+      .filter(a => a.amount > 0 && a.month > 0 && a.mode !== 'none')
+      .sort((a, b) => a.month - b.month);
+
+    for (const a of active) {
+      const atMonth = a.month;
+      if (atMonth > schedule.length) continue;
+
+      const head = schedule.slice(0, atMonth).map(row => ({ ...row }));
+      const lastBefore = head[head.length - 1];
+      const newBalance = Math.max(0, lastBefore.balance - a.amount);
+      
+      const amortRow = {
+        month: atMonth,
+        payment: lastBefore.payment,
+        interest: lastBefore.interest,
+        principal: lastBefore.principal + (lastBefore.balance - newBalance),
+        balance: newBalance,
+        isAmortization: true,
+        amortizationAmount: a.amount,
+      };
+      
+      let currentSchedule = [...head.slice(0, -1), amortRow];
+      if (newBalance <= 0) { schedule = currentSchedule; continue; }
+
+      if (a.mode === 'reduce_cuota') {
+        let newPayment = 0;
+        let remainingMonths = 0;
+        if (targetPaymentAfter > 0) {
+          const n = monthsForPayment(newBalance, annualRatePct, targetPaymentAfter);
+          if (isFinite(n) && n > 0 && n <= 12 * 40) { remainingMonths = n; newPayment = targetPaymentAfter; }
+          else { remainingMonths = Math.max(1, schedule.length - atMonth); newPayment = monthlyPayment(newBalance, annualRatePct, remainingMonths); }
+        } else {
+          remainingMonths = Math.max(1, schedule.length - atMonth);
+          newPayment = monthlyPayment(newBalance, annualRatePct, remainingMonths);
+        }
+        let bal = newBalance;
+        for (let i = 1; i <= remainingMonths; i++) {
+          const interest = bal * r;
+          const pp = Math.min(newPayment - interest, bal);
+          bal = Math.max(0, bal - pp);
+          currentSchedule.push({ month: atMonth + i, payment: newPayment, interest, principal: pp, balance: bal });
+          if (bal < 0.01) break;
+        }
+      } else if (a.mode === 'reduce_plazo') {
+        const oldPayment = lastBefore.payment;
+        let bal = newBalance;
+        let mth = atMonth + 1;
+        while (bal > 0.01 && mth <= atMonth + 12 * 60) {
+          const interest = bal * r;
+          const pp = Math.min(oldPayment - interest, bal);
+          bal = Math.max(0, bal - pp);
+          currentSchedule.push({ month: mth, payment: oldPayment, interest, principal: pp, balance: bal });
+          mth++;
+        }
+      }
+      schedule = currentSchedule;
+    }
+  }
+  return schedule;
+};
+
 const ITP_BY_REGION = {
   'Andalucía': 7, 'Aragón': 8, 'Asturias': 8, 'Baleares': 8, 'Canarias': 6.5,
   'Cantabria': 10, 'Castilla-La Mancha': 9, 'Castilla y León': 8, 'Cataluña': 10,
@@ -337,81 +425,11 @@ const evaluateOperation = (state, override = {}) => {
   const basePayment = monthlyPayment(mortgageAmount, tin, months);
   const baseInterestTotal = totalInterest(baseSchedule);
 
-  // Cuota objetivo antes: recalcular plazo base
-  let effectiveBaseMonths = months;
-  if (targetPaymentBefore > 0 && mortgageAmount > 0) {
-    const n = monthsForPayment(mortgageAmount, tin, targetPaymentBefore);
-    if (isFinite(n) && n > 0) effectiveBaseMonths = n;
-  }
-
-  // Construir cuadro con/sin amortizaciones
-  const r = tin / 100 / 12;
-  let payment = targetPaymentBefore > 0 ? targetPaymentBefore : monthlyPayment(mortgageAmount, tin, effectiveBaseMonths);
-  if (effectiveBaseMonths < months || targetPaymentBefore === 0) {
-    payment = monthlyPayment(mortgageAmount, tin, effectiveBaseMonths);
-  }
-  let balance = mortgageAmount;
-  let schedule = [];
-  for (let mth = 1; mth <= effectiveBaseMonths; mth++) {
-    const interest = balance * r;
-    const pp = Math.min(payment - interest, balance);
-    balance = Math.max(0, balance - pp);
-    schedule.push({ month: mth, payment, interest, principal: pp, balance });
-    if (balance < 0.01) break;
-  }
-
-  // Aplicar amortizaciones
-  if (amortizations.length > 0) {
-    const active = amortizations.filter(a => a.amount > 0 && a.month > 0 && a.mode !== 'none').sort((a, b) => a.month - b.month);
-    for (const a of active) {
-      const atMonth = a.month;
-      if (atMonth > schedule.length) continue;
-      const head = schedule.slice(0, atMonth).map(row => ({ ...row }));
-      const lastBefore = head[head.length - 1];
-      const newBalance = Math.max(0, lastBefore.balance - a.amount);
-      const amortRow = {
-        month: atMonth, payment: lastBefore.payment, interest: lastBefore.interest,
-        principal: lastBefore.principal + (lastBefore.balance - newBalance), balance: newBalance,
-        isAmortization: true, amortizationAmount: a.amount,
-      };
-      let currentSchedule = [...head.slice(0, -1), amortRow];
-      if (newBalance <= 0) { schedule = currentSchedule; continue; }
-
-      if (a.mode === 'reduce_cuota') {
-        let newPayment = 0;
-        let remainingMonths = 0;
-        if (targetPaymentAfter > 0) {
-          const n = monthsForPayment(newBalance, tin, targetPaymentAfter);
-          if (isFinite(n) && n > 0) { remainingMonths = n; newPayment = targetPaymentAfter; }
-          else { remainingMonths = Math.max(1, schedule.length - atMonth); newPayment = monthlyPayment(newBalance, tin, remainingMonths); }
-        } else {
-          remainingMonths = Math.max(1, schedule.length - atMonth);
-          newPayment = monthlyPayment(newBalance, tin, remainingMonths);
-        }
-        let bal = newBalance;
-        for (let i = 1; i <= remainingMonths; i++) {
-          const interest = bal * r;
-          const pp = Math.min(newPayment - interest, bal);
-          bal = Math.max(0, bal - pp);
-          currentSchedule.push({ month: atMonth + i, payment: newPayment, interest, principal: pp, balance: bal });
-          if (bal < 0.01) break;
-        }
-      } else if (a.mode === 'reduce_plazo') {
-        const oldPayment = lastBefore.payment;
-        let bal = newBalance;
-        let mth = atMonth + 1;
-        while (bal > 0.01 && mth <= atMonth + 12 * 60) {
-          const interest = bal * r;
-          const pp = Math.min(oldPayment - interest, bal);
-          bal = Math.max(0, bal - pp);
-          currentSchedule.push({ month: mth, payment: oldPayment, interest, principal: pp, balance: bal });
-          mth++;
-        }
-      }
-      schedule = currentSchedule;
-    }
-  }
-
+  const schedule = buildMortgageSchedule(mortgageAmount, tin, months, amortizations, {
+    targetPaymentBefore,
+    targetPaymentAfter,
+  });
+  
   const interestTotal = totalInterest(schedule);
   const firstRow = schedule[0] || { payment: basePayment };
   const effectivePayment = firstRow.payment;
@@ -514,7 +532,6 @@ const evaluateOperation = (state, override = {}) => {
   };
 };
 
-/* computeMaxPrice: devuelve el mayor precio que cumple una restricción */
 const computeMaxPrice = (state, binding) => {
   const evaluate = (p) => {
     if (p <= 0) return false;
@@ -1640,7 +1657,6 @@ const PrintReport = ({ state, result, maxPrice, mode }) => {
 
   return (
     <div className="print-only">
-      {/* Cabecera del informe */}
       <div className="print-report-header" style={{ marginBottom: 20, paddingBottom: 12, borderBottom: '2px solid #4f46e5' }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 22, fontWeight: 700, color: '#4f46e5' }}>
@@ -1652,15 +1668,11 @@ const PrintReport = ({ state, result, maxPrice, mode }) => {
         </div>
       </div>
 
-      {/* Aviso */}
       <div style={{ fontSize: 10, color: '#92400e', background: '#fef3c7', padding: 8, borderRadius: 6, marginBottom: 16 }}>
-        <strong>AVISO:</strong> Esta simulación es orientativa y no constituye asesoramiento financiero ni fiscal. Los criterios (ratios, LTV, tipos) son parámetros configurables. Cada entidad aplica políticas propias. Los datos fiscales deben verificarse con la normativa vigente de cada CCAA.
+        <strong>AVISO:</strong> Esta simulación es orientativa y no constituye asesoramiento financiero ni fiscal.
       </div>
 
-      {/* 1. COMPRADORES */}
-      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>
-        1. Compradores e ingresos
-      </h2>
+      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>1. Compradores e ingresos</h2>
       {state.buyers.map((b, i) => {
         const age = b.birthDate ? Math.floor((Date.now() - new Date(b.birthDate).getTime()) / (365.25*24*3600*1000)) : null;
         const salaryComp = (b.monthlyNetSalary||0) * ((b.computablePct?.salary ?? 100)/100);
@@ -1674,11 +1686,8 @@ const PrintReport = ({ state, result, maxPrice, mode }) => {
             <table style={{ width: '100%', fontSize: 11 }}>
               <tbody>
                 <tr><td style={{ color: '#64748b', padding: 2 }}>Comunidad:</td><td>{b.region}</td><td style={{ color: '#64748b', padding: 2 }}>Empleo:</td><td>{b.employmentType}</td></tr>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Dependientes:</td><td>{b.dependents}</td><td style={{ color: '#64748b', padding: 2 }}>Fecha nac.:</td><td>{b.birthDate}</td></tr>
                 <tr><td style={{ color: '#64748b', padding: 2 }}>Nómina neta:</td><td>{fmtEur(b.monthlyNetSalary)}</td><td style={{ color: '#64748b', padding: 2 }}>Computable ({b.computablePct.salary}%):</td><td>{fmtEur(salaryComp)}</td></tr>
                 <tr><td style={{ color: '#64748b', padding: 2 }}>Variables:</td><td>{fmtEur(b.variableIncome)}</td><td style={{ color: '#64748b', padding: 2 }}>Computable ({b.computablePct.variable}%):</td><td>{fmtEur(varComp)}</td></tr>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Alquileres:</td><td>{fmtEur(b.rentalIncome)}</td><td style={{ color: '#64748b', padding: 2 }}>Computable ({b.computablePct.rental}%):</td><td>{fmtEur(rentComp)}</td></tr>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Otros:</td><td>{fmtEur(b.otherIncome)}</td><td style={{ color: '#64748b', padding: 2 }}>Computable ({b.computablePct.other}%):</td><td>{fmtEur(otherComp)}</td></tr>
                 <tr style={{ fontWeight: 700, borderTop: '1px solid #cbd5e1' }}>
                   <td colSpan={3} style={{ padding: 4, textAlign: 'right' }}>Total computable mensual:</td>
                   <td style={{ padding: 4 }}>{fmtEur(totalComp)}</td>
@@ -1689,10 +1698,7 @@ const PrintReport = ({ state, result, maxPrice, mode }) => {
         );
       })}
 
-      {/* 2. AHORROS Y PATRIMONIO */}
-      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>
-        2. Ahorros y patrimonio
-      </h2>
+      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>2. Ahorros y patrimonio</h2>
       {state.buyers.map((b, i) => {
         const s = b.savings;
         return (
@@ -1700,235 +1706,64 @@ const PrintReport = ({ state, result, maxPrice, mode }) => {
             <div style={{ fontWeight: 700, marginBottom: 4 }}>Comprador {i+1} · {b.name}</div>
             <table style={{ width: '100%', fontSize: 11 }}>
               <tbody>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Cuentas:</td><td style={{ padding: 2 }}>{fmtEur(s.cash)}</td><td style={{ color: '#64748b', padding: 2 }}>Depósitos:</td><td style={{ padding: 2 }}>{fmtEur(s.deposits)}</td></tr>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Fondos:</td><td style={{ padding: 2 }}>{fmtEur(s.funds)}</td><td style={{ color: '#64748b', padding: 2 }}>Acciones/ETF:</td><td style={{ padding: 2 }}>{fmtEur(s.stocks)}</td></tr>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Cripto:</td><td style={{ padding: 2 }}>{fmtEur(s.crypto)}</td><td style={{ color: '#64748b', padding: 2 }}>Otros líquidos:</td><td style={{ padding: 2 }}>{fmtEur(s.otherLiquid)}</td></tr>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Planes pens.:</td><td style={{ padding: 2 }}>{fmtEur(s.pensionPlans)} {s.pensionAvailable ? '(disponible)' : '(no disponible)'}</td><td style={{ color: '#64748b', padding: 2 }}>Otros bienes:</td><td style={{ padding: 2 }}>{fmtEur(s.otherIlliquid)}</td></tr>
-                <tr style={{ fontWeight: 700, borderTop: '1px solid #cbd5e1' }}>
-                  <td style={{ padding: 4 }}>Líquido:</td><td style={{ padding: 4 }}>{fmtEur(computeLiquidSavings(s))}</td>
-                  <td style={{ padding: 4 }}>Total patrimonio:</td><td style={{ padding: 4 }}>{fmtEur(computeTotalPatrimony(s))}</td>
-                </tr>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Aporta:</td><td style={{ padding: 2 }}>{fmtEur(s.willingToUse)}</td><td style={{ color: '#64748b', padding: 2 }}>Reserva:</td><td style={{ padding: 2 }}>{fmtEur(s.emergencyReserve)}</td></tr>
+                <tr><td style={{ color: '#64748b', padding: 2 }}>Líquido total:</td><td style={{ padding: 2, fontWeight: 700 }}>{fmtEur(computeLiquidSavings(s))}</td><td style={{ color: '#64748b', padding: 2 }}>Aporta:</td><td style={{ padding: 2 }}>{fmtEur(s.willingToUse)}</td></tr>
+                <tr><td style={{ color: '#64748b', padding: 2 }}>Total patrimonio:</td><td style={{ padding: 2 }}>{fmtEur(computeTotalPatrimony(s))}</td><td style={{ color: '#64748b', padding: 2 }}>Reserva:</td><td style={{ padding: 2 }}>{fmtEur(s.emergencyReserve)}</td></tr>
               </tbody>
             </table>
           </div>
         );
       })}
 
-      {/* 3. INMUEBLES EN PROPIEDAD */}
       {props.all.length > 0 && (
         <>
-          <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>
-            3. Inmuebles en propiedad
-          </h2>
-          {props.all.map((p, i) => {
-            const planLabel = p.planToSell === 'keep' ? 'Conservar' : p.planToSell === 'sell_before' ? 'Vender antes' : 'Vender después';
-            return (
-              <div key={p.id} className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>{p.alias} {p.ownerships.length > 1 ? `· Copropiedad (${p.ownerships.length})` : ''}</div>
-                <table style={{ width: '100%', fontSize: 11 }}>
-                  <tbody>
-                    <tr><td style={{ color: '#64748b', padding: 2 }}>Valor de mercado:</td><td style={{ padding: 2 }}>{fmtEur(p.marketValue)}</td><td style={{ color: '#64748b', padding: 2 }}>Hipoteca pendiente:</td><td style={{ padding: 2 }}>{fmtEur(p.mortgageOutstanding)}</td></tr>
-                    <tr><td style={{ color: '#64748b', padding: 2 }}>Cuota hipoteca:</td><td style={{ padding: 2 }}>{fmtEur(p.mortgageMonthlyPayment)}/mes</td><td style={{ color: '#64748b', padding: 2 }}>Patrimonio neto:</td><td style={{ padding: 2 }}>{fmtEur(p.netEquity)}</td></tr>
-                    {p.usedAsCollateral && (
-                      <tr><td style={{ color: '#64748b', padding: 2 }}>Garantía adicional:</td><td style={{ padding: 2 }}>{fmtEur(p.collateralValue)}</td><td style={{ color: '#64748b', padding: 2 }}>Aportada por:</td><td style={{ padding: 2 }}>{p.collateralBuyerId ? buyerName(p.collateralBuyerId) : 'Reparto según %'}</td></tr>
-                    )}
-                    {p.planToSell === 'keep' && p.grossRent > 0 && (
-                      <tr><td style={{ color: '#64748b', padding: 2 }}>Renta bruta:</td><td style={{ padding: 2 }}>{fmtEur(p.grossRent)}/mes</td><td style={{ color: '#64748b', padding: 2 }}>Computable ({p.computablePct}%):</td><td style={{ padding: 2 }}>{fmtEur(p.netComputableRent)}/mes</td></tr>
-                    )}
-                    <tr><td style={{ color: '#64748b', padding: 2 }}>Plan:</td><td style={{ padding: 2 }}>{planLabel}</td>
-                      {p.planToSell !== 'keep' && <><td style={{ color: '#64748b', padding: 2 }}>Neto venta:</td><td style={{ padding: 2 }}>{fmtEur(p.saleNet)}</td></>}
-                    </tr>
-                    <tr><td colSpan={4} style={{ padding: 2, color: '#64748b', fontSize: 10 }}>
-                      <strong>Reparto entre titulares:</strong> {p.perOwner.map(o => `${buyerName(o.buyerId)} ${o.pct.toFixed(0)}% = ${fmtEur(o.netEquityShare)}`).join(' · ')}
-                    </td></tr>
-                  </tbody>
-                </table>
-              </div>
-            );
-          })}
+          <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>3. Inmuebles en propiedad</h2>
+          {props.all.map((p, i) => (
+            <div key={p.id} className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>{p.alias} {p.ownerships.length > 1 ? `· Copropiedad (${p.ownerships.length})` : ''}</div>
+              <div>Valor: {fmtEur(p.marketValue)} · Hipoteca pendiente: {fmtEur(p.mortgageOutstanding)} · Patrimonio neto: {fmtEur(p.netEquity)} · Plan: {p.planToSell === 'keep' ? 'Conservar' : p.planToSell === 'sell_before' ? 'Vender antes' : 'Vender después'}</div>
+              {p.planToSell === 'keep' && p.grossRent > 0 && <div>Renta bruta: {fmtEur(p.grossRent)}/mes · Computable ({p.computablePct}%): {fmtEur(p.netComputableRent)}/mes</div>}
+            </div>
+          ))}
         </>
       )}
 
-      {/* 4. DEUDAS Y GASTOS */}
-      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>
-        {props.all.length > 0 ? '4. ' : '3. '}Deudas y gastos
-      </h2>
-      {state.debts.length > 0 && (
-        <div className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-          <div style={{ fontWeight: 700, marginBottom: 4 }}>Deudas declaradas</div>
-          <table style={{ width: '100%', fontSize: 11 }}>
-            <thead>
-              <tr style={{ background: '#f1f5f9' }}>
-                <th style={{ padding: 4, textAlign: 'left' }}>Tipo</th>
-                <th style={{ padding: 4, textAlign: 'right' }}>Capital</th>
-                <th style={{ padding: 4, textAlign: 'right' }}>Cuota</th>
-                <th style={{ padding: 4, textAlign: 'left' }}>Cancelable</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.debts.map(d => (
-                <tr key={d.id}>
-                  <td style={{ padding: 4 }}>{d.type}</td>
-                  <td style={{ padding: 4, textAlign: 'right' }}>{fmtEur(d.outstanding)}</td>
-                  <td style={{ padding: 4, textAlign: 'right' }}>{fmtEur(d.monthlyPayment)}/mes</td>
-                  <td style={{ padding: 4 }}>{d.cancelable ? 'Sí' : 'No'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>{props.all.length > 0 ? '4.' : '3.'} Deudas y gastos</h2>
       <div className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-        <div style={{ fontWeight: 700, marginBottom: 4 }}>Gastos familiares mensuales</div>
-        <div>Alimentación: {fmtEur(state.monthlyExpenses.food)} · Suministros: {fmtEur(state.monthlyExpenses.utilities)} · Transporte: {fmtEur(state.monthlyExpenses.transport)} · Educación: {fmtEur(state.monthlyExpenses.education)} · Seguros: {fmtEur(state.monthlyExpenses.insurance)} · Hijos: {fmtEur(state.monthlyExpenses.children)} · Otras viviendas: {fmtEur(state.monthlyExpenses.otherHome)} · Otros: {fmtEur(state.monthlyExpenses.other)}</div>
-        <div style={{ marginTop: 4, fontWeight: 700 }}>Total gastos: {fmtEur(result.monthlyExpenses)}/mes</div>
+        <div>Total cuotas de deudas declaradas: {fmtEur(result.existingDebtDebtsOnly)}/mes</div>
+        <div>Total cuotas de hipotecas de inmuebles: {fmtEur(result.existingDebtPropertiesOnly)}/mes</div>
+        <div>Total gastos familiares: {fmtEur(result.monthlyExpenses)}/mes</div>
       </div>
 
-      {/* 5. INMUEBLE A COMPRAR */}
-      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>
-        {props.all.length > 0 ? '5. ' : '4. '}Inmueble a comprar
-      </h2>
+      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>{props.all.length > 0 ? '5.' : '4.'} Inmueble a comprar</h2>
       <div className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-        <table style={{ width: '100%', fontSize: 11 }}>
-          <tbody>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Precio de compraventa:</td><td style={{ padding: 2, fontWeight: 700 }}>{fmtEur(state.property.price)}</td><td style={{ color: '#64748b', padding: 2 }}>Comunidad:</td><td style={{ padding: 2 }}>{state.property.region}</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Tipo:</td><td style={{ padding: 2 }}>{state.property.isNew ? 'Obra nueva' : 'Segunda mano'}</td><td style={{ color: '#64748b', padding: 2 }}>Garaje:</td><td style={{ padding: 2 }}>{fmtEur(state.property.garagePrice)}</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Trastero:</td><td style={{ padding: 2 }}>{fmtEur(state.property.storagePrice)}</td><td style={{ color: '#64748b', padding: 2 }}>Reformas:</td><td style={{ padding: 2 }}>{fmtEur(state.property.reforms)}</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Mobiliario:</td><td style={{ padding: 2 }}>{fmtEur(state.property.furniture)}</td><td style={{ color: '#64748b', padding: 2 }}>Inmobiliaria:</td><td style={{ padding: 2 }}>{fmtEur(state.property.agencyFee)}</td></tr>
-            <tr style={{ borderTop: '1px solid #cbd5e1', fontWeight: 700 }}>
-              <td colSpan={3} style={{ padding: 4, textAlign: 'right' }}>Precio total (con anexos):</td>
-              <td style={{ padding: 4 }}>{fmtEur(result.totalPrice)}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div>Precio de compraventa: {fmtEur(state.property.price)} · Total con anexos: {fmtEur(result.totalPrice)}</div>
+        <div>Gastos de adquisición: {fmtEur(result.acq.total + (result.reforms||0) + (result.furniture||0))}</div>
       </div>
 
-      {/* 6. GASTOS DE ADQUISICIÓN */}
-      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>
-        {props.all.length > 0 ? '6. ' : '5. '}Gastos e impuestos de adquisición
-      </h2>
-      <div className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-        <table style={{ width: '100%', fontSize: 11 }}>
-          <tbody>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>ITP:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.acq.itp)}</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>IVA:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.acq.iva)}</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>AJD:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.acq.ajd)}</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Notaría + Registro + Tasación + Gestoría:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.acq.fixed)}</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Comisión inmobiliaria:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.acq.agency)}</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Reformas + Mobiliario:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur((result.reforms||0)+(result.furniture||0))}</td></tr>
-            <tr style={{ borderTop: '1px solid #cbd5e1', fontWeight: 700 }}>
-              <td style={{ padding: 4 }}>Total gastos de adquisición:</td>
-              <td style={{ padding: 4, textAlign: 'right' }}>{fmtEur(result.acq.total + (result.reforms||0) + (result.furniture||0))}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      {/* 7. HIPOTECA (solo en informe completo) */}
       {!isBankMode && (
         <>
-          <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>
-            7. Hipoteca y financiación (análisis interno)
-          </h2>
+          <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>6. Hipoteca (análisis interno)</h2>
           <div className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-            <table style={{ width: '100%', fontSize: 11 }}>
-              <tbody>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Aportación inicial:</td><td style={{ padding: 2 }}>{fmtEur(result.downPayment)} ({fmtPct(result.totalPrice > 0 ? result.downPayment / result.totalPrice : 0, 0)})</td><td style={{ color: '#64748b', padding: 2 }}>Hipoteca:</td><td style={{ padding: 2 }}>{fmtEur(result.mortgageAmount)}</td></tr>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>LTV:</td><td style={{ padding: 2 }}>{fmtPct(result.effectiveLtv, 0)}</td><td style={{ color: '#64748b', padding: 2 }}>Tipo interés:</td><td style={{ padding: 2 }}>{state.mortgage.type} {state.mortgage.tin}%</td></tr>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Plazo:</td><td style={{ padding: 2 }}>{state.mortgage.termYears} años</td><td style={{ color: '#64748b', padding: 2 }}>Cuota:</td><td style={{ padding: 2 }}>{fmtEur2(result.payment)}/mes</td></tr>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Intereses totales:</td><td style={{ padding: 2 }}>{fmtEur(result.interestTotal)}</td><td style={{ color: '#64748b', padding: 2 }}>Coste total:</td><td style={{ padding: 2 }}>{fmtEur(result.mortgageAmount + result.interestTotal)}</td></tr>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Comisión apertura:</td><td style={{ padding: 2 }}>{fmtEur(result.openingFee)}</td><td style={{ color: '#64748b', padding: 2 }}>Productos vinculados:</td><td style={{ padding: 2 }}>{fmtEur(state.mortgage.linkedProductsAnnual)}/año</td></tr>
-              </tbody>
-            </table>
-            {result.amortizations && result.amortizations.length > 0 && (
-              <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #cbd5e1' }}>
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>Amortizaciones planificadas</div>
-                {result.amortizations.filter(a => a.amount > 0 && a.mode !== 'none').map((a, i) => (
-                  <div key={i}>· {a.propertyAlias} (mes {a.month}): amortizas {fmtEur(a.amount)}, conservas {fmtEur(a.keep)} · modo: {a.mode === 'reduce_cuota' ? 'Reducir cuota' : 'Reducir plazo'}</div>
-                ))}
-              </div>
-            )}
+            <div>Aportación inicial: {fmtEur(result.downPayment)} · Hipoteca: {fmtEur(result.mortgageAmount)} · LTV: {fmtPct(result.effectiveLtv, 0)}</div>
+            <div>Cuota: {fmtEur2(result.payment)}/mes · Plazo efectivo: {result.effectiveMonths} meses · Intereses totales: {fmtEur(result.interestTotal)}</div>
           </div>
         </>
       )}
 
-      {/* 8. ANÁLISIS DE VIABILIDAD */}
-      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>
-        {!isBankMode ? '8. ' : (props.all.length > 0 ? '6. ' : '5. ')}Análisis de viabilidad
-      </h2>
+      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>Análisis de viabilidad</h2>
       <div className="print-avoid-break" style={{ marginBottom: 12, padding: 10, border: '2px solid ' + (result.verdict === 'viable' ? '#059669' : result.verdict === 'not_viable' ? '#dc2626' : '#d97706'), borderRadius: 6, fontSize: 11 }}>
         <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>Veredicto: {result.verdictLabel}</div>
-        {result.reasons.length > 0 && (
-          <ul style={{ marginLeft: 16, marginTop: 4 }}>
-            {result.reasons.map((r, i) => <li key={i}>{r}</li>)}
-          </ul>
-        )}
+        {result.reasons.length > 0 && <ul style={{ marginLeft: 16 }}>{result.reasons.map((r,i) => <li key={i}>{r}</li>)}</ul>}
       </div>
 
       <div className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-        <table style={{ width: '100%', fontSize: 11 }}>
-          <tbody>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Ingresos computables totales:</td><td style={{ padding: 2, textAlign: 'right', fontWeight: 700 }}>{fmtEur(result.computableIncome)}/mes</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>· De ingresos laborales:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.salaryIncomeComputable)}/mes</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>· Renta computable inmuebles:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.rentalIncomeComputable)}/mes</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Deudas (pestaña):</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.existingDebtDebtsOnly)}/mes</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Cuotas hipotecas inmuebles:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.existingDebtPropertiesOnly)}/mes</td></tr>
-            {!isBankMode && <tr><td style={{ color: '#64748b', padding: 2 }}>Nueva hipoteca:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.payment)}/mes</td></tr>}
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Gastos familiares:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.monthlyExpenses)}/mes</td></tr>
-            <tr style={{ borderTop: '1px solid #cbd5e1', fontWeight: 700 }}>
-              <td style={{ padding: 4 }}>{!isBankMode ? 'Margen mensual' : 'Ratio de endeudamiento actual + nueva hipoteca'}:</td>
-              <td style={{ padding: 4, textAlign: 'right' }}>{!isBankMode ? fmtEur(result.monthlyMargin) : fmtPct(result.ratioAfter)}</td>
-            </tr>
-            {!isBankMode && <tr style={{ fontWeight: 700 }}><td style={{ padding: 4 }}>Ratio de endeudamiento:</td><td style={{ padding: 4, textAlign: 'right' }}>{fmtPct(result.ratioAfter)} (umbral {fmtPct(result.threshold)})</td></tr>}
-          </tbody>
-        </table>
+        <div>Ingresos computables: {fmtEur(result.computableIncome)}/mes · Ratio de endeudamiento: {fmtPct(result.ratioAfter)}</div>
+        <div>Total necesario: {fmtEur(result.totalRequired)} · Disponible: {fmtEur(result.available)} · Diferencia: {fmtEur(-result.liquidityGap)}</div>
+        <div>Precio máximo viable: {fmtEur(maxPrice.all)}</div>
       </div>
 
-      {/* 9. NECESIDADES DE LIQUIDEZ */}
-      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>
-        {!isBankMode ? '9. ' : (props.all.length > 0 ? '7. ' : '6. ')}Necesidades y disponibilidad de liquidez
-      </h2>
-      <div className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-        <table style={{ width: '100%', fontSize: 11 }}>
-          <tbody>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Aportación inicial:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.downPayment)}</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Impuestos y gastos:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.acq.total + (result.reforms||0) + (result.furniture||0) + result.openingFee)}</td></tr>
-            <tr style={{ fontWeight: 700, borderTop: '1px solid #cbd5e1' }}><td style={{ padding: 4 }}>Total gastos de compra:</td><td style={{ padding: 4, textAlign: 'right' }}>{fmtEur(result.acquisitionCosts)}</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Reserva de emergencia:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.emergencyReserve)}</td></tr>
-            <tr style={{ fontWeight: 700 }}><td style={{ padding: 4 }}>Total a tener:</td><td style={{ padding: 4, textAlign: 'right' }}>{fmtEur(result.totalRequired)}</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Disponible:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(result.available)}</td></tr>
-            <tr style={{ fontWeight: 700, color: result.liquidityGap <= 0 ? '#059669' : '#dc2626' }}>
-              <td style={{ padding: 4 }}>{result.liquidityGap <= 0 ? 'Excedente' : 'Déficit'}:</td>
-              <td style={{ padding: 4, textAlign: 'right' }}>{fmtEur(-result.liquidityGap)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      {/* Precios máximos */}
-      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>
-        {!isBankMode ? '10. ' : (props.all.length > 0 ? '8. ' : '7. ')}Precio máximo viable
-      </h2>
-      <div className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-        <table style={{ width: '100%', fontSize: 11 }}>
-          <tbody>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Limitado por ahorros:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(maxPrice.savings)}</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Limitado por ingresos:</td><td style={{ padding: 2, textAlign: 'right' }}>{fmtEur(maxPrice.income)}</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Limitado por LTV máximo:</td><td style={{ padding: 2, textAlign: 'right' }}>{maxPrice.ltv >= 4999999 ? 'Sin límite' : fmtEur(maxPrice.ltv)}</td></tr>
-            <tr><td style={{ color: '#64748b', padding: 2 }}>Limitado por edad / plazo:</td><td style={{ padding: 2, textAlign: 'right' }}>{maxPrice.age >= 4999999 ? 'Sin límite' : fmtEur(maxPrice.age)}</td></tr>
-            <tr style={{ fontWeight: 700, borderTop: '1px solid #cbd5e1', color: '#4f46e5' }}>
-              <td style={{ padding: 4 }}>PRECIO MÁXIMO VIABLE (conjunto):</td>
-              <td style={{ padding: 4, textAlign: 'right' }}>{fmtEur(maxPrice.all)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      {/* Pie de página */}
       <div style={{ marginTop: 24, paddingTop: 8, borderTop: '1px solid #cbd5e1', fontSize: 9, color: '#64748b', textAlign: 'center' }}>
         Simulador de Viabilidad Hipotecaria · España · Informe generado el {now}
-        {isBankMode && <div style={{ marginTop: 4 }}>Este documento contiene exclusivamente datos financieros y patrimoniales del solicitante. No incluye preferencias ni condiciones hipotecarias específicas.</div>}
       </div>
     </div>
   );
@@ -1944,91 +1779,43 @@ const Row = ({ label, value, bold, color, negative }) => (
 const BuyersBreakdown = ({ buyers }) => {
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444'];
   const totalLiquid = buyers.reduce((s, b) => s + computeLiquidSavings(b.savings), 0);
-  const totalPatrimony = buyers.reduce((s, b) => s + computeTotalPatrimony(b.savings), 0);
   const totalWilling = buyers.reduce((s, b) => s + (Number(b.savings.willingToUse) || 0), 0);
-  const totalIncome = buyers.reduce((s, b) =>
-    s + (b.monthlyNetSalary||0) + (b.variableIncome||0) + (b.rentalIncome||0) + (b.otherIncome||0), 0);
-  const propsSummary = summarizeProperties(buyers);
-  const perBuyerPropsNet = {};
-  const perBuyerCollateral = {};
-  buyers.forEach(b => { perBuyerPropsNet[b.id] = 0; perBuyerCollateral[b.id] = 0; });
-  propsSummary.all.forEach(p => {
-    p.perOwner.forEach(o => {
-      if (!(o.buyerId in perBuyerPropsNet)) return;
-      perBuyerPropsNet[o.buyerId] += o.netEquityShare;
-      perBuyerCollateral[o.buyerId] += o.collateralShare;
-    });
-    if (p.collateralAttributed) {
-      const bId = p.collateralAttributed.buyerId;
-      if (bId in perBuyerCollateral) {
-        const alreadyAdded = p.perOwner.reduce((s, o) => s + (o.buyerId === bId ? o.collateralShare : 0), 0);
-        perBuyerCollateral[bId] += (p.collateralAttributed.amount - alreadyAdded);
-      }
-    }
-  });
-  const totalPropsNet = Object.values(perBuyerPropsNet).reduce((s, v) => s + v, 0);
-  const totalCollateral = Object.values(perBuyerCollateral).reduce((s, v) => s + v, 0);
   return (
     <div className="space-y-4">
       <Card className="p-5">
         <h4 className="font-semibold mb-4">Aportación por comprador</h4>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 dark:border-slate-800 text-left">
-                <th className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-400">Comprador</th>
-                <th className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-400 text-right">Ingresos/mes</th>
-                <th className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-400 text-right">Líquido</th>
-                <th className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-400 text-right">Inmuebles (neto)</th>
-                <th className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-400 text-right">Garantía</th>
-                <th className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-400 text-right">Aporta</th>
-                <th className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-400 text-right">% del total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {buyers.map((b, i) => {
-                const liquid = computeLiquidSavings(b.savings);
-                const willing = Number(b.savings.willingToUse) || 0;
-                const income = (b.monthlyNetSalary||0) + (b.variableIncome||0) + (b.rentalIncome||0) + (b.otherIncome||0);
-                const pct = totalWilling > 0 ? willing / totalWilling : 0;
-                const propsNet = perBuyerPropsNet[b.id] || 0;
-                const collateral = perBuyerCollateral[b.id] || 0;
-                return (
-                  <tr key={b.id} className="border-b border-slate-100 dark:border-slate-800">
-                    <td className="py-2 pr-3">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 rounded-full" style={{background: COLORS[i % COLORS.length]}}></span>
-                        <span className="font-medium">{b.name}</span>
-                      </div>
-                    </td>
-                    <td className="py-2 pr-3 text-right">{fmtEur(income)}</td>
-                    <td className="py-2 pr-3 text-right">{fmtEur(liquid)}</td>
-                    <td className="py-2 pr-3 text-right">{propsNet > 0 ? fmtEur(propsNet) : '—'}</td>
-                    <td className="py-2 pr-3 text-right text-brand-600 dark:text-brand-400">{collateral > 0 ? fmtEur(collateral) : '—'}</td>
-                    <td className="py-2 pr-3 text-right font-semibold text-brand-600 dark:text-brand-400">{fmtEur(willing)}</td>
-                    <td className="py-2 pr-3 text-right">{fmtPct(pct, 0)}</td>
-                  </tr>
-                );
-              })}
-              <tr className="font-bold border-t-2 border-slate-300 dark:border-slate-700">
-                <td className="py-2 pr-3">TOTAL</td>
-                <td className="py-2 pr-3 text-right">{fmtEur(totalIncome)}</td>
-                <td className="py-2 pr-3 text-right">{fmtEur(totalLiquid)}</td>
-                <td className="py-2 pr-3 text-right">{fmtEur(totalPropsNet)}</td>
-                <td className="py-2 pr-3 text-right text-brand-600 dark:text-brand-400">{totalCollateral > 0 ? fmtEur(totalCollateral) : '—'}</td>
-                <td className="py-2 pr-3 text-right text-brand-600 dark:text-brand-400">{fmtEur(totalWilling)}</td>
-                <td className="py-2 pr-3 text-right">100%</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 dark:border-slate-800 text-left">
+              <th className="py-2 pr-3">Comprador</th>
+              <th className="py-2 pr-3 text-right">Ingresos</th>
+              <th className="py-2 pr-3 text-right">Líquido</th>
+              <th className="py-2 pr-3 text-right">Aporta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {buyers.map((b, i) => {
+              const liquid = computeLiquidSavings(b.savings);
+              const willing = Number(b.savings.willingToUse) || 0;
+              const income = (b.monthlyNetSalary||0) + (b.variableIncome||0) + (b.rentalIncome||0) + (b.otherIncome||0);
+              return (
+                <tr key={b.id} className="border-b border-slate-100 dark:border-slate-800">
+                  <td className="py-2 pr-3">{b.name}</td>
+                  <td className="py-2 pr-3 text-right">{fmtEur(income)}</td>
+                  <td className="py-2 pr-3 text-right">{fmtEur(liquid)}</td>
+                  <td className="py-2 pr-3 text-right font-semibold text-brand-600 dark:text-brand-400">{fmtEur(willing)}</td>
+                </tr>
+              );
+            })}
+            <tr className="font-bold border-t-2 border-slate-300">
+              <td className="py-2 pr-3">TOTAL</td>
+              <td className="py-2 pr-3 text-right">—</td>
+              <td className="py-2 pr-3 text-right">{fmtEur(totalLiquid)}</td>
+              <td className="py-2 pr-3 text-right text-brand-600">{fmtEur(totalWilling)}</td>
+            </tr>
+          </tbody>
+        </table>
       </Card>
-      {buyers.length > 1 && totalWilling > 0 && (
-        <Card className="p-5">
-          <h4 className="font-semibold mb-3">Reparto de la aportación</h4>
-          <DonutChart data={buyers.map((b) => ({ name: b.name, value: Number(b.savings.willingToUse) || 0 }))} colors={COLORS} />
-        </Card>
-      )}
     </div>
   );
 };
@@ -2049,13 +1836,10 @@ const StressTab = ({ state }) => {
   const comp = [
     { label: 'Cuota base', value: base.payment, color: '#6366f1', display: fmtEur2(base.payment) },
     { label: 'Cuota estresada', value: stressed.payment, color: '#ef4444', display: fmtEur2(stressed.payment) },
-    { label: 'Margen base', value: Math.max(0, base.monthlyMargin), color: '#10b981', display: fmtEur(base.monthlyMargin) },
-    { label: 'Margen estresado', value: Math.max(0, stressed.monthlyMargin), color: '#f59e0b', display: fmtEur(stressed.monthlyMargin) },
   ];
   const ratioComp = [
     { label: 'Ratio base', value: base.ratioAfter * 100, color: '#6366f1', display: fmtPct(base.ratioAfter) },
     { label: 'Ratio estresado', value: stressed.ratioAfter * 100, color: '#ef4444', display: fmtPct(stressed.ratioAfter) },
-    { label: 'Umbral', value: base.threshold * 100, color: '#94a3b8', display: fmtPct(base.threshold) },
   ];
   return (
     <div className="space-y-4">
@@ -2082,23 +1866,9 @@ const StressTab = ({ state }) => {
         <KPI label="Margen estresado" value={fmtEur(stressed.monthlyMargin)} color={stressed.monthlyMargin > 0 ? 'emerald' : 'red'} sub={`Base: ${fmtEur(base.monthlyMargin)}`} />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className="p-5">
-          <h4 className="font-semibold mb-3">Cuota y margen</h4>
-          <HBarChart data={comp} />
-        </Card>
-        <Card className="p-5">
-          <h4 className="font-semibold mb-3">Ratios de endeudamiento</h4>
-          <HBarChart data={ratioComp} />
-        </Card>
+        <Card className="p-5"><HBarChart data={comp} /></Card>
+        <Card className="p-5"><HBarChart data={ratioComp} /></Card>
       </div>
-      <Card className={"p-5 border-2 " + (stressed.allOk ? 'border-emerald-300' : 'border-red-300')}>
-        <strong>Resultado estresado: {stressed.verdictLabel}</strong>
-        {stressed.reasons.length > 0 && (
-          <ul className="mt-2 text-sm list-disc list-inside">
-            {stressed.reasons.map((r,i) => <li key={i}>{r}</li>)}
-          </ul>
-        )}
-      </Card>
     </div>
   );
 };
@@ -2170,9 +1940,6 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div>
             <h3 className="font-semibold text-slate-900 dark:text-white text-lg">🎯 Aplicar precio máximo viable</h3>
-            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-              Rellena el precio de compraventa con el máximo que cumple <strong>todos los requisitos</strong>.
-            </p>
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
@@ -2180,19 +1947,19 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
             <span>🏆 Aplicar conjunto</span>
             <span className="text-xs font-normal mt-1">{fmtEur(maxPrice.all)}</span>
           </button>
-          <button onClick={() => applyPrice(maxPrice.savings)} className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-sm font-medium flex flex-col items-center">
+          <button onClick={() => applyPrice(maxPrice.savings)} className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-sm font-medium flex flex-col items-center">
             <span>Ahorros</span>
             <span className="text-xs font-normal mt-1 text-slate-500">{fmtEur(maxPrice.savings)}</span>
           </button>
-          <button onClick={() => applyPrice(maxPrice.income)} className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-sm font-medium flex flex-col items-center">
+          <button onClick={() => applyPrice(maxPrice.income)} className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-sm font-medium flex flex-col items-center">
             <span>Ingresos</span>
             <span className="text-xs font-normal mt-1 text-slate-500">{fmtEur(maxPrice.income)}</span>
           </button>
-          <button onClick={() => applyPrice(maxPrice.ltv)} className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-sm font-medium flex flex-col items-center">
+          <button onClick={() => applyPrice(maxPrice.ltv)} className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-sm font-medium flex flex-col items-center">
             <span>LTV máximo</span>
             <span className="text-xs font-normal mt-1 text-slate-500">{maxPrice.ltv >= 4999999 ? 'Sin límite' : fmtEur(maxPrice.ltv)}</span>
           </button>
-          <button onClick={() => applyPrice(maxPrice.age)} className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-sm font-medium flex flex-col items-center">
+          <button onClick={() => applyPrice(maxPrice.age)} className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-sm font-medium flex flex-col items-center">
             <span>Edad / plazo</span>
             <span className="text-xs font-normal mt-1 text-slate-500">{maxPrice.age >= 4999999 ? 'Sin límite' : fmtEur(maxPrice.age)}</span>
           </button>
@@ -2211,16 +1978,10 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
 
       <div className={"rounded-2xl border-2 p-5 mb-6 " + verdictBg}>
         <div className="flex items-start gap-4">
-          <div className="text-3xl">
-            {result.verdict === 'viable' ? '✅' : result.verdict === 'conditional' ? '⚠️' : result.verdict === 'not_viable' ? '❌' : 'ℹ️'}
-          </div>
+          <div className="text-3xl">{result.verdict === 'viable' ? '✅' : result.verdict === 'conditional' ? '⚠️' : result.verdict === 'not_viable' ? '❌' : 'ℹ️'}</div>
           <div className="flex-1">
             <h3 className="text-lg font-bold">{result.verdictLabel}</h3>
-            {result.reasons.length > 0 && (
-              <ul className="mt-2 text-sm space-y-1 list-disc list-inside">
-                {result.reasons.map((r, i) => <li key={i}>{r}</li>)}
-              </ul>
-            )}
+            {result.reasons.length > 0 && <ul className="mt-2 text-sm space-y-1 list-disc list-inside">{result.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>}
           </div>
         </div>
       </div>
@@ -2248,32 +2009,22 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
 
       {tab === 'summary' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Card className="p-5">
-            <h4 className="font-semibold mb-3">Distribución aportación / hipoteca</h4>
-            <DonutChart data={pieData} colors={COLORS} />
-          </Card>
+          <Card className="p-5"><DonutChart data={pieData} colors={COLORS} /></Card>
           <Card className="p-5">
             <h4 className="font-semibold mb-3">Flujo mensual estimado</h4>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between"><span>Ingresos brutos</span><span>{fmtEur(result.rawIncome)}</span></div>
-              <div className="flex justify-between text-slate-600 dark:text-slate-300 text-xs"><span>· Laborales computables</span><span>{fmtEur(result.salaryIncomeComputable)}</span></div>
-              <div className="flex justify-between text-slate-600 dark:text-slate-300 text-xs"><span>· Renta neta computable inmuebles</span><span>{fmtEur(result.rentalIncomeComputable)}</span></div>
-              <div className="flex justify-between text-brand-600 dark:text-brand-400 font-medium"><span>Total computables</span><span>{fmtEur(result.computableIncome)}</span></div>
+              <div className="flex justify-between text-brand-600 dark:text-brand-400"><span>Total computables</span><span>{fmtEur(result.computableIncome)}</span></div>
               <hr className="border-slate-200 dark:border-slate-800" />
               <div className="flex justify-between text-red-600 dark:text-red-400"><span>Deudas (pestaña)</span><span>−{fmtEur(result.existingDebtDebtsOnly)}</span></div>
               <div className="flex justify-between text-red-600 dark:text-red-400"><span>Cuotas hipotecas inmuebles</span><span>−{fmtEur(result.existingDebtPropertiesOnly)}</span></div>
               <div className="flex justify-between text-red-600 dark:text-red-400"><span>Nueva hipoteca</span><span>−{fmtEur(result.payment)}</span></div>
               <div className="flex justify-between text-red-600 dark:text-red-400"><span>Gastos familiares</span><span>−{fmtEur(result.monthlyExpenses)}</span></div>
-              <div className="flex justify-between text-red-600 dark:text-red-400"><span>Productos vinculados</span><span>−{fmtEur((result.linkedAnnual||0)/12)}</span></div>
+              <div className="flex justify-between text-red-600 dark:text-red-400"><span>Vinculados</span><span>−{fmtEur((result.linkedAnnual||0)/12)}</span></div>
               <hr className="border-slate-200 dark:border-slate-800" />
               <div className={"flex justify-between font-bold " + (result.monthlyMargin >= 0 ? 'text-emerald-600' : 'text-red-600')}>
                 <span>Margen mensual</span><span>{fmtEur(result.monthlyMargin)}</span>
               </div>
-              {result.duplicateDebts && result.duplicateDebts.length > 0 && (
-                <div className="text-xs text-amber-600 dark:text-amber-400 mt-2">
-                  ⚠️ {result.duplicateDebts.length} deuda(s) duplicada(s) con hipotecas de inmuebles excluidas.
-                </div>
-              )}
             </div>
           </Card>
         </div>
@@ -2282,69 +2033,27 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
       {tab === 'buyers' && <BuyersBreakdown buyers={state.buyers} />}
 
       {tab === 'props' && (
-        <div className="space-y-4">
-          <Card className="p-5">
-            <h4 className="font-semibold mb-4">Inmuebles declarados</h4>
-            {props.all.length === 0 ? (
-              <p className="text-sm text-slate-500">No has declarado inmuebles.</p>
-            ) : (
-              <div className="space-y-3">
-                {props.all.map(p => (
-                  <div key={p.id} className="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
-                    <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-                      <div className="font-semibold">{p.alias}</div>
-                      <div className="text-xs text-slate-500">{p.ownerships.length > 1 ? `Copropiedad · ${p.ownerships.length}` : 'Titular único'}</div>
-                    </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                      <div>
-                        <div className="text-xs uppercase text-slate-500">Valor mercado</div>
-                        <div className="font-bold">{fmtEur(p.marketValue)}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs uppercase text-slate-500">Hipoteca</div>
-                        <div className="font-bold text-red-600 dark:text-red-400">{fmtEur(p.mortgageOutstanding)}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs uppercase text-slate-500">Patrimonio neto</div>
-                        <div className="font-bold text-emerald-600 dark:text-emerald-400">{fmtEur(p.netEquity)}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs uppercase text-slate-500">Garantía</div>
-                        <div className="font-bold text-brand-600 dark:text-brand-400">{p.usedAsCollateral ? fmtEur(p.collateralValue) : '—'}</div>
-                      </div>
-                    </div>
-                    {p.planToSell === 'keep' && p.grossRent > 0 && (
-                      <div className="mt-3 p-3 rounded bg-brand-50/50 dark:bg-brand-900/10 border border-brand-200 dark:border-brand-800 text-xs">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                          <div><span className="text-slate-500">Renta bruta:</span> <strong>{fmtEur(p.grossRent)}/mes</strong></div>
-                          <div><span className="text-slate-500">Computable ({p.computablePct}%):</span> <strong>{fmtEur(p.computableRent)}/mes</strong></div>
-                          <div><span className="text-slate-500">Gastos:</span> <strong>−{fmtEur(p.expenses)}/mes</strong></div>
-                          <div className="text-brand-600 dark:text-brand-400"><span className="text-slate-500">Renta neta:</span> <strong>{fmtEur(p.netComputableRent)}/mes</strong></div>
-                        </div>
-                      </div>
-                    )}
-                    {(p.planToSell === 'sell_before' || p.planToSell === 'sell_after') && (
-                      <div className="mt-3 text-xs">
-                        <span className="px-2 py-1 rounded bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300">
-                          {p.planToSell === 'sell_before' ? 'Vender antes' : `Vender después (mes ${p.sellMonth})`} · Neto: {fmtEur(p.saleNet)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-        </div>
+        <Card className="p-5">
+          <h4 className="font-semibold mb-4">Inmuebles declarados</h4>
+          {props.all.length === 0 ? <p className="text-sm text-slate-500">No has declarado inmuebles.</p> : (
+            <div className="space-y-3">
+              {props.all.map(p => (
+                <div key={p.id} className="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
+                  <div className="font-semibold mb-2">{p.alias}</div>
+                  <div className="text-sm">Valor: {fmtEur(p.marketValue)} · Hipoteca: {fmtEur(p.mortgageOutstanding)} · Patrimonio neto: {fmtEur(p.netEquity)}</div>
+                  {p.planToSell === 'keep' && p.grossRent > 0 && <div className="text-xs text-brand-600 mt-1">Renta neta computable: {fmtEur(p.netComputableRent)}/mes</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
       )}
 
       {tab === 'costs' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <Card className="p-5">
-            <h4 className="font-semibold mb-1">Desglose de la operación</h4>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">Lo que se <strong>paga</strong> vs lo que se <strong>conserva</strong>.</p>
+            <h4 className="font-semibold mb-3">Desglose</h4>
             <div className="space-y-2 text-sm">
-              <div className="text-xs uppercase text-slate-500 font-semibold mt-2">Se paga</div>
               <Row label="Aportación inicial (entrada)" value={result.downPayment} />
               <Row label="ITP" value={result.acq.itp} />
               <Row label="IVA" value={result.acq.iva} />
@@ -2354,41 +2063,18 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
               <Row label="Reformas + Mobiliario" value={(result.reforms||0)+(result.furniture||0)} />
               <Row label="Apertura hipoteca" value={result.openingFee} />
               <Row label="Gastos de compra" value={result.acquisitionCosts} bold />
-              <div className="text-xs uppercase text-slate-500 font-semibold mt-4">Se conserva</div>
               <Row label="Reserva de emergencia" value={result.emergencyReserve} />
               <Row label="Total a tener disponible" value={result.totalRequired} bold />
-              <div className="text-xs uppercase text-slate-500 font-semibold mt-4">Tu situación</div>
               <Row label="Disponible" value={result.available} />
               <Row label="Déficit / Excedente" value={-result.liquidityGap} bold color={result.liquidityGap <= 0 ? 'emerald' : 'red'} />
             </div>
           </Card>
-          <Card className="p-5">
-            <h4 className="font-semibold mb-3">Composición de gastos</h4>
-            <DonutChart data={costPie} colors={COLORS} size={220} />
-          </Card>
+          <Card className="p-5"><DonutChart data={costPie} colors={COLORS} size={220} /></Card>
         </div>
       )}
 
       {tab === 'amort' && (
         <div className="space-y-4">
-          {hasAmortizations && (
-            <Card className="p-5 bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800">
-              <h4 className="font-semibold mb-3">📌 Amortizaciones planificadas</h4>
-              <div className="space-y-2 text-sm">
-                {result.amortizations.filter(a => a.amount > 0 && a.mode !== 'none').map((a, i) => (
-                  <div key={i} className="flex flex-wrap justify-between items-center gap-2 py-1 border-b border-amber-200/50 dark:border-amber-800/50 last:border-0">
-                    <div><strong>{a.propertyAlias}</strong> · mes {a.month}</div>
-                    <div className="flex gap-3 text-xs">
-                      <span>Amortizas: <strong className="text-brand-600 dark:text-brand-400">{fmtEur(a.amount)}</strong></span>
-                      <span>Conservas: <strong className="text-emerald-600 dark:text-emerald-400">{fmtEur(a.keep)}</strong></span>
-                      <span className="px-2 py-0.5 rounded bg-white dark:bg-slate-900">{a.mode === 'reduce_cuota' ? '↓ Cuota' : '↓ Plazo'}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
           <Card className="p-5">
             <h4 className="font-semibold mb-3">Evolución del capital pendiente</h4>
             <AreaChartSVG data={yearlyData} amortizationEvents={result.amortizations || []} />
@@ -2397,35 +2083,6 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
             <h4 className="font-semibold mb-3">Intereses vs. capital por año</h4>
             <StackedBarChart data={yearlyData} />
           </Card>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card className="p-5">
-              <h4 className="font-semibold mb-3">Escenario base (plazo fijo)</h4>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><div className="text-xs uppercase text-slate-500">Cuota</div><div className="font-bold">{fmtEur2(result.basePayment)}</div></div>
-                <div><div className="text-xs uppercase text-slate-500">Intereses</div><div className="font-bold">{fmtEur(result.baseInterestTotal)}</div></div>
-                <div><div className="text-xs uppercase text-slate-500">Meses</div><div className="font-bold">{result.months}</div></div>
-                <div><div className="text-xs uppercase text-slate-500">Coste</div><div className="font-bold">{fmtEur(result.mortgageAmount + result.baseInterestTotal)}</div></div>
-              </div>
-            </Card>
-            <Card className="p-5 bg-emerald-50/50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800">
-              <h4 className="font-semibold mb-3">Con tu configuración</h4>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><div className="text-xs uppercase text-slate-500">Cuota</div><div className="font-bold">{fmtEur2(result.payment)}</div></div>
-                <div><div className="text-xs uppercase text-slate-500">Intereses</div><div className="font-bold">{fmtEur(result.interestTotal)}</div></div>
-                <div><div className="text-xs uppercase text-slate-500">Meses</div><div className="font-bold">{result.effectiveMonths}</div></div>
-                <div><div className="text-xs uppercase text-slate-500">Coste</div><div className="font-bold">{fmtEur(result.mortgageAmount + result.interestTotal)}</div></div>
-              </div>
-              {hasAmortizations && (
-                <div className="mt-3 pt-3 border-t border-emerald-200 dark:border-emerald-800 text-sm">
-                  <div className="flex justify-between">
-                    <span>Ahorro en intereses</span>
-                    <span className="font-bold text-emerald-600 dark:text-emerald-400">{fmtEur(result.baseInterestTotal - result.interestTotal)}</span>
-                  </div>
-                </div>
-              )}
-            </Card>
-          </div>
         </div>
       )}
 
@@ -2437,18 +2094,9 @@ const ResultsSection = ({ state, result, maxPrice, setState }) => {
             { label: 'Ingresos', value: maxPrice.income, color: '#10b981' },
             { label: 'LTV máximo', value: maxPrice.ltv, color: '#f59e0b' },
             { label: 'Edad / plazo', value: maxPrice.age, color: '#8b5cf6' },
-            { label: 'Conjunto (viable)', value: maxPrice.all, color: '#4f46e5' },
+            { label: 'Conjunto', value: maxPrice.all, color: '#4f46e5' },
           ]} />
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-6">
-            <KPI label="Ahorros" value={fmtEur(maxPrice.savings)} />
-            <KPI label="Ingresos" value={fmtEur(maxPrice.income)} />
-            <KPI label="LTV máximo" value={maxPrice.ltv >= 4999999 ? 'Sin límite' : fmtEur(maxPrice.ltv)} />
-            <KPI label="Edad / plazo" value={maxPrice.age >= 4999999 ? 'Sin límite' : fmtEur(maxPrice.age)} />
-            <KPI label="Conjunto" value={fmtEur(maxPrice.all)} color="brand" />
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-4">
-            "Sin límite" = con tus datos actuales, esta restricción no reduce el precio por debajo del conjunto. El precio máximo real es el del conjunto.
-          </p>
+          <p className="text-xs text-slate-500 mt-4">"Sin límite" = con tus datos actuales, esta restricción no reduce el precio por debajo del conjunto.</p>
         </Card>
       )}
 
@@ -2494,129 +2142,28 @@ const SavedSection = ({ state, setState, list, setList }) => {
     localStorage.setItem(LS_LIST, JSON.stringify(n));
   };
 
-  const downloadFile = (content, filename) => {
-    const blob = new Blob([content], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const exportAll = () => {
-    const payload = { _type: 'simulador_hipoteca_backup', _version: 9, exportedAt: new Date().toISOString(), current: state, saved: list };
-    downloadFile(JSON.stringify(payload, null, 2), `simulador-backup-${Date.now()}.json`);
-    showMessage('ok', `Exportado: actual + ${Object.keys(list).length} guardadas`);
-  };
-  const exportCurrent = () => {
-    const payload = { _type: 'simulador_hipoteca_current', _version: 9, exportedAt: new Date().toISOString(), state };
-    downloadFile(JSON.stringify(payload, null, 2), `simulador-actual-${Date.now()}.json`);
-    showMessage('ok', 'Simulación actual exportada');
-  };
-  const exportSingle = (id) => {
-    const s = list[id];
-    if (!s) return;
-    const payload = { _type: 'simulador_hipoteca_single', _version: 9, exportedAt: new Date().toISOString(), simulation: s };
-    downloadFile(JSON.stringify(payload, null, 2), `simulacion-${s.name.replace(/[^a-z0-9]/gi,'_')}-${Date.now()}.json`);
-    showMessage('ok', 'Exportada: ' + s.name);
-  };
-
-  const importJson = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const data = JSON.parse(ev.target.result);
-        let importedCount = 0;
-        let loadedCurrent = false;
-        const type = data._type || (
-          data.saved || data.simulation || data.current ? 'legacy' :
-          data.buyers && data.property && data.mortgage ? 'raw_state' : 'unknown'
-        );
-        if (type === 'simulador_hipoteca_backup' || (data.saved && data.current)) {
-          const mergedSaved = { ...list, ...(data.saved || {}) };
-          setList(mergedSaved);
-          localStorage.setItem(LS_LIST, JSON.stringify(mergedSaved));
-          importedCount = Object.keys(data.saved || {}).length;
-          if (data.current) { setState(normalizeState(data.current)); loadedCurrent = true; }
-          showMessage('ok', `Backup importado: ${importedCount} simulaciones${loadedCurrent ? ' + actual cargada' : ''}.`);
-        } else if (type === 'simulador_hipoteca_current' || (data.state && !data.name)) {
-          setState(normalizeState(data.state));
-          showMessage('ok', 'Simulación actual importada.');
-        } else if (type === 'simulador_hipoteca_single' || (data.simulation && data.simulation.state)) {
-          const sim = data.simulation;
-          const id = sim.id || ('sim_' + Date.now());
-          const merged = { ...list, [id]: { ...sim, id } };
-          setList(merged);
-          localStorage.setItem(LS_LIST, JSON.stringify(merged));
-          showMessage('ok', `Simulación "${sim.name}" importada.`);
-        } else if (type === 'raw_state' || (data.buyers && data.property)) {
-          setState(normalizeState(data));
-          showMessage('ok', 'Estado cargado directamente.');
-        } else {
-          showMessage('error', 'Formato no reconocido.');
-        }
-      } catch (err) {
-        showMessage('error', 'Error al leer archivo: ' + err.message);
-      } finally {
-        if (fileRef.current) fileRef.current.value = '';
-      }
-    };
-    reader.readAsText(file);
-  };
-
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Simulaciones guardadas</h2>
-      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Todo se guarda en tu navegador (localStorage). Exporta para backup.</p>
-
-      {message && (
-        <div className={"mb-4 p-3 rounded-lg text-sm border " + (message.type === 'ok' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200')}>
-          {message.text}
-        </div>
-      )}
-
+      {message && <div className={"mb-4 p-3 rounded-lg text-sm border " + (message.type === 'ok' ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800')}>{message.text}</div>}
       <Card className="p-5 mb-6">
-        <h3 className="font-semibold text-slate-900 dark:text-white mb-3">Guardar simulación actual</h3>
         <div className="flex flex-col md:flex-row gap-3">
           <input className={inputCls + " flex-1"} placeholder="Nombre (opcional)" value={name} onChange={e => setName(e.target.value)} />
           <button className="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium" onClick={save}>Guardar</button>
         </div>
       </Card>
-
-      <Card className="p-5 mb-6">
-        <h3 className="font-semibold text-slate-900 dark:text-white mb-1">Copia de seguridad</h3>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">Exportar todo / actual / individual. Importar acepta los tres.</p>
-        <div className="flex flex-col md:flex-row gap-3">
-          <button className="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium" onClick={exportAll}>📦 Exportar todo</button>
-          <button className="px-4 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-sm font-medium" onClick={exportCurrent}>📄 Exportar actual</button>
-          <button className="px-4 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-sm font-medium" onClick={() => fileRef.current.click()}>📥 Importar JSON</button>
-          <input ref={fileRef} type="file" accept=".json,application/json" hidden onChange={importJson} />
-        </div>
-      </Card>
-
       <Card className="p-5">
-        <h3 className="font-semibold text-slate-900 dark:text-white mb-4">
-          Simulaciones guardadas          {Object.keys(list).length > 0 && <span className="ml-2 text-sm font-normal text-slate-500">({Object.keys(list).length})</span>}
-        </h3>
-        {Object.keys(list).length === 0 ? (
-          <p className="text-sm text-slate-500">No hay simulaciones guardadas.</p>
-        ) : (
+        {Object.keys(list).length === 0 ? <p className="text-sm text-slate-500">No hay simulaciones guardadas.</p> : (
           <div className="space-y-3">
             {Object.values(list).sort((a,b) => b.savedAt.localeCompare(a.savedAt)).map(s => (
-              <div key={s.id} className="flex flex-col md:flex-row md:items-center gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
+              <div key={s.id} className="flex flex-col md:flex-row md:items-center gap-3 p-3 rounded-xl border border-slate-200">
                 <div className="flex-1">
                   <div className="font-semibold">{s.name}</div>
-                  <div className="text-xs text-slate-500">{new Date(s.savedAt).toLocaleString('es-ES')} · Precio {fmtEur(s.state?.property?.price || 0)}</div>
+                  <div className="text-xs text-slate-500">{new Date(s.savedAt).toLocaleString('es-ES')} · {fmtEur(s.state?.property?.price || 0)}</div>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <button className="px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm" onClick={() => load(s.id)}>Cargar</button>
-                  <button className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-sm" onClick={() => exportSingle(s.id)}>Exportar</button>
-                  <button className="px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300 text-sm" onClick={() => del(s.id)}>Eliminar</button>
+                <div className="flex gap-2">
+                  <button className="px-3 py-1.5 rounded-lg bg-brand-600 text-white text-sm" onClick={() => load(s.id)}>Cargar</button>
+                  <button className="px-3 py-1.5 rounded-lg bg-red-50 text-red-600 text-sm" onClick={() => del(s.id)}>Eliminar</button>
                 </div>
               </div>
             ))}
@@ -2634,7 +2181,7 @@ function App() {
   const [dark, setDark] = useState(false);
   const [list, setList] = useState(loadList);
   const [showAviso, setShowAviso] = useState(true);
-  const [printMode, setPrintMode] = useState(null); // null | 'full' | 'bank'
+  const [printMode, setPrintMode] = useState(null);
 
   useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify(state)); }, [state]);
   useEffect(() => { document.documentElement.classList.toggle('dark', dark); }, [dark]);
@@ -2658,14 +2205,9 @@ function App() {
   }, [
     JSON.stringify(state.buyers.map(b => ({
       id: b.id,
-      cash: b.savings.cash,
-      deposits: b.savings.deposits,
-      funds: b.savings.funds,
-      stocks: b.savings.stocks,
-      crypto: b.savings.crypto,
-      otherLiquid: b.savings.otherLiquid,
-      pensionPlans: b.savings.pensionPlans,
-      pensionAvailable: b.savings.pensionAvailable,
+      cash: b.savings.cash, deposits: b.savings.deposits, funds: b.savings.funds,
+      stocks: b.savings.stocks, crypto: b.savings.crypto, otherLiquid: b.savings.otherLiquid,
+      pensionPlans: b.savings.pensionPlans, pensionAvailable: b.savings.pensionAvailable,
     })))
   ]);
 
@@ -2715,7 +2257,6 @@ function App() {
 
   return (
     <div className="min-h-screen flex flex-col lg:flex-row">
-      {/* Repositorio de impresión: SIEMPRE visible si printMode activo */}
       {printMode && <PrintReport state={state} result={result} maxPrice={maxPrice} mode={printMode} />}
 
       <aside className="lg:w-72 lg:fixed lg:inset-y-0 bg-white dark:bg-slate-900 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800 overflow-y-auto no-print">
@@ -2747,21 +2288,12 @@ function App() {
           <button className="mt-4 w-full px-4 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-sm font-medium" onClick={() => setDark(!dark)}>
             {dark ? '☀️ Modo claro' : '🌙 Modo oscuro'}
           </button>
-
-          {/* Botones de informe */}
           <div className="mt-4 space-y-2 border-t border-slate-200 dark:border-slate-800 pt-4">
             <div className="text-xs uppercase tracking-wide text-slate-500 font-semibold mb-2">📄 Informes PDF</div>
-            <button className="w-full px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-medium" onClick={() => triggerPrint('full')}>
-              📄 Informe completo
-            </button>
-            <button className="w-full px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium" onClick={() => triggerPrint('bank')}>
-              🏦 Informe para el banco
-            </button>
-            <div className="text-xs text-slate-400 text-center mt-2">
-              Se abrirá el diálogo de impresión. Elige <strong>Guardar como PDF</strong>.
-            </div>
+            <button className="w-full px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-medium" onClick={() => triggerPrint('full')}>📄 Informe completo</button>
+            <button className="w-full px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium" onClick={() => triggerPrint('bank')}>🏦 Informe para el banco</button>
+            <div className="text-xs text-slate-400 text-center mt-2">Elige <strong>Guardar como PDF</strong>.</div>
           </div>
-          <p className="text-xs text-slate-400 mt-3 text-center">💡 Pasa el cursor sobre las etiquetas subrayadas para ver ayuda</p>
         </div>
       </aside>
       <main className="lg:ml-72 flex-1 p-4 md:p-8 max-w-6xl mx-auto w-full">
@@ -2769,9 +2301,7 @@ function App() {
           <Card className="p-4 mb-6 border-l-4 border-amber-400 bg-amber-50/50 dark:bg-amber-900/10 no-print">
             <div className="flex items-start gap-3">
               <div className="text-xl">ℹ️</div>
-              <div className="flex-1 text-sm text-slate-700 dark:text-slate-300">
-                <strong>Aviso:</strong> herramienta orientativa. No constituye asesoramiento financiero ni fiscal. Verifica tipos y condiciones con profesionales.
-              </div>
+              <div className="flex-1 text-sm text-slate-700 dark:text-slate-300"><strong>Aviso:</strong> herramienta orientativa. No constituye asesoramiento financiero ni fiscal. Verifica tipos y condiciones con profesionales.</div>
               <button className="text-slate-400 hover:text-slate-600" onClick={() => setShowAviso(false)}>×</button>
             </div>
           </Card>
