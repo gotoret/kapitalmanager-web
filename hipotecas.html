@@ -67,19 +67,25 @@ const fmtPct = (n,d=1) => (n==null||isNaN(n)) ? '—' : new Intl.NumberFormat('e
 /* ---------- DATOS DE TIPOS DE INTERÉS (OCTUBRE 2026) ---------- */
 const RATE_PRESETS = [
   { value: '', label: '— Personalizado —', tin: null },
-  { value: 'ibercaja_fijo', label: 'Ibercaja · Fija 2,55% (Vamos Fija)', tin: 2.55 },
-  { value: 'banca_march_fijo', label: 'Banca March · Fija 2,65% (Avantio)', tin: 2.65 },
-  { value: 'sabadell_fijo', label: 'Banco Sabadell · Fija 2,75%', tin: 2.75 },
-  { value: 'cajamar_fijo', label: 'Cajamar · Fija 2,85% (HipotecON)', tin: 2.85 },
-  { value: 'caixabank_fijo', label: 'CaixaBank · Fija 2,85% (CasaFácil)', tin: 2.85 },
-  { value: 'sabadell_mixto', label: 'Banco Sabadell · Mixta 1,80% (3 años fijos)', tin: 1.80 },
-  { value: 'pibank_mixto', label: 'Pibank · Mixta 1,99% (4 años fijos)', tin: 1.99 },
-  { value: 'ibercaja_mixto5', label: 'Ibercaja · Mixta 2,00% (5 años fijos)', tin: 2.00 },
-  { value: 'kutxabank_variable', label: 'Kutxabank · Variable Euríbor+0,49% (1er año 2,00%)', tin: 2.00 },
-  { value: 'sabadell_variable', label: 'Banco Sabadell · Variable Euríbor+0,50% (1er año 1,50%)', tin: 1.50 },
-  { value: 'coinc_variable', label: 'Coinc · Variable Euríbor+0,50% (1er año 2,50%)', tin: 2.50 },
-  { value: 'bankinter_variable', label: 'Bankinter · Variable Euríbor+0,50% (3 años 2,50%)', tin: 2.50 },
-  { value: 'unicaja_variable', label: 'Unicaja · Variable Euríbor+0,55% (1er año 1,90%)', tin: 1.90 },
+  
+  // Hipotecas Fijas
+  { value: 'ibercaja_fijo', label: 'Ibercaja · Fija 2,55% (Vamos Fija)', tin: 2.55, type: 'fijo', linkedAnnual: 600 },
+  { value: 'banca_march_fijo', label: 'Banca March · Fija 2,65% (Avantio)', tin: 2.65, type: 'fijo', linkedAnnual: 500 },
+  { value: 'sabadell_fijo', label: 'Banco Sabadell · Fija 2,75%', tin: 2.75, type: 'fijo', linkedAnnual: 600 },
+  { value: 'cajamar_fijo', label: 'Cajamar · Fija 2,85% (HipotecON)', tin: 2.85, type: 'fijo', linkedAnnual: 400 },
+  { value: 'caixabank_fijo', label: 'CaixaBank · Fija 2,85% (CasaFácil)', tin: 2.85, type: 'fijo', linkedAnnual: 750 },
+
+  // Hipotecas Mixtas
+  { value: 'sabadell_mixto', label: 'Banco Sabadell · Mixta 1,80% (3 años fijos)', tin: 1.80, type: 'mixto', fixedYears: 3, postFixedTin: 4.00, linkedAnnual: 600 },
+  { value: 'pibank_mixto', label: 'Pibank · Mixta 1,99% (4 años fijos)', tin: 1.99, type: 'mixto', fixedYears: 4, postFixedTin: 3.80, linkedAnnual: 0 },
+  { value: 'ibercaja_mixto5', label: 'Ibercaja · Mixta 2,00% (5 años fijos)', tin: 2.00, type: 'mixto', fixedYears: 5, postFixedTin: 3.80, linkedAnnual: 500 },
+
+  // Hipotecas Variables
+  { value: 'kutxabank_variable', label: 'Kutxabank · Variable Euríbor+0,49% (1er año 2,00%)', tin: 2.00, type: 'variable', linkedAnnual: 400 },
+  { value: 'sabadell_variable', label: 'Banco Sabadell · Variable Euríbor+0,50% (1er año 1,50%)', tin: 1.50, type: 'variable', linkedAnnual: 500 },
+  { value: 'coinc_variable', label: 'Coinc · Variable Euríbor+0,50% (1er año 2,50%)', tin: 2.50, type: 'variable', linkedAnnual: 0 },
+  { value: 'bankinter_variable', label: 'Bankinter · Variable Euríbor+0,50% (3 años 2,50%)', tin: 2.50, type: 'variable', linkedAnnual: 600 },
+  { value: 'unicaja_variable', label: 'Unicaja · Variable Euríbor+0,55% (1er año 1,90%)', tin: 1.90, type: 'variable', linkedAnnual: 350 },
 ];
 
 /* ---------- MOTOR FINANCIERO ---------- */
@@ -1519,8 +1525,15 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
   const handlePresetChange = (presetValue) => {
     const preset = RATE_PRESETS.find(p => p.value === presetValue);
     if (preset && preset.tin != null) {
-      u('ratePreset', presetValue);
-      u('tin', preset.tin);
+      setMortgage(prev => ({
+        ...prev,
+        ratePreset: presetValue,
+        tin: preset.tin,
+        type: preset.type || prev.type,
+        fixedYears: preset.fixedYears || prev.fixedYears,
+        postFixedTin: preset.postFixedTin || prev.postFixedTin,
+        linkedProductsAnnual: preset.linkedAnnual != null ? preset.linkedAnnual : prev.linkedProductsAnnual
+      }));
     } else {
       u('ratePreset', '');
     }
