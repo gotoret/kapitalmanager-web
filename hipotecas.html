@@ -1523,21 +1523,44 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
   }
 
   const handlePresetChange = (presetValue) => {
+    if (!presetValue) {
+      setMortgage(prev => ({ ...prev, ratePreset: '' }));
+      return;
+    }
     const preset = RATE_PRESETS.find(p => p.value === presetValue);
-    if (preset && preset.tin != null) {
-      setMortgage(prev => ({
+    if (!preset || preset.tin == null) return;
+    
+    setMortgage(prev => {
+      const nextType = preset.type || prev.type;
+      const nextFixedYears = nextType === 'mixto' 
+        ? (preset.fixedYears != null ? preset.fixedYears : (Number(prev.fixedYears) || 5))
+        : prev.fixedYears;
+      const nextPostFixedTin = nextType === 'mixto'
+        ? (preset.postFixedTin != null ? preset.postFixedTin : (Number(prev.postFixedTin) || 4.0))
+        : prev.postFixedTin;
+      const nextEuribor = Number(prev.euribor) || 3.5;
+      const nextSpread = Number(prev.spread) || 1.0;
+      
+      return {
         ...prev,
         ratePreset: presetValue,
-        tin: preset.tin,
-        type: preset.type || prev.type,
-        fixedYears: preset.fixedYears || prev.fixedYears,
-        postFixedTin: preset.postFixedTin || prev.postFixedTin,
-        linkedProductsAnnual: preset.linkedAnnual != null ? preset.linkedAnnual : prev.linkedProductsAnnual
-      }));
-    } else {
-      u('ratePreset', '');
-    }
+        type: nextType,
+        tin: Number(preset.tin),
+        fixedYears: nextFixedYears,
+        postFixedTin: nextPostFixedTin,
+        linkedProductsAnnual: preset.linkedAnnual != null ? Number(preset.linkedAnnual) : Number(prev.linkedProductsAnnual) || 0,
+        euribor: nextEuribor,
+        spread: nextSpread,
+      };
+    });
   };
+
+  const safeTin = Number(mortgage.tin) || 0;
+  const safeFixedYears = Number(mortgage.fixedYears) || 5;
+  const safePostFixedTin = Number(mortgage.postFixedTin) || 4.0;
+  const safeEuribor = Number(mortgage.euribor) || 3.5;
+  const safeSpread = Number(mortgage.spread) || 1.0;
+  const safeLinked = Number(mortgage.linkedProductsAnnual) || 0;
 
   return (
     <div>
@@ -1555,24 +1578,24 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
             <select className={inputCls + " mb-2"} value={mortgage.ratePreset || ''} onChange={e => handlePresetChange(e.target.value)}>
               {RATE_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
-            <NumberField value={mortgage.tin} onChange={v => { u('tin', v); u('ratePreset', ''); }} suffix="%" min={0} max={20} step={0.01} placeholder="Introduce TIN personalizado" />
+            <NumberField value={safeTin} onChange={v => { u('tin', v); u('ratePreset', ''); }} suffix="%" min={0} max={20} step={0.01} placeholder="Introduce TIN personalizado" />
             <p className={helpCls + " mt-1"}>💡 Datos de referencia de octubre 2026. Los tipos reales dependen de vinculaciones y perfil.</p>
           </div>
 
           <NumberField label="Comisión apertura" tooltip="Habitual 0%–1%." value={mortgage.openingFeePct} onChange={v => u('openingFeePct', v)} suffix="%" min={0} max={5} step={0.1} />
-          <NumberField label="Productos vinculados (anual)" tooltip="Seguros, tarjetas." value={mortgage.linkedProductsAnnual} onChange={v => u('linkedProductsAnnual', v)} suffix="€" min={0} />
+          <NumberField label="Productos vinculados (anual)" tooltip="Seguros, tarjetas." value={safeLinked} onChange={v => u('linkedProductsAnnual', v)} suffix="€" min={0} />
         </div>
         {mortgage.type !== 'fijo' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-            <NumberField label="Euríbor" tooltip="Euríbor 12M." value={mortgage.euribor} onChange={v => u('euribor', v)} suffix="%" min={-1} max={10} step={0.05} />
-            <NumberField label="Diferencial" tooltip="Margen del banco." value={mortgage.spread} onChange={v => u('spread', v)} suffix="%" min={0} max={5} step={0.05} />
+            <NumberField label="Euríbor" tooltip="Euríbor 12M." value={safeEuribor} onChange={v => u('euribor', v)} suffix="%" min={-1} max={10} step={0.05} />
+            <NumberField label="Diferencial" tooltip="Margen del banco." value={safeSpread} onChange={v => u('spread', v)} suffix="%" min={0} max={5} step={0.05} />
             <NumberField label="Revisión" tooltip="Habitual 12 meses." value={mortgage.revisionMonths} onChange={v => u('revisionMonths', v)} suffix="meses" min={1} max={60} />
           </div>
         )}
         {mortgage.type === 'mixto' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-            <NumberField label="Años tramo fijo" tooltip="Habitual 5–10 años." value={mortgage.fixedYears} onChange={v => u('fixedYears', v)} suffix="años" min={1} max={30} />
-            <NumberField label="TIN posterior" tooltip="Tipo tras el tramo fijo." value={mortgage.postFixedTin} onChange={v => u('postFixedTin', v)} suffix="%" min={0} max={20} step={0.05} />
+            <NumberField label="Años tramo fijo" tooltip="Habitual 5–10 años." value={safeFixedYears} onChange={v => u('fixedYears', v)} suffix="años" min={1} max={30} />
+            <NumberField label="TIN posterior" tooltip="Tipo tras el tramo fijo." value={safePostFixedTin} onChange={v => u('postFixedTin', v)} suffix="%" min={0} max={20} step={0.05} />
           </div>
         )}
       </Card>
