@@ -66,7 +66,7 @@ const fmtPct = (n,d=1) => (n==null||isNaN(n)) ? '—' : new Intl.NumberFormat('e
 
 /* ---------- DATOS DE TIPOS DE INTERÉS (OCTUBRE 2026) ---------- */
 const RATE_PRESETS = [
-  { value: '', label: '— Personalizado —', tin: null },
+  { value: '', label: '— Personalizado —', tin: null, type: null, fixedYears: null, postFixedTin: null, linkedAnnual: null },
   
   // Hipotecas Fijas
   { value: 'ibercaja_fijo', label: 'Ibercaja · Fija 2,55% (Vamos Fija)', tin: 2.55, type: 'fijo', linkedAnnual: 600 },
@@ -1499,7 +1499,6 @@ const PropertySection = ({ property, setProperty, tax, setTax }) => {
 const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => {
   const totalPrice = (property.price||0) + (property.garagePrice||0) + (property.storagePrice||0);
   
-  // Convertimos todo a números seguros para que los inputs controlados nunca fallen
   const safeDownPct = Number(mortgage.downPaymentPct) || 0;
   const safeMaxLtv = Number(mortgage.maxLtv) || 0;
   const safeTermYears = Number(mortgage.termYears) || 0;
@@ -1536,23 +1535,23 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
 
   const handlePresetChange = (e) => {
     const presetValue = e.target.value;
-    if (!presetValue) {
+    const preset = RATE_PRESETS.find(p => p.value === presetValue);
+    
+    if (!preset || presetValue === '') {
       setMortgage(prev => ({ ...prev, ratePreset: '' }));
       return;
     }
-    const preset = RATE_PRESETS.find(p => p.value === presetValue);
-    if (!preset || preset.tin == null) return;
     
     setMortgage(prev => {
-      const nextType = preset.type || prev.type;
+      const nextType = preset.type || prev.type || 'fijo';
       return {
         ...prev,
         ratePreset: presetValue,
         type: nextType,
-        tin: Number(preset.tin),
-        fixedYears: nextType === 'mixto' ? (preset.fixedYears || 5) : (prev.fixedYears || 5),
-        postFixedTin: nextType === 'mixto' ? (preset.postFixedTin || 4.0) : (prev.postFixedTin || 4.0),
-        linkedProductsAnnual: preset.linkedAnnual != null ? Number(preset.linkedAnnual) : (prev.linkedProductsAnnual || 0),
+        tin: preset.tin != null ? preset.tin : prev.tin,
+        fixedYears: preset.fixedYears != null ? preset.fixedYears : (nextType === 'mixto' ? 5 : prev.fixedYears),
+        postFixedTin: preset.postFixedTin != null ? preset.postFixedTin : (nextType === 'mixto' ? 4.0 : prev.postFixedTin),
+        linkedProductsAnnual: preset.linkedAnnual != null ? preset.linkedAnnual : 0,
         euribor: 3.5,
         spread: 1.0
       };
@@ -1571,11 +1570,11 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
           <SelectField label="Tipo de interés" tooltip="Fijo, variable o mixto." value={mortgage.type || 'fijo'} onChange={v => setMortgage({...mortgage, type: v})} options={[{ value: 'fijo', label: 'Fijo' }, { value: 'variable', label: 'Variable' }, { value: 'mixto', label: 'Mixto' }]} />
           
           <div>
-            <LabelWithTooltip label="TIN anual" tooltip="Selecciona una oferta de referencia o elige Personalizado para introducir manualmente." />
+            <LabelWithTooltip label="TAE / TIN anual" tooltip="Selecciona una oferta de referencia o elige Personalizado para introducir manualmente." />
             <select className={inputCls + " mb-2"} value={mortgage.ratePreset || ''} onChange={handlePresetChange}>
               {RATE_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
-            <NumberField value={safeTin} onChange={v => setMortgage({...mortgage, tin: v, ratePreset: ''})} suffix="%" min={0} max={20} step={0.01} placeholder="Introduce TIN personalizado" />
+            <NumberField value={safeTin} onChange={v => setMortgage({...mortgage, tin: v, ratePreset: ''})} suffix="%" min={0} max={20} step={0.01} placeholder="Introduce TIN/TAE personalizado" />
             <p className={helpCls + " mt-1"}>💡 Datos de referencia de octubre 2026. Los tipos reales dependen de vinculaciones y perfil.</p>
           </div>
 
