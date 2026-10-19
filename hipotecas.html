@@ -25,9 +25,6 @@
 <style>
   body { font-family: 'Inter', system-ui, sans-serif; }
 
-  /* =========================================================
-     ESTILOS DE IMPRESIÓN (informes PDF)
-  ========================================================= */
   @media print {
     @page { margin: 15mm; size: A4; }
     body { background: white !important; color: black !important; }
@@ -67,6 +64,24 @@ const fmtEur = (n) => (n==null||isNaN(n)) ? '—' : new Intl.NumberFormat('es-ES
 const fmtEur2 = (n) => (n==null||isNaN(n)) ? '—' : new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR',minimumFractionDigits:2,maximumFractionDigits:2}).format(n);
 const fmtPct = (n,d=1) => (n==null||isNaN(n)) ? '—' : new Intl.NumberFormat('es-ES',{style:'percent',minimumFractionDigits:d,maximumFractionDigits:d}).format(n);
 
+/* ---------- DATOS DE TIPOS DE INTERÉS (OCTUBRE 2026) ---------- */
+const RATE_PRESETS = [
+  { value: '', label: '— Personalizado —', tin: null },
+  { value: 'ibercaja_fijo', label: 'Ibercaja · Fija 2,55% (Vamos Fija)', tin: 2.55 },
+  { value: 'banca_march_fijo', label: 'Banca March · Fija 2,65% (Avantio)', tin: 2.65 },
+  { value: 'sabadell_fijo', label: 'Banco Sabadell · Fija 2,75%', tin: 2.75 },
+  { value: 'cajamar_fijo', label: 'Cajamar · Fija 2,85% (HipotecON)', tin: 2.85 },
+  { value: 'caixabank_fijo', label: 'CaixaBank · Fija 2,85% (CasaFácil)', tin: 2.85 },
+  { value: 'sabadell_mixto', label: 'Banco Sabadell · Mixta 1,80% (3 años fijos)', tin: 1.80 },
+  { value: 'pibank_mixto', label: 'Pibank · Mixta 1,99% (4 años fijos)', tin: 1.99 },
+  { value: 'ibercaja_mixto5', label: 'Ibercaja · Mixta 2,00% (5 años fijos)', tin: 2.00 },
+  { value: 'kutxabank_variable', label: 'Kutxabank · Variable Euríbor+0,49% (1er año 2,00%)', tin: 2.00 },
+  { value: 'sabadell_variable', label: 'Banco Sabadell · Variable Euríbor+0,50% (1er año 1,50%)', tin: 1.50 },
+  { value: 'coinc_variable', label: 'Coinc · Variable Euríbor+0,50% (1er año 2,50%)', tin: 2.50 },
+  { value: 'bankinter_variable', label: 'Bankinter · Variable Euríbor+0,50% (3 años 2,50%)', tin: 2.50 },
+  { value: 'unicaja_variable', label: 'Unicaja · Variable Euríbor+0,55% (1er año 1,90%)', tin: 1.90 },
+];
+
 /* ---------- MOTOR FINANCIERO ---------- */
 const monthlyPayment = (principal, annualRatePct, months) => {
   if (months <= 0 || principal <= 0) return 0;
@@ -102,7 +117,6 @@ const amortizationSchedule = (principal, annualRatePct, months) => {
 
 const totalInterest = (rows) => rows.reduce((s, r) => s + r.interest, 0);
 
-/* Construye el cuadro con soporte de amortizaciones */
 const buildMortgageSchedule = (mortgageAmount, annualRatePct, baseMonths, amortizations) => {
   const r = annualRatePct / 100 / 12;
   let months = baseMonths;
@@ -586,7 +600,8 @@ const INITIAL_STATE = {
   mortgage: {
     downPaymentPct: 20, termYears: 30, type: 'fijo', tin: 3.25,
     euribor: 3.5, spread: 1.0, revisionMonths: 12, fixedYears: 5, postFixedTin: 4.0,
-    openingFeePct: 0.5, linkedProductsAnnual: 600, maxLtv: 80, maxAgeAtMaturity: 75, debtThreshold: 0.35
+    openingFeePct: 0.5, linkedProductsAnnual: 600, maxLtv: 80, maxAgeAtMaturity: 75, debtThreshold: 0.35,
+    ratePreset: ''
   }
 };
 
@@ -1501,6 +1516,16 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
     if (row) paymentAfterAmort = row.payment;
   }
 
+  const handlePresetChange = (presetValue) => {
+    const preset = RATE_PRESETS.find(p => p.value === presetValue);
+    if (preset && preset.tin != null) {
+      u('ratePreset', presetValue);
+      u('tin', preset.tin);
+    } else {
+      u('ratePreset', '');
+    }
+  };
+
   return (
     <div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-1">Hipoteca y financiación</h2>
@@ -1511,7 +1536,16 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
           <NumberField label="Aportación inicial (% del precio)" tooltip="Porcentaje del precio que pagas tú." value={mortgage.downPaymentPct} onChange={v => u('downPaymentPct', v)} suffix="%" min={0} max={100} step={1} help={`→ Aportas ${fmtEur(totalPrice * downPct / 100)} · Banco financia el ${100 - downPct}%`} />
           <NumberField label="Plazo (años)" tooltip="Duración del préstamo." value={mortgage.termYears} onChange={v => u('termYears', v)} min={1} max={40} suffix="años" />
           <SelectField label="Tipo de interés" tooltip="Fijo, variable o mixto." value={mortgage.type} onChange={v => u('type', v)} options={[{ value: 'fijo', label: 'Fijo' }, { value: 'variable', label: 'Variable' }, { value: 'mixto', label: 'Mixto' }]} />
-          <NumberField label="TIN anual" tooltip="Tipo de Interés Nominal." value={mortgage.tin} onChange={v => u('tin', v)} suffix="%" min={0} max={20} step={0.05} />
+          
+          <div>
+            <LabelWithTooltip label="TIN anual" tooltip="Selecciona una oferta de referencia o elige Personalizado para introducir manualmente." />
+            <select className={inputCls + " mb-2"} value={mortgage.ratePreset || ''} onChange={e => handlePresetChange(e.target.value)}>
+              {RATE_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+            <NumberField value={mortgage.tin} onChange={v => { u('tin', v); u('ratePreset', ''); }} suffix="%" min={0} max={20} step={0.01} placeholder="Introduce TIN personalizado" />
+            <p className={helpCls + " mt-1"}>💡 Datos de referencia de octubre 2026. Los tipos reales dependen de vinculaciones y perfil.</p>
+          </div>
+
           <NumberField label="Comisión apertura" tooltip="Habitual 0%–1%." value={mortgage.openingFeePct} onChange={v => u('openingFeePct', v)} suffix="%" min={0} max={5} step={0.1} />
           <NumberField label="Productos vinculados (anual)" tooltip="Seguros, tarjetas." value={mortgage.linkedProductsAnnual} onChange={v => u('linkedProductsAnnual', v)} suffix="€" min={0} />
         </div>
@@ -1574,7 +1608,7 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
 };
 
 /* =========================================================
-   INFORME IMPRIMIBLE (completo o sin hipoteca)
+   INFORME IMPRIMIBLE
 ========================================================= */
 const PrintReport = ({ state, result, maxPrice, mode }) => {
   const isBankMode = mode === 'bank';
@@ -2094,7 +2128,7 @@ const SavedSection = ({ state, setState, list, setList }) => {
       }
     };
     reader.readAsText(file);
-    e.target.value = null; // Reset input
+    e.target.value = null;
   };
 
   return (
@@ -2167,7 +2201,6 @@ function App() {
       if (!changed) return prev;
       return { ...prev, buyers: newBuyers };
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     JSON.stringify(state.buyers.map(b => ({
       id: b.id,
