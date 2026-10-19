@@ -1497,20 +1497,32 @@ const PropertySection = ({ property, setProperty, tax, setTax }) => {
 };
 
 const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => {
-  const u = (k, v) => setMortgage({ ...mortgage, [k]: v });
   const totalPrice = (property.price||0) + (property.garagePrice||0) + (property.storagePrice||0);
-  const downPct = Number(mortgage.downPaymentPct) || 0;
-  const maxLtv = Number(mortgage.maxLtv) || 0;
-  const desiredMortgage = totalPrice * (1 - downPct / 100);
-  const maxMortgageByLtv = totalPrice * (maxLtv / 100);
+  
+  // Convertimos todo a números seguros para que los inputs controlados nunca fallen
+  const safeDownPct = Number(mortgage.downPaymentPct) || 0;
+  const safeMaxLtv = Number(mortgage.maxLtv) || 0;
+  const safeTermYears = Number(mortgage.termYears) || 0;
+  const safeTin = Number(mortgage.tin) || 0;
+  const safeOpeningFee = Number(mortgage.openingFeePct) || 0;
+  const safeLinked = Number(mortgage.linkedProductsAnnual) || 0;
+  const safeEuribor = Number(mortgage.euribor) || 3.5;
+  const safeSpread = Number(mortgage.spread) || 1.0;
+  const safeRevision = Number(mortgage.revisionMonths) || 12;
+  const safeFixedYears = Number(mortgage.fixedYears) || 5;
+  const safePostFixed = Number(mortgage.postFixedTin) || 4.0;
+  const safeMaxAge = Number(mortgage.maxAgeAtMaturity) || 75;
+  const safeThreshold = Number(mortgage.debtThreshold) || 0.35;
+
+  const desiredMortgage = totalPrice * (1 - safeDownPct / 100);
+  const maxMortgageByLtv = totalPrice * (safeMaxLtv / 100);
   const effectiveMortgage = Math.min(desiredMortgage, maxMortgageByLtv);
   const effectiveDown = totalPrice - effectiveMortgage;
   const ltvCapped = desiredMortgage > maxMortgageByLtv + 0.01;
   const effectiveLtv = totalPrice > 0 ? effectiveMortgage / totalPrice : 0;
 
-  const basePayment = monthlyPayment(effectiveMortgage, Number(mortgage.tin) || 0, (Number(mortgage.termYears) || 0) * 12);
-
-  const schedule = buildMortgageSchedule(effectiveMortgage, Number(mortgage.tin) || 0, (Number(mortgage.termYears) || 0) * 12, amortizations || []);
+  const basePayment = monthlyPayment(effectiveMortgage, safeTin, safeTermYears * 12);
+  const schedule = buildMortgageSchedule(effectiveMortgage, safeTin, safeTermYears * 12, amortizations || []);
   const effectiveMonths = schedule.length;
   const firstRow = schedule[0] || { payment: basePayment };
   const effectivePayment = firstRow.payment;
@@ -1522,7 +1534,8 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
     if (row) paymentAfterAmort = row.payment;
   }
 
-  const handlePresetChange = (presetValue) => {
+  const handlePresetChange = (e) => {
+    const presetValue = e.target.value;
     if (!presetValue) {
       setMortgage(prev => ({ ...prev, ratePreset: '' }));
       return;
@@ -1532,24 +1545,16 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
     
     setMortgage(prev => {
       const nextType = preset.type || prev.type;
-      // Forzamos valores seguros para que NUNCA se queden en blanco
-      const nextFixedYears = nextType === 'mixto' 
-        ? (preset.fixedYears != null ? preset.fixedYears : 5)
-        : 5;
-      const nextPostFixedTin = nextType === 'mixto'
-        ? (preset.postFixedTin != null ? preset.postFixedTin : 4.0)
-        : 4.0;
-      
       return {
         ...prev,
         ratePreset: presetValue,
         type: nextType,
         tin: Number(preset.tin),
-        fixedYears: nextFixedYears,
-        postFixedTin: nextPostFixedTin,
-        linkedProductsAnnual: preset.linkedAnnual != null ? Number(preset.linkedAnnual) : 0,
-        euribor: 3.5, // Fijamos Euríbor por defecto
-        spread: 1.0,  // Fijamos Diferencial por defecto
+        fixedYears: nextType === 'mixto' ? (preset.fixedYears || 5) : (prev.fixedYears || 5),
+        postFixedTin: nextType === 'mixto' ? (preset.postFixedTin || 4.0) : (prev.postFixedTin || 4.0),
+        linkedProductsAnnual: preset.linkedAnnual != null ? Number(preset.linkedAnnual) : (prev.linkedProductsAnnual || 0),
+        euribor: 3.5,
+        spread: 1.0
       };
     });
   };
@@ -1561,33 +1566,33 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Condiciones</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <NumberField label="Aportación inicial (% del precio)" tooltip="Porcentaje del precio que pagas tú." value={mortgage.downPaymentPct} onChange={v => u('downPaymentPct', v)} suffix="%" min={0} max={100} step={1} help={`→ Aportas ${fmtEur(totalPrice * downPct / 100)} · Banco financia el ${100 - downPct}%`} />
-          <NumberField label="Plazo (años)" tooltip="Duración del préstamo." value={mortgage.termYears} onChange={v => u('termYears', v)} min={1} max={40} suffix="años" />
-          <SelectField label="Tipo de interés" tooltip="Fijo, variable o mixto." value={mortgage.type} onChange={v => u('type', v)} options={[{ value: 'fijo', label: 'Fijo' }, { value: 'variable', label: 'Variable' }, { value: 'mixto', label: 'Mixto' }]} />
+          <NumberField label="Aportación inicial (% del precio)" tooltip="Porcentaje del precio que pagas tú." value={safeDownPct} onChange={v => setMortgage({...mortgage, downPaymentPct: v})} suffix="%" min={0} max={100} step={1} help={`→ Aportas ${fmtEur(totalPrice * safeDownPct / 100)} · Banco financia el ${100 - safeDownPct}%`} />
+          <NumberField label="Plazo (años)" tooltip="Duración del préstamo." value={safeTermYears} onChange={v => setMortgage({...mortgage, termYears: v})} min={1} max={40} suffix="años" />
+          <SelectField label="Tipo de interés" tooltip="Fijo, variable o mixto." value={mortgage.type || 'fijo'} onChange={v => setMortgage({...mortgage, type: v})} options={[{ value: 'fijo', label: 'Fijo' }, { value: 'variable', label: 'Variable' }, { value: 'mixto', label: 'Mixto' }]} />
           
           <div>
             <LabelWithTooltip label="TIN anual" tooltip="Selecciona una oferta de referencia o elige Personalizado para introducir manualmente." />
-            <select className={inputCls + " mb-2"} value={mortgage.ratePreset || ''} onChange={e => handlePresetChange(e.target.value)}>
+            <select className={inputCls + " mb-2"} value={mortgage.ratePreset || ''} onChange={handlePresetChange}>
               {RATE_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
-            <NumberField value={mortgage.tin} onChange={v => { u('tin', v); u('ratePreset', ''); }} suffix="%" min={0} max={20} step={0.01} placeholder="Introduce TIN personalizado" />
+            <NumberField value={safeTin} onChange={v => setMortgage({...mortgage, tin: v, ratePreset: ''})} suffix="%" min={0} max={20} step={0.01} placeholder="Introduce TIN personalizado" />
             <p className={helpCls + " mt-1"}>💡 Datos de referencia de octubre 2026. Los tipos reales dependen de vinculaciones y perfil.</p>
           </div>
 
-          <NumberField label="Comisión apertura" tooltip="Habitual 0%–1%." value={mortgage.openingFeePct} onChange={v => u('openingFeePct', v)} suffix="%" min={0} max={5} step={0.1} />
-          <NumberField label="Productos vinculados (anual)" tooltip="Seguros, tarjetas." value={mortgage.linkedProductsAnnual} onChange={v => u('linkedProductsAnnual', v)} suffix="€" min={0} />
+          <NumberField label="Comisión apertura" tooltip="Habitual 0%–1%." value={safeOpeningFee} onChange={v => setMortgage({...mortgage, openingFeePct: v})} suffix="%" min={0} max={5} step={0.1} />
+          <NumberField label="Productos vinculados (anual)" tooltip="Seguros, tarjetas." value={safeLinked} onChange={v => setMortgage({...mortgage, linkedProductsAnnual: v})} suffix="€" min={0} />
         </div>
         {mortgage.type !== 'fijo' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-            <NumberField label="Euríbor" tooltip="Euríbor 12M." value={mortgage.euribor} onChange={v => u('euribor', v)} suffix="%" min={-1} max={10} step={0.05} />
-            <NumberField label="Diferencial" tooltip="Margen del banco." value={mortgage.spread} onChange={v => u('spread', v)} suffix="%" min={0} max={5} step={0.05} />
-            <NumberField label="Revisión" tooltip="Habitual 12 meses." value={mortgage.revisionMonths} onChange={v => u('revisionMonths', v)} suffix="meses" min={1} max={60} />
+            <NumberField label="Euríbor" tooltip="Euríbor 12M." value={safeEuribor} onChange={v => setMortgage({...mortgage, euribor: v})} suffix="%" min={-1} max={10} step={0.05} />
+            <NumberField label="Diferencial" tooltip="Margen del banco." value={safeSpread} onChange={v => setMortgage({...mortgage, spread: v})} suffix="%" min={0} max={5} step={0.05} />
+            <NumberField label="Revisión" tooltip="Habitual 12 meses." value={safeRevision} onChange={v => setMortgage({...mortgage, revisionMonths: v})} suffix="meses" min={1} max={60} />
           </div>
         )}
         {mortgage.type === 'mixto' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-            <NumberField label="Años tramo fijo" tooltip="Habitual 5–10 años." value={mortgage.fixedYears} onChange={v => u('fixedYears', v)} suffix="años" min={1} max={30} />
-            <NumberField label="TIN posterior" tooltip="Tipo tras el tramo fijo." value={mortgage.postFixedTin} onChange={v => u('postFixedTin', v)} suffix="%" min={0} max={20} step={0.05} />
+            <NumberField label="Años tramo fijo" tooltip="Habitual 5–10 años." value={safeFixedYears} onChange={v => setMortgage({...mortgage, fixedYears: v})} suffix="años" min={1} max={30} />
+            <NumberField label="TIN posterior" tooltip="Tipo tras el tramo fijo." value={safePostFixed} onChange={v => setMortgage({...mortgage, postFixedTin: v})} suffix="%" min={0} max={20} step={0.05} />
           </div>
         )}
       </Card>
@@ -1595,15 +1600,15 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
       <Card className="p-5 mb-6">
         <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Criterios del banco (editables)</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <NumberField label="LTV máximo" tooltip="Habitual 80% primera vivienda." value={mortgage.maxLtv} onChange={v => u('maxLtv', v)} suffix="%" min={0} max={100} step={1} />
-          <NumberField label="Edad máxima al vencimiento" tooltip="Habitual 70–75 años." value={mortgage.maxAgeAtMaturity} onChange={v => u('maxAgeAtMaturity', v)} suffix="años" min={50} max={90} />
-          <NumberField label="Umbral endeudamiento" tooltip="Habitual 0,35 (35%)." value={mortgage.debtThreshold} onChange={v => u('debtThreshold', v)} step={0.01} min={0.1} max={0.6} help={`${(Number(mortgage.debtThreshold)*100).toFixed(0)}%`} />
+          <NumberField label="LTV máximo" tooltip="Habitual 80% primera vivienda." value={safeMaxLtv} onChange={v => setMortgage({...mortgage, maxLtv: v})} suffix="%" min={0} max={100} step={1} />
+          <NumberField label="Edad máxima al vencimiento" tooltip="Habitual 70–75 años." value={safeMaxAge} onChange={v => setMortgage({...mortgage, maxAgeAtMaturity: v})} suffix="años" min={50} max={90} />
+          <NumberField label="Umbral endeudamiento" tooltip="Habitual 0,35 (35%)." value={safeThreshold} onChange={v => setMortgage({...mortgage, debtThreshold: v})} step={0.01} min={0.1} max={0.6} help={`${(safeThreshold*100).toFixed(0)}%`} />
         </div>
       </Card>
 
       {ltvCapped && (
         <div className="mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-200">
-          ⚠️ Has pedido aportación del <strong>{downPct}%</strong>, pero el LTV máximo es del <strong>{maxLtv}%</strong>. Financiación real: <strong>{fmtPct(effectiveLtv, 0)}</strong>.
+          ⚠️ Has pedido aportación del <strong>{safeDownPct}%</strong>, pero el LTV máximo es del <strong>{safeMaxLtv}%</strong>. Financiación real: <strong>{fmtPct(effectiveLtv, 0)}</strong>.
         </div>
       )}
 
@@ -1611,7 +1616,7 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
         <KPI label="Aportación inicial" value={fmtEur(effectiveDown)} sub={`${fmtPct(effectiveDown / (totalPrice||1), 0)} del precio`} color="brand" />
         <KPI label="Hipoteca" value={fmtEur(effectiveMortgage)} sub={`LTV ${fmtPct(effectiveLtv, 0)}`} />
         <KPI label={firstAmort ? 'Cuota (tras amortizar)' : 'Cuota mensual'} value={fmtEur2(paymentAfterAmort)} color="brand" sub={firstAmort ? `Inicial: ${fmtEur2(effectivePayment)}` : null} />
-        <KPI label="Plazo efectivo" value={`${(effectiveMonths/12).toFixed(1)} años`} sub={effectiveMonths < (Number(mortgage.termYears) || 0) * 12 ? `Base: ${mortgage.termYears} años` : `${effectiveMonths} meses`} />
+        <KPI label="Plazo efectivo" value={`${(effectiveMonths/12).toFixed(1)} años`} sub={effectiveMonths < safeTermYears * 12 ? `Base: ${safeTermYears} años` : `${effectiveMonths} meses`} />
       </div>
 
       {(amortizations && amortizations.length > 0) && (
