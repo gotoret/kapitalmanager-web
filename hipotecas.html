@@ -678,12 +678,22 @@ const LabelWithTooltip = ({ label, tooltip }) => {
   );
 };
 
-const NumberField = ({ label, value, onChange, help, tooltip, suffix, min, max, step=1, placeholder, disabled }) => (
+const NumberField = ({ label, value, onChange, help, tooltip, suffix, min, max, step=1, placeholder, disabled, inputKey }) => (
   <div>
     {label && <LabelWithTooltip label={label} tooltip={tooltip} />}
     <div className="relative">
-      <input type="number" className={inputCls + (disabled ? ' opacity-60 cursor-not-allowed' : '')} value={value ?? ''} min={min} max={max} step={step} placeholder={placeholder} disabled={disabled}
-        onChange={e => onChange(e.target.value === '' ? '' : Number(e.target.value))} />
+      <input 
+        key={inputKey}
+        type="number" 
+        className={inputCls + (disabled ? ' opacity-60 cursor-not-allowed' : '')} 
+        value={value ?? ''} 
+        min={min} 
+        max={max} 
+        step={step} 
+        placeholder={placeholder} 
+        disabled={disabled}
+        onChange={e => onChange(e.target.value === '' ? '' : Number(e.target.value))} 
+      />
       {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">{suffix}</span>}
     </div>
     {help && <p className={helpCls}>{help}</p>}
@@ -1587,15 +1597,15 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
         </div>
         {mortgage.type !== 'fijo' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-            <NumberField label="Euríbor" tooltip="Euríbor 12M." value={safeEuribor} onChange={v => u('euribor', v)} suffix="%" min={-1} max={10} step={0.05} />
-            <NumberField label="Diferencial" tooltip="Margen del banco." value={safeSpread} onChange={v => u('spread', v)} suffix="%" min={0} max={5} step={0.05} />
+            <NumberField inputKey={`eur-${safeEuribor}`} label="Euríbor" tooltip="Euríbor 12M." value={safeEuribor} onChange={v => u('euribor', v)} suffix="%" min={-1} max={10} step={0.05} />
+            <NumberField inputKey={`spr-${safeSpread}`} label="Diferencial" tooltip="Margen del banco." value={safeSpread} onChange={v => u('spread', v)} suffix="%" min={0} max={5} step={0.05} />
             <NumberField label="Revisión" tooltip="Habitual 12 meses." value={mortgage.revisionMonths} onChange={v => u('revisionMonths', v)} suffix="meses" min={1} max={60} />
           </div>
         )}
         {mortgage.type === 'mixto' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-            <NumberField label="Años tramo fijo" tooltip="Habitual 5–10 años." value={safeFixedYears} onChange={v => u('fixedYears', v)} suffix="años" min={1} max={30} />
-            <NumberField label="TIN posterior" tooltip="Tipo tras el tramo fijo." value={safePostFixedTin} onChange={v => u('postFixedTin', v)} suffix="%" min={0} max={20} step={0.05} />
+            <NumberField inputKey={`fy-${safeFixedYears}`} label="Años tramo fijo" tooltip="Habitual 5–10 años." value={safeFixedYears} onChange={v => u('fixedYears', v)} suffix="años" min={1} max={30} />
+            <NumberField inputKey={`pft-${safePostFixedTin}`} label="TIN posterior" tooltip="Tipo tras el tramo fijo." value={safePostFixedTin} onChange={v => u('postFixedTin', v)} suffix="%" min={0} max={20} step={0.05} />
           </div>
         )}
       </Card>
