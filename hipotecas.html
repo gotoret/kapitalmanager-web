@@ -66,7 +66,7 @@ const fmtPct = (n,d=1) => (n==null||isNaN(n)) ? '—' : new Intl.NumberFormat('e
 
 /* ---------- DATOS DE TIPOS DE INTERÉS (OCTUBRE 2026) ---------- */
 const RATE_PRESETS = [
-  { value: '', label: '— Personalizado —', tin: null, type: null, fixedYears: null, postFixedTin: null, linkedAnnual: null },
+  { value: '', label: '— Personalizado —', tin: null, type: null, fixedYears: null, postFixedTin: null, linkedAnnual: null, euribor: null, spread: null, revisionMonths: null },
   
   // Hipotecas Fijas
   { value: 'ibercaja_fijo', label: 'Ibercaja · Fija 2,55% (Vamos Fija)', tin: 2.55, type: 'fijo', linkedAnnual: 600 },
@@ -76,16 +76,16 @@ const RATE_PRESETS = [
   { value: 'caixabank_fijo', label: 'CaixaBank · Fija 2,85% (CasaFácil)', tin: 2.85, type: 'fijo', linkedAnnual: 750 },
 
   // Hipotecas Mixtas
-  { value: 'sabadell_mixto', label: 'Banco Sabadell · Mixta 1,80% (3 años fijos)', tin: 1.80, type: 'mixto', fixedYears: 3, postFixedTin: 4.00, linkedAnnual: 600 },
-  { value: 'pibank_mixto', label: 'Pibank · Mixta 1,99% (4 años fijos)', tin: 1.99, type: 'mixto', fixedYears: 4, postFixedTin: 3.80, linkedAnnual: 0 },
-  { value: 'ibercaja_mixto5', label: 'Ibercaja · Mixta 2,00% (5 años fijos)', tin: 2.00, type: 'mixto', fixedYears: 5, postFixedTin: 3.80, linkedAnnual: 500 },
+  { value: 'sabadell_mixto', label: 'Banco Sabadell · Mixta 1,80% (3 años fijos)', tin: 1.80, type: 'mixto', fixedYears: 3, postFixedTin: 4.00, linkedAnnual: 600, euribor: 3.5, spread: 0.9, revisionMonths: 12 },
+  { value: 'pibank_mixto', label: 'Pibank · Mixta 1,99% (4 años fijos)', tin: 1.99, type: 'mixto', fixedYears: 4, postFixedTin: 3.80, linkedAnnual: 0, euribor: 3.5, spread: 0.8, revisionMonths: 12 },
+  { value: 'ibercaja_mixto5', label: 'Ibercaja · Mixta 2,00% (5 años fijos)', tin: 2.00, type: 'mixto', fixedYears: 5, postFixedTin: 3.80, linkedAnnual: 500, euribor: 3.5, spread: 0.9, revisionMonths: 12 },
 
   // Hipotecas Variables
-  { value: 'kutxabank_variable', label: 'Kutxabank · Variable Euríbor+0,49% (1er año 2,00%)', tin: 2.00, type: 'variable', linkedAnnual: 400 },
-  { value: 'sabadell_variable', label: 'Banco Sabadell · Variable Euríbor+0,50% (1er año 1,50%)', tin: 1.50, type: 'variable', linkedAnnual: 500 },
-  { value: 'coinc_variable', label: 'Coinc · Variable Euríbor+0,50% (1er año 2,50%)', tin: 2.50, type: 'variable', linkedAnnual: 0 },
-  { value: 'bankinter_variable', label: 'Bankinter · Variable Euríbor+0,50% (3 años 2,50%)', tin: 2.50, type: 'variable', linkedAnnual: 600 },
-  { value: 'unicaja_variable', label: 'Unicaja · Variable Euríbor+0,55% (1er año 1,90%)', tin: 1.90, type: 'variable', linkedAnnual: 350 },
+  { value: 'kutxabank_variable', label: 'Kutxabank · Variable Euríbor+0,49% (1er año 2,00%)', tin: 2.00, type: 'variable', linkedAnnual: 400, euribor: 3.5, spread: 0.49, revisionMonths: 12 },
+  { value: 'sabadell_variable', label: 'Banco Sabadell · Variable Euríbor+0,50% (1er año 1,50%)', tin: 1.50, type: 'variable', linkedAnnual: 500, euribor: 3.5, spread: 0.50, revisionMonths: 12 },
+  { value: 'coinc_variable', label: 'Coinc · Variable Euríbor+0,50% (1er año 2,50%)', tin: 2.50, type: 'variable', linkedAnnual: 0, euribor: 3.5, spread: 0.50, revisionMonths: 12 },
+  { value: 'bankinter_variable', label: 'Bankinter · Variable Euríbor+0,50% (3 años 2,50%)', tin: 2.50, type: 'variable', linkedAnnual: 600, euribor: 3.5, spread: 0.50, revisionMonths: 12 },
+  { value: 'unicaja_variable', label: 'Unicaja · Variable Euríbor+0,55% (1er año 1,90%)', tin: 1.90, type: 'variable', linkedAnnual: 350, euribor: 3.5, spread: 0.55, revisionMonths: 12 },
 ];
 
 /* ---------- MOTOR FINANCIERO ---------- */
@@ -678,59 +678,30 @@ const LabelWithTooltip = ({ label, tooltip }) => {
   );
 };
 
-const NumberField = ({ label, value, onChange, help, tooltip, suffix, min, max, step=1, placeholder, disabled }) => {
-  // Control estricto del input numérico para evitar que el navegador lo vacíe al cambiar el foco o el estado externo.
-  const [localValue, setLocalValue] = useState(value === 0 || value ? String(value) : '');
-  
-  useEffect(() => {
-    // Sincronizamos el valor local si cambia desde fuera (ej. un preset)
-    const newLocal = value === 0 || value ? String(value) : '';
-    if (parseFloat(localValue) !== parseFloat(newLocal) && !(localValue === '' && newLocal === '')) {
-       setLocalValue(newLocal);
-    }
-  }, [value]);
-
-  const handleChange = (e) => {
-    const val = e.target.value;
-    setLocalValue(val);
-    if (val === '') {
-      onChange('');
-    } else {
-      const num = Number(val);
-      if (!isNaN(num)) onChange(num);
-    }
-  };
-
-  const handleBlur = () => {
-    if (localValue !== '' && value === '') {
-       setLocalValue('');
-    } else if (localValue === '' && value !== '' && value !== undefined) {
-       setLocalValue(String(value));
-    }
-  };
-
-  return (
-    <div>
-      {label && <LabelWithTooltip label={label} tooltip={tooltip} />}
-      <div className="relative">
-        <input 
-          type="number" 
-          className={inputCls + (disabled ? ' opacity-60 cursor-not-allowed' : '')} 
-          value={localValue} 
-          min={min} 
-          max={max} 
-          step={step} 
-          placeholder={placeholder} 
-          disabled={disabled}
-          onChange={handleChange}
-          onBlur={handleBlur}
-        />
-        {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">{suffix}</span>}
-      </div>
-      {help && <p className={helpCls}>{help}</p>}
+// NumberField 100% controlado
+const NumberField = ({ label, value, onChange, help, tooltip, suffix, min, max, step=1, placeholder, disabled }) => (
+  <div>
+    {label && <LabelWithTooltip label={label} tooltip={tooltip} />}
+    <div className="relative">
+      <input 
+        type="number" 
+        className={inputCls + (disabled ? ' opacity-60 cursor-not-allowed' : '')} 
+        value={value ?? ''} 
+        min={min} 
+        max={max} 
+        step={step} 
+        placeholder={placeholder} 
+        disabled={disabled}
+        onChange={e => {
+          const val = e.target.value;
+          onChange(val === '' ? '' : Number(val));
+        }} 
+      />
+      {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">{suffix}</span>}
     </div>
-  );
-};
+    {help && <p className={helpCls}>{help}</p>}
+  </div>
+);
 
 const TextField = ({ label, value, onChange, help, tooltip }) => (
   <div>
@@ -1594,8 +1565,9 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
         fixedYears: preset.fixedYears != null ? preset.fixedYears : (nextType === 'mixto' ? 5 : prev.fixedYears),
         postFixedTin: preset.postFixedTin != null ? preset.postFixedTin : (nextType === 'mixto' ? 4.0 : prev.postFixedTin),
         linkedProductsAnnual: preset.linkedAnnual != null ? preset.linkedAnnual : 0,
-        euribor: 3.5,
-        spread: 1.0
+        euribor: preset.euribor != null ? preset.euribor : 3.5,
+        spread: preset.spread != null ? preset.spread : 1.0,
+        revisionMonths: preset.revisionMonths != null ? preset.revisionMonths : 12
       };
     });
   };
