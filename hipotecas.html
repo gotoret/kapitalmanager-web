@@ -1554,32 +1554,31 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
   const handlePresetChange = (e) => {
     const presetValue = e.target.value;
     const preset = RATE_PRESETS.find(p => p.value === presetValue);
-    
+    const prev = mortgage;
+
     if (!preset || presetValue === '') {
-      setMortgage(prev => ({ ...prev, ratePreset: '' }));
+      setMortgage({ ...prev, ratePreset: '' });
       return;
     }
-    
-    setMortgage(prev => {
-      const nextType = preset.type || prev.type || 'fijo';
-      return {
-        ...prev,
-        ratePreset: presetValue,
-        type: nextType,
-        tin: preset.tin != null ? preset.tin : prev.tin,
-        fixedYears: preset.fixedYears != null ? preset.fixedYears : (nextType === 'mixto' ? 5 : prev.fixedYears),
-        postFixedTin: preset.postFixedTin != null ? preset.postFixedTin : (nextType === 'mixto' ? 4.0 : prev.postFixedTin),
-        linkedProductsAnnual: preset.linkedAnnual != null ? preset.linkedAnnual : 0,
-        euribor: preset.euribor != null ? preset.euribor : 3.5,
-        spread: preset.spread != null ? preset.spread : 1.0,
-        revisionMonths: preset.revisionMonths != null ? preset.revisionMonths : 12,
-        termYears: preset.termYears != null ? preset.termYears : prev.termYears,
-        openingFeePct: preset.openingFeePct != null ? preset.openingFeePct : prev.openingFeePct,
-        maxLtv: preset.maxLtv != null ? preset.maxLtv : prev.maxLtv,
-        downPaymentPct: preset.maxLtv != null ? 100 - preset.maxLtv : prev.downPaymentPct,
-        maxAgeAtMaturity: preset.maxAge != null ? preset.maxAge : prev.maxAgeAtMaturity,
-        debtThreshold: preset.debtThreshold != null ? preset.debtThreshold : prev.debtThreshold
-      };
+
+    const nextType = preset.type || prev.type || 'fijo';
+    setMortgage({
+      ...prev,
+      ratePreset: presetValue,
+      type: nextType,
+      tin: preset.tin != null ? preset.tin : prev.tin,
+      fixedYears: preset.fixedYears != null ? preset.fixedYears : (nextType === 'mixto' ? 5 : prev.fixedYears),
+      postFixedTin: preset.postFixedTin != null ? preset.postFixedTin : (nextType === 'mixto' ? 4.0 : prev.postFixedTin),
+      linkedProductsAnnual: preset.linkedAnnual != null ? preset.linkedAnnual : 0,
+      euribor: preset.euribor != null ? preset.euribor : 3.5,
+      spread: preset.spread != null ? preset.spread : 1.0,
+      revisionMonths: preset.revisionMonths != null ? preset.revisionMonths : 12,
+      termYears: preset.termYears != null ? preset.termYears : prev.termYears,
+      openingFeePct: preset.openingFeePct != null ? preset.openingFeePct : prev.openingFeePct,
+      maxLtv: preset.maxLtv != null ? preset.maxLtv : prev.maxLtv,
+      downPaymentPct: preset.maxLtv != null ? 100 - preset.maxLtv : prev.downPaymentPct,
+      maxAgeAtMaturity: preset.maxAge != null ? preset.maxAge : prev.maxAgeAtMaturity,
+      debtThreshold: preset.debtThreshold != null ? preset.debtThreshold : prev.debtThreshold
     });
   };
 
