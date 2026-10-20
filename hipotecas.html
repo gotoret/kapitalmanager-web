@@ -678,17 +678,59 @@ const LabelWithTooltip = ({ label, tooltip }) => {
   );
 };
 
-const NumberField = ({ label, value, onChange, help, tooltip, suffix, min, max, step=1, placeholder, disabled }) => (
-  <div>
-    {label && <LabelWithTooltip label={label} tooltip={tooltip} />}
-    <div className="relative">
-      <input type="number" className={inputCls + (disabled ? ' opacity-60 cursor-not-allowed' : '')} value={value ?? ''} min={min} max={max} step={step} placeholder={placeholder} disabled={disabled}
-        onChange={e => onChange(e.target.value === '' ? '' : Number(e.target.value))} />
-      {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">{suffix}</span>}
+const NumberField = ({ label, value, onChange, help, tooltip, suffix, min, max, step=1, placeholder, disabled }) => {
+  // Control estricto del input numérico para evitar que el navegador lo vacíe al cambiar el foco o el estado externo.
+  const [localValue, setLocalValue] = useState(value === 0 || value ? String(value) : '');
+  
+  useEffect(() => {
+    // Sincronizamos el valor local si cambia desde fuera (ej. un preset)
+    const newLocal = value === 0 || value ? String(value) : '';
+    if (parseFloat(localValue) !== parseFloat(newLocal) && !(localValue === '' && newLocal === '')) {
+       setLocalValue(newLocal);
+    }
+  }, [value]);
+
+  const handleChange = (e) => {
+    const val = e.target.value;
+    setLocalValue(val);
+    if (val === '') {
+      onChange('');
+    } else {
+      const num = Number(val);
+      if (!isNaN(num)) onChange(num);
+    }
+  };
+
+  const handleBlur = () => {
+    if (localValue !== '' && value === '') {
+       setLocalValue('');
+    } else if (localValue === '' && value !== '' && value !== undefined) {
+       setLocalValue(String(value));
+    }
+  };
+
+  return (
+    <div>
+      {label && <LabelWithTooltip label={label} tooltip={tooltip} />}
+      <div className="relative">
+        <input 
+          type="number" 
+          className={inputCls + (disabled ? ' opacity-60 cursor-not-allowed' : '')} 
+          value={localValue} 
+          min={min} 
+          max={max} 
+          step={step} 
+          placeholder={placeholder} 
+          disabled={disabled}
+          onChange={handleChange}
+          onBlur={handleBlur}
+        />
+        {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">{suffix}</span>}
+      </div>
+      {help && <p className={helpCls}>{help}</p>}
     </div>
-    {help && <p className={helpCls}>{help}</p>}
-  </div>
-);
+  );
+};
 
 const TextField = ({ label, value, onChange, help, tooltip }) => (
   <div>
