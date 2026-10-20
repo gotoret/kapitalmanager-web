@@ -64,28 +64,33 @@ const fmtEur = (n) => (n==null||isNaN(n)) ? '—' : new Intl.NumberFormat('es-ES
 const fmtEur2 = (n) => (n==null||isNaN(n)) ? '—' : new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR',minimumFractionDigits:2,maximumFractionDigits:2}).format(n);
 const fmtPct = (n,d=1) => (n==null||isNaN(n)) ? '—' : new Intl.NumberFormat('es-ES',{style:'percent',minimumFractionDigits:d,maximumFractionDigits:d}).format(n);
 
-/* ---------- DATOS DE TIPOS DE INTERÉS (OCTUBRE 2026) ---------- */
+/* ---------- DATOS DE TIPOS DE INTERÉS (OCTUBRE 2026) ----------
+   Cada oferta rellena: tipo, TIN, años fijos / TIN posterior (mixtas), euríbor, diferencial, revisión,
+   productos vinculados, comisión de apertura, plazo máx., LTV máx. (aportación = 100 - LTV),
+   edad máx. al vencimiento y umbral de endeudamiento (0,35 = recomendación del Banco de España).
+   Notas: Bankinter cobra 500 € fijos (≈0,2 % sobre 250.000 €); Pibank financia hasta 90 % del precio
+   con tope 80 % de tasación (se usa 80 %); Banca March edad máx. 70; Cajamar admite hasta 80 (habitual 75). */
 const RATE_PRESETS = [
   { value: '', label: '— Personalizado —', tin: null, type: null, fixedYears: null, postFixedTin: null, linkedAnnual: null, euribor: null, spread: null, revisionMonths: null },
   
   // Hipotecas Fijas
-  { value: 'ibercaja_fijo', label: 'Ibercaja · Fija 2,55% (Vamos Fija)', tin: 2.55, type: 'fijo', linkedAnnual: 600 },
-  { value: 'banca_march_fijo', label: 'Banca March · Fija 2,65% (Avantio)', tin: 2.65, type: 'fijo', linkedAnnual: 500 },
-  { value: 'sabadell_fijo', label: 'Banco Sabadell · Fija 2,75%', tin: 2.75, type: 'fijo', linkedAnnual: 600 },
-  { value: 'cajamar_fijo', label: 'Cajamar · Fija 2,85% (HipotecON)', tin: 2.85, type: 'fijo', linkedAnnual: 400 },
-  { value: 'caixabank_fijo', label: 'CaixaBank · Fija 2,85% (CasaFácil)', tin: 2.85, type: 'fijo', linkedAnnual: 750 },
+  { value: 'ibercaja_fijo', label: 'Ibercaja · Fija 2,55% (Vamos Fija)', tin: 2.55, type: 'fijo', linkedAnnual: 600, termYears: 25, maxLtv: 80, openingFeePct: 0, maxAge: 75, debtThreshold: 0.35 },
+  { value: 'banca_march_fijo', label: 'Banca March · Fija 2,65% (Avantio)', tin: 2.65, type: 'fijo', linkedAnnual: 500, termYears: 30, maxLtv: 80, openingFeePct: 0, maxAge: 70, debtThreshold: 0.35 },
+  { value: 'sabadell_fijo', label: 'Banco Sabadell · Fija 2,75%', tin: 2.75, type: 'fijo', linkedAnnual: 600, termYears: 30, maxLtv: 80, openingFeePct: 0, maxAge: 75, debtThreshold: 0.35 },
+  { value: 'cajamar_fijo', label: 'Cajamar · Fija 2,85% (HipotecON)', tin: 2.85, type: 'fijo', linkedAnnual: 400, termYears: 30, maxLtv: 80, openingFeePct: 0, maxAge: 75, debtThreshold: 0.35 },
+  { value: 'caixabank_fijo', label: 'CaixaBank · Fija 2,85% (CasaFácil)', tin: 2.85, type: 'fijo', linkedAnnual: 750, termYears: 30, maxLtv: 80, openingFeePct: 0, maxAge: 75, debtThreshold: 0.35 },
 
   // Hipotecas Mixtas
-  { value: 'sabadell_mixto', label: 'Banco Sabadell · Mixta 1,80% (3 años fijos)', tin: 1.80, type: 'mixto', fixedYears: 3, postFixedTin: 4.00, linkedAnnual: 600, euribor: 3.5, spread: 0.9, revisionMonths: 12 },
-  { value: 'pibank_mixto', label: 'Pibank · Mixta 1,99% (4 años fijos)', tin: 1.99, type: 'mixto', fixedYears: 4, postFixedTin: 3.80, linkedAnnual: 0, euribor: 3.5, spread: 0.8, revisionMonths: 12 },
-  { value: 'ibercaja_mixto5', label: 'Ibercaja · Mixta 2,00% (5 años fijos)', tin: 2.00, type: 'mixto', fixedYears: 5, postFixedTin: 3.80, linkedAnnual: 500, euribor: 3.5, spread: 0.9, revisionMonths: 12 },
+  { value: 'sabadell_mixto', label: 'Banco Sabadell · Mixta 1,80% (3 años fijos)', tin: 1.80, type: 'mixto', fixedYears: 3, postFixedTin: 4.00, linkedAnnual: 600, euribor: 3.5, spread: 0.9, revisionMonths: 12, termYears: 30, maxLtv: 80, openingFeePct: 0, maxAge: 75, debtThreshold: 0.35 },
+  { value: 'pibank_mixto', label: 'Pibank · Mixta 1,99% (4 años fijos)', tin: 1.99, type: 'mixto', fixedYears: 4, postFixedTin: 3.80, linkedAnnual: 0, euribor: 3.5, spread: 0.8, revisionMonths: 12, termYears: 35, maxLtv: 80, openingFeePct: 0, maxAge: 75, debtThreshold: 0.35 },
+  { value: 'ibercaja_mixto5', label: 'Ibercaja · Mixta 2,00% (5 años fijos)', tin: 2.00, type: 'mixto', fixedYears: 5, postFixedTin: 3.80, linkedAnnual: 500, euribor: 3.5, spread: 0.9, revisionMonths: 12, termYears: 25, maxLtv: 80, openingFeePct: 0, maxAge: 75, debtThreshold: 0.35 },
 
   // Hipotecas Variables
-  { value: 'kutxabank_variable', label: 'Kutxabank · Variable Euríbor+0,49% (1er año 2,00%)', tin: 2.00, type: 'variable', linkedAnnual: 400, euribor: 3.5, spread: 0.49, revisionMonths: 12 },
-  { value: 'sabadell_variable', label: 'Banco Sabadell · Variable Euríbor+0,50% (1er año 1,50%)', tin: 1.50, type: 'variable', linkedAnnual: 500, euribor: 3.5, spread: 0.50, revisionMonths: 12 },
-  { value: 'coinc_variable', label: 'Coinc · Variable Euríbor+0,50% (1er año 2,50%)', tin: 2.50, type: 'variable', linkedAnnual: 0, euribor: 3.5, spread: 0.50, revisionMonths: 12 },
-  { value: 'bankinter_variable', label: 'Bankinter · Variable Euríbor+0,50% (3 años 2,50%)', tin: 2.50, type: 'variable', linkedAnnual: 600, euribor: 3.5, spread: 0.50, revisionMonths: 12 },
-  { value: 'unicaja_variable', label: 'Unicaja · Variable Euríbor+0,55% (1er año 1,90%)', tin: 1.90, type: 'variable', linkedAnnual: 350, euribor: 3.5, spread: 0.55, revisionMonths: 12 },
+  { value: 'kutxabank_variable', label: 'Kutxabank · Variable Euríbor+0,49% (1er año 2,00%)', tin: 2.00, type: 'variable', linkedAnnual: 400, euribor: 3.5, spread: 0.49, revisionMonths: 12, termYears: 30, maxLtv: 80, openingFeePct: 0, maxAge: 75, debtThreshold: 0.35 },
+  { value: 'sabadell_variable', label: 'Banco Sabadell · Variable Euríbor+0,50% (1er año 1,50%)', tin: 1.50, type: 'variable', linkedAnnual: 500, euribor: 3.5, spread: 0.50, revisionMonths: 12, termYears: 30, maxLtv: 80, openingFeePct: 0, maxAge: 75, debtThreshold: 0.35 },
+  { value: 'coinc_variable', label: 'Coinc · Variable Euríbor+0,50% (1er año 2,50%)', tin: 2.50, type: 'variable', linkedAnnual: 0, euribor: 3.5, spread: 0.50, revisionMonths: 12, termYears: 30, maxLtv: 80, openingFeePct: 0, maxAge: 75, debtThreshold: 0.35 },
+  { value: 'bankinter_variable', label: 'Bankinter · Variable Euríbor+0,50% (3 años 2,50%)', tin: 2.50, type: 'variable', linkedAnnual: 600, euribor: 3.5, spread: 0.50, revisionMonths: 12, termYears: 30, maxLtv: 80, openingFeePct: 0.2, maxAge: 75, debtThreshold: 0.35 },
+  { value: 'unicaja_variable', label: 'Unicaja · Variable Euríbor+0,55% (1er año 1,90%)', tin: 1.90, type: 'variable', linkedAnnual: 350, euribor: 3.5, spread: 0.55, revisionMonths: 12, termYears: 30, maxLtv: 80, openingFeePct: 0.15, maxAge: 75, debtThreshold: 0.35 },
 ];
 
 /* ---------- MOTOR FINANCIERO ---------- */
@@ -1567,7 +1572,13 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
         linkedProductsAnnual: preset.linkedAnnual != null ? preset.linkedAnnual : 0,
         euribor: preset.euribor != null ? preset.euribor : 3.5,
         spread: preset.spread != null ? preset.spread : 1.0,
-        revisionMonths: preset.revisionMonths != null ? preset.revisionMonths : 12
+        revisionMonths: preset.revisionMonths != null ? preset.revisionMonths : 12,
+        termYears: preset.termYears != null ? preset.termYears : prev.termYears,
+        openingFeePct: preset.openingFeePct != null ? preset.openingFeePct : prev.openingFeePct,
+        maxLtv: preset.maxLtv != null ? preset.maxLtv : prev.maxLtv,
+        downPaymentPct: preset.maxLtv != null ? 100 - preset.maxLtv : prev.downPaymentPct,
+        maxAgeAtMaturity: preset.maxAge != null ? preset.maxAge : prev.maxAgeAtMaturity,
+        debtThreshold: preset.debtThreshold != null ? preset.debtThreshold : prev.debtThreshold
       };
     });
   };
