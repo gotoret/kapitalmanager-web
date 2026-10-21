@@ -26,7 +26,8 @@
   body { font-family: 'Inter', system-ui, sans-serif; }
 
   @media print {
-    @page { margin: 15mm; size: A4; }
+    @page { margin: 14mm 14mm 18mm 14mm; size: A4; @bottom-right { content: "Página " counter(page); font-family: Inter, Arial, sans-serif; font-size: 8px; color: #64748b; } }
+    .pr-root, .pr-root * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { background: white !important; color: black !important; }
     .no-print { display: none !important; }
     .print-only { display: block !important; }
@@ -51,6 +52,35 @@
   }
   .print-only { display: none; }
   .print-report-header { display: none; }
+  /* ---------- FICHA DE VIABILIDAD (informe imprimible) ---------- */
+  .pr-root { font-family: 'Inter', Arial, sans-serif; color: #17304f; font-size: 10px; line-height: 1.35; }
+  .pr-title { font-size: 24px; font-weight: 800; color: #17304f; letter-spacing: .2px; margin: 0; text-transform: uppercase; }
+  .pr-subtitle { font-size: 10px; color: #64748b; margin: 4px 0 14px; }
+  .pr-kpis { display: flex; margin-bottom: 14px; border: 1px solid #d5dfeb; }
+  .pr-kpi { flex: 1; padding: 8px 10px; background: #eef3f8; border-right: 1px solid #d5dfeb; }
+  .pr-kpi:last-child { border-right: 0; }
+  .pr-kpi.green { background: #e8f4ec; }
+  .pr-kpi-label { font-size: 8px; text-transform: uppercase; color: #64748b; letter-spacing: .3px; }
+  .pr-kpi-value { font-size: 16px; font-weight: 800; color: #17304f; margin-top: 3px; }
+  .pr-kpi.green .pr-kpi-value { color: #1a6b3c; }
+  .pr-kpi-sub { font-size: 8px; color: #64748b; margin-top: 2px; }
+  .pr-section { margin-bottom: 10px; }
+  .pr-bar { background: #17304f; color: #fff; font-weight: 800; font-size: 11px; text-transform: uppercase; padding: 5px 9px; letter-spacing: .3px; }
+  .pr-table { width: 100%; border-collapse: collapse; font-size: 9px; }
+  .pr-table th { background: #2563a8; color: #fff; text-align: left; font-weight: 700; padding: 4px 8px; }
+  .pr-table td { padding: 3.5px 8px; border-bottom: 1px solid #d5dfeb; vertical-align: top; }
+  .pr-table tr:nth-child(even) td { background: #f4f7fb; }
+  .pr-table tr.bold td { font-weight: 800; }
+  .pr-table td.num, .pr-table th.num { text-align: left; }
+  .pr-note { font-size: 8px; color: #64748b; margin: 4px 2px 0; }
+  .pr-alert { background: #fff4dc; border: 1px solid #e8c27a; color: #7a4b00; padding: 6px 9px; font-size: 9px; margin: 8px 0 2px; }
+  .pr-alert.ok { background: #e8f4ec; border-color: #9fd1b0; color: #1a6b3c; }
+  .pr-alert.bad { background: #fde8e8; border-color: #e5a3a3; color: #8a1c1c; }
+  .pr-concl { width: 100%; border-collapse: collapse; font-size: 9px; border: 1px solid #d5dfeb; }
+  .pr-concl td { padding: 5px 8px; border-bottom: 1px solid #d5dfeb; vertical-align: top; }
+  .pr-concl td:first-child { width: 22%; background: #e3edf6; font-weight: 800; }
+  .pr-footer { position: fixed; left: 0; bottom: -12mm; width: 70%; border-top: 1px solid #cbd5e1; padding-top: 3px; font-size: 7.5px; color: #64748b; text-transform: uppercase; }
+  .pr-page2 { page-break-before: always; }
 </style>
 </head>
 <body class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 transition-colors">
@@ -1669,118 +1699,252 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
 const PrintReport = ({ state, result, maxPrice, mode }) => {
   const isBankMode = mode === 'bank';
   const props = result.properties;
-  const buyerName = (id) => state.buyers.find(b => b.id === id)?.name || '—';
+  const m = state.mortgage;
   const now = new Date().toLocaleString('es-ES');
+  const nfE0 = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0, useGrouping: 'always' });
+  const nfE2 = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' });
+  const eur = (n) => (n == null || isNaN(n)) ? '—' : nfE0.format(n);
+  const eur2 = (n) => (n == null || isNaN(n)) ? '—' : nfE2.format(n);
+  const neg = (n) => '−' + fmtEur(Math.abs(n));
+  const num = (n) => new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 }).format(n);
+  const label = (t) => t ? String(t).charAt(0).toUpperCase() + String(t).slice(1).replace(/_/g, ' ') : '—';
+  const years1 = (months) => new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1 }).format(months / 12);
+
+  const ageOf = (b) => b.birthDate ? Math.floor((Date.now() - new Date(b.birthDate).getTime()) / (365.25 * 24 * 3600 * 1000)) : null;
+
+  /* --- amortizaciones y escenarios --- */
+  const active = (result.amortizations || []).filter(a => a.amount > 0 && a.mode !== 'none');
+  const hasAm = active.length > 0;
+  const lastMonth = hasAm ? Math.max(...active.map(a => a.month)) : 0;
+  const mkSched = (mode) => buildMortgageSchedule(result.mortgageAmount, result.tin, result.months, active.map(a => ({ ...a, mode })));
+  const payAfter = (sched) => { const r = sched.find(x => x.month === lastMonth + 1) || sched[sched.length - 1]; return r ? r.payment : 0; };
+  let scen = null;
+  if (hasAm) {
+    const sC = mkSched('reduce_cuota'), sP = mkSched('reduce_plazo');
+    const balAfter = (sC.find(x => x.month === lastMonth && x.isAmortization) || {}).balance;
+    scen = {
+      sC, sP, balAfter,
+      payC: payAfter(sC), payP: payAfter(sP),
+      monthsC: sC.length, monthsP: sP.length,
+      intC: totalInterest(sC), intP: totalInterest(sP),
+    };
+  }
+  const income = result.computableIncome;
+  const soldMortPay = (props.toSellAfter || []).reduce((s, p) => s + (Number(p.mortgageMonthlyPayment) || 0), 0);
+  const debtOtherAfter = Math.max(0, result.existingDebt - soldMortPay);
+  const ratioOf = (tot) => income > 0 ? fmtPct(tot / income) : '—';
+
+  /* --- piezas de maquetación --- */
+  const Section = ({ title, children }) => (
+    <div className="pr-section print-avoid-break"><div className="pr-bar">{title}</div>{children}</div>
+  );
+  const Table = ({ head, rows }) => (
+    <table className="pr-table">
+      <thead><tr>{head.map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
+      <tbody>{rows.map((r, i) => {
+        const cells = Array.isArray(r) ? r : r.cells;
+        return <tr key={i} className={!Array.isArray(r) && r.bold ? 'bold' : ''}>{cells.map((c, j) => <td key={j}>{c}</td>)}</tr>;
+      })}</tbody>
+    </table>
+  );
+
+  /* --- 1. Compradores --- */
+  const B = state.buyers;
+  const sum = (f) => B.reduce((s, b) => s + (Number(f(b)) || 0), 0);
+  const compOf = (b) => (b.monthlyNetSalary||0) * ((b.computablePct?.salary ?? 100)/100)
+    + (b.variableIncome||0) * ((b.computablePct?.variable ?? 80)/100)
+    + (b.rentalIncome||0) * ((b.computablePct?.rental ?? 80)/100)
+    + (b.otherIncome||0) * ((b.computablePct?.other ?? 100)/100);
+  const buyerHead = ['Dato', ...B.map((b, i) => B.length > 1 ? `Comprador ${i + 1}` : 'Comprador'), 'Total / observación'];
+  const buyerRows = [
+    ['Edad', ...B.map(b => { const a = ageOf(b); return a != null ? `${a} años` : '—'; }), '—'],
+    ['Situación laboral', ...B.map(b => label(b.employmentType)), '—'],
+    ['Nómina neta mensual', ...B.map(b => eur(b.monthlyNetSalary)), `${eur(sum(b => b.monthlyNetSalary))}/mes`],
+  ];
+  if (sum(b => b.variableIncome) > 0) buyerRows.push(['Ingresos variables', ...B.map(b => eur(b.variableIncome)), `${eur(sum(b => b.variableIncome))}/mes`]);
+  if (sum(b => (b.rentalIncome||0) + (b.otherIncome||0)) > 0) buyerRows.push(['Alquileres y otros ingresos', ...B.map(b => eur((b.rentalIncome||0) + (b.otherIncome||0))), `${eur(sum(b => (b.rentalIncome||0) + (b.otherIncome||0)))}/mes`]);
+  buyerRows.push(['Ingresos netos anuales', ...B.map(b => eur(((b.monthlyNetSalary||0)+(b.variableIncome||0)+(b.rentalIncome||0)+(b.otherIncome||0)) * 12)), `${eur(result.rawIncome - props.rentalGrossMonthly > 0 ? (result.rawIncome - props.rentalGrossMonthly) * 12 : 0)}/año`]);
+  buyerRows.push({ bold: true, cells: ['Ingresos computables mensuales', ...B.map(b => eur(compOf(b))), `${eur(result.salaryIncomeComputable)}/mes (según % computable)`] });
+
+  /* --- 2. Patrimonio --- */
+  const otherWealth = Math.max(0, computeTotalPatrimony(result.aggregateSavings) - result.liquidSavings);
+  const assetRows = props.all.map(p => {
+    const rent = p.grossRent > 0 ? `; alquiler ${eur(p.grossRent)}/mes` : '';
+    const pay = (Number(p.mortgageMonthlyPayment) || 0) > 0 ? `; cuota ${eur(p.mortgageMonthlyPayment)}/mes` : '';
+    const treat = p.planToSell === 'keep' ? `Se conserva${rent}${pay}`
+      : p.planToSell === 'sell_before' ? `Se vende antes de la compra; se estiman ${eur(p.saleNet)} netos`
+      : `Se vende tras la compra (mes ${Number(p.sellMonth) || 24}); se estiman ${eur(p.saleNet)} netos`;
+    return [p.alias || 'Inmueble', eur(p.marketValue), eur(p.mortgageOutstanding || 0), treat];
+  });
+  assetRows.push(['Ahorros líquidos', eur(result.liquidSavings), '—',
+    `Se destinan a entrada y gastos de compra${result.baseAvailable < result.liquidSavings ? ` (aportan ${eur(result.baseAvailable)})` : ''}${result.emergencyReserve > 0 ? `; reserva objetivo ${eur(result.emergencyReserve)}` : ''}`]);
+  if (otherWealth > 0) assetRows.push(['Otro patrimonio no líquido', eur(otherWealth), '—', 'No se considera para la compra']);
+  const rentNotes = props.keptProperties.filter(p => p.grossRent > 0).map(p => {
+    const pay = Number(p.mortgageMonthlyPayment) || 0;
+    return `${p.alias}: alquiler bruto ${eur(p.grossRent)} − cuota ${eur(pay)} = ${eur(p.grossRent - pay)}/mes antes de comunidad, seguro, mantenimiento, vacantes e impuestos. El banco podría computar solo una parte del alquiler (${p.computablePct} % configurado).`;
+  });
+
+  /* --- 3. Compra y financiación --- */
+  const pr = state.property;
+  const itpPct = state.tax.mode === 'manual' ? state.tax.itpPct : (ITP_BY_REGION[pr.region] ?? 8);
+  const buyRows = [[pr.isNew ? 'Precio de vivienda nueva' : 'Precio de vivienda usada', eur(pr.price), (pr.agencyFee || 0) > 0 ? `Comisión de agencia ${eur(pr.agencyFee)}` : 'Sin comisión de agencia']];
+  if (result.anexos > 0) buyRows.push(['Anexos (garaje y trastero)', eur(result.anexos), 'Incluidos en el precio total']);
+  if (pr.isNew) {
+    buyRows.push(['IVA estimado', eur(result.acq.iva), 'Verificar tipo aplicable']);
+    buyRows.push(['AJD estimado', eur(result.acq.ajd), 'Verificar tipo aplicable']);
+  } else {
+    buyRows.push([`ITP estimado (${num(itpPct)} %)`, eur(result.acq.itp), `${pr.region}; verificar aplicación`]);
+  }
+  buyRows.push(['Otros gastos estimados', eur(result.acq.fixed + result.acq.other + result.acq.agency), 'Notaría, registro, tasación, gestoría y otros']);
+  if ((result.reforms || 0) + (result.furniture || 0) > 0) buyRows.push(['Reformas y mobiliario', eur((result.reforms || 0) + (result.furniture || 0)), 'Según datos introducidos']);
+  if (result.openingFee > 0) buyRows.push(['Comisión de apertura', eur(result.openingFee), `${num(m.openingFeePct)} % de la hipoteca`]);
+  const totalOp = result.totalPrice + result.acq.total + (result.reforms || 0) + (result.furniture || 0) + result.openingFee;
+  buyRows.push({ bold: true, cells: ['Coste total de la operación', eur(totalOp), 'Precio + impuestos + gastos'] });
+  buyRows.push(['Hipoteca solicitada', neg(result.mortgageAmount), `${fmtPct(result.effectiveLtv, 0)} del precio de compra${result.ltvCapped ? ' (limitada por LTV máximo)' : ''}`]);
+  buyRows.push(['Aportación necesaria', eur(result.totalNeeded), `Entrada ${eur(result.downPayment)} + gastos ${eur(result.totalNeeded - result.downPayment)}`]);
+  buyRows.push(['Ahorros disponibles', eur(result.available), result.liquidFromSalesBefore > 0 ? `Incluye ${eur(result.liquidFromSalesBefore)} de ventas previas` : 'Ahorros líquidos que se aportan']);
+  buyRows.push({ bold: true, cells: [result.liquidityGapWithoutReserve > 0 ? 'Déficit de liquidez' : 'Excedente de liquidez', eur(-result.liquidityGapWithoutReserve), result.emergencyReserve > 0 ? (result.liquidityGap > 0 ? `No cubre la reserva de ${eur(result.emergencyReserve)}` : `Cubre además la reserva de ${eur(result.emergencyReserve)}`) : 'Sin reserva configurada'] });
+  const typeLabel = { fijo: 'fijo', variable: 'variable', mixto: 'mixto' }[m.type] || m.type;
+
+  /* --- 4. Viabilidad antes de vender --- */
+  const viaRows = [['Ingresos computables (nóminas y otros)', eur2(result.salaryIncomeComputable)]];
+  if (result.rentalIncomeComputable > 0) viaRows.push(['Alquileres computables', eur2(result.rentalIncomeComputable)]);
+  viaRows.push({ bold: true, cells: ['Total ingresos computables', eur2(income)] });
+  if (result.existingDebtDebtsOnly > 0) viaRows.push(['Cuotas de deudas declaradas', eur2(result.existingDebtDebtsOnly)]);
+  if (result.existingDebtPropertiesOnly > 0) viaRows.push(['Hipotecas de inmuebles existentes', eur2(result.existingDebtPropertiesOnly)]);
+  viaRows.push(['Nueva hipoteca', eur2(result.payment)]);
+  viaRows.push({ bold: true, cells: ['Total de cuotas hipotecarias y deudas', eur2(result.totalDebtAfter)] });
+  viaRows.push(['Disponible tras cuotas (antes de otros gastos)', eur2(income - result.totalDebtAfter)]);
+  viaRows.push(['Gastos familiares', eur2(result.monthlyExpenses)]);
+  if (result.linkedAnnual > 0) viaRows.push(['Productos vinculados (mensualizado)', eur2(result.linkedAnnual / 12)]);
+  viaRows.push({ bold: true, cells: ['Margen mensual libre', eur2(result.monthlyMargin)] });
+  viaRows.push({ bold: true, cells: ['Endeudamiento sobre ingresos computables', `${fmtPct(result.ratioAfter)} (umbral ${fmtPct(result.threshold)})`] });
+
+  const alertCls = result.verdict === 'viable' ? 'ok' : result.verdict === 'not_viable' ? 'bad' : '';
+  const alertTitle = result.verdict === 'viable' ? 'RESULTADO' : 'ALERTA';
+  const ltvNote = result.effectiveLtv > 0.8 ? `financiación inicial del ${fmtPct(result.effectiveLtv, 0)}` : '';
+  const alertText = [result.verdictLabel + '.', ltvNote ? ltvNote.charAt(0).toUpperCase() + ltvNote.slice(1) + '.' : '', ...result.reasons.map(r => r + '.'), 'La aceptación depende de la tasación, política del banco, solvencia completa y posibles garantías adicionales.'].filter(Boolean).join(' ');
+
+  /* --- 5. Venta y amortización --- */
+  const saleBlocks = active.map(a => {
+    const prop = props.all.find(p => p.id === a.propertyId) || {};
+    const sellPrice = Number(prop.sellPrice) || Number(prop.marketValue) || 0;
+    const costs = (Number(prop.sellCosts) || 0) + (Number(prop.sellTaxes) || 0);
+    const debt = Number(prop.mortgageOutstanding) || 0;
+    const row = (scen ? scen.sC : []).find(x => x.month === a.month && x.isAmortization);
+    const rows = [
+      ['Precio de venta estimado', eur(sellPrice)],
+      ['Gastos e impuestos estimados de venta', neg(costs)],
+    ];
+    if (debt > 0) rows.push(['Hipoteca pendiente que se cancela', neg(debt)]);
+    rows.push({ bold: true, cells: ['Neto estimado de la venta', eur(a.totalNet)] });
+    if (a.keep > 0) rows.push(['Reserva que se conserva', neg(a.keep)]);
+    rows.push({ bold: true, cells: [`Amortización anticipada (${a.mode === 'reduce_plazo' ? 'reducir plazo' : 'reducir cuota'})`, eur(a.amount)] });
+    if (row) {
+      rows.push([`Capital de la nueva hipoteca tras ${a.month} cuotas`, `${eur(row.balance + a.amount)} aprox.`]);
+      rows.push([`Capital pendiente tras amortizar ${eur(a.amount)}`, `${eur(row.balance)} aprox.`]);
+    }
+    return { alias: prop.alias || a.propertyAlias || 'Inmueble', month: a.month, rows };
+  });
+
+  /* --- 6. Comparativa --- */
+  let compRows = [];
+  if (hasAm) {
+    const totB = result.existingDebt + result.basePayment;
+    const totC = debtOtherAfter + scen.payC;
+    const totP = debtOtherAfter + scen.payP;
+    compRows = [
+      ['Cuota nueva hipoteca', `${eur2(result.basePayment)}/mes`, `${eur2(scen.payC)}/mes aprox.`, `${eur2(scen.payP)}/mes aprox.`],
+      ['Plazo total', `${years1(result.months)} años`, `≈ ${years1(scen.monthsC)} años`, `≈ ${years1(scen.monthsP)} años`],
+      ['Intereses totales', eur(result.baseInterestTotal), eur(scen.intC), eur(scen.intP)],
+      ['Cuotas hipotecarias totales', `${eur2(totB)}/mes`, `${eur2(totC)}/mes`, `${eur2(totP)}/mes`],
+      ['Disponible tras cuotas', `${eur2(income - totB)}/mes`, `${eur2(income - totC)}/mes`, `${eur2(income - totP)}/mes`],
+      ['Endeudamiento sobre ingresos', ratioOf(totB), ratioOf(totC), ratioOf(totP)],
+      ['Reserva de efectivo de la venta', eur(0), eur(result.totalKeptFromSales), eur(result.totalKeptFromSales)],
+    ];
+  }
+
+  /* --- 7. Conclusión --- */
+  const risks = [];
+  if (ltvNote) risks.push(ltvNote);
+  result.reasons.forEach(r => risks.push(r));
+  const riskText = risks.length ? (risks.join('; ').replace(/^./, c => c.toUpperCase()) + '. Debe evaluarse si pueden sostener la operación y si el banco la acepta.') : 'Sin alertas relevantes con los criterios configurados; conviene revisar el margen ante subidas de tipos.';
+  const afterText = hasAm
+    ? `${scen.payC && income > 0 && (debtOtherAfter + scen.payC) / income <= result.threshold ? 'Escenario favorable' : 'Escenario ajustado'}: deuda nueva aproximada de ${eur(scen.balAfter)}, cuota estimada de ${eur2(scen.payC)}/mes si se reduce cuota${result.totalKeptFromSales > 0 ? ` y reserva de ${eur(result.totalKeptFromSales)}` : ''}.`
+    : `Sin ventas posteriores previstas: cuota de ${eur2(result.payment)}/mes y endeudamiento del ${fmtPct(result.ratioAfter)}.`;
+  const opDesc = 'Compra de vivienda' + ((props.toSellAfter || []).length > 0 ? ' con venta posterior de otro inmueble y amortización anticipada' : (props.toSellBefore || []).length > 0 ? ' con venta previa de otro inmueble' : '');
+  const page2Title = hasAm ? 'Resultado, venta y amortización' : 'Resultado y viabilidad';
+  const sec = (n) => `${n}. `;
 
   return (
-    <div className="print-only">
-      <div className="print-report-header" style={{ marginBottom: 20, paddingBottom: 12, borderBottom: '2px solid #4f46e5' }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 22, fontWeight: 700, color: '#4f46e5' }}>
-            {isBankMode ? 'Informe de Viabilidad — Documentación para el banco' : 'Informe completo de viabilidad hipotecaria'}
-          </div>
-          <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
-            Generado el {now} · Simulador de Viabilidad Hipotecaria España
-          </div>
-        </div>
+    <div className="print-only pr-root">
+      <div className="pr-footer">Simulación orientativa · No constituye oferta ni aprobación bancaria</div>
+
+      <h1 className="pr-title">Ficha de viabilidad hipotecaria</h1>
+      <div className="pr-subtitle">{state.simName ? state.simName + ' · ' : ''}{opDesc} · {isBankMode ? 'Documentación para el banco' : 'Informe completo'} · Generado el {now}</div>
+
+      <div className="pr-kpis">
+        <div className="pr-kpi"><div className="pr-kpi-label">Precio de compra</div><div className="pr-kpi-value">{eur(result.totalPrice)}</div></div>
+        <div className="pr-kpi"><div className="pr-kpi-label">Hipoteca inicial</div><div className="pr-kpi-value">{eur(result.mortgageAmount)}</div><div className="pr-kpi-sub">{fmtPct(result.effectiveLtv, 0)} del precio</div></div>
+        <div className="pr-kpi"><div className="pr-kpi-label">Cuota inicial</div><div className="pr-kpi-value">{eur2(result.basePayment)}</div><div className="pr-kpi-sub">TIN {typeLabel} {num(result.tin)} % · {years1(result.months)} años</div></div>
+        {hasAm
+          ? <div className="pr-kpi green"><div className="pr-kpi-label">Cuota tras amortizar</div><div className="pr-kpi-value">{eur2(scen.payC)}</div><div className="pr-kpi-sub">Amortización de {eur(result.totalAmortizedBySales)}</div></div>
+          : <div className="pr-kpi green"><div className="pr-kpi-label">Endeudamiento</div><div className="pr-kpi-value">{fmtPct(result.ratioAfter)}</div><div className="pr-kpi-sub">Umbral {fmtPct(result.threshold)}</div></div>}
       </div>
 
-      <div style={{ fontSize: 10, color: '#92400e', background: '#fef3c7', padding: 8, borderRadius: 6, marginBottom: 16 }}>
-        <strong>AVISO:</strong> Esta simulación es orientativa y no constituye asesoramiento financiero ni fiscal.
-      </div>
+      <Section title={sec(1) + 'Compradores e ingresos'}>
+        <Table head={buyerHead} rows={buyerRows} />
+      </Section>
 
-      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>1. Compradores e ingresos</h2>
-      {state.buyers.map((b, i) => {
-        const age = b.birthDate ? Math.floor((Date.now() - new Date(b.birthDate).getTime()) / (365.25*24*3600*1000)) : null;
-        const salaryComp = (b.monthlyNetSalary||0) * ((b.computablePct?.salary ?? 100)/100);
-        const varComp = (b.variableIncome||0) * ((b.computablePct?.variable ?? 80)/100);
-        const rentComp = (b.rentalIncome||0) * ((b.computablePct?.rental ?? 80)/100);
-        const otherComp = (b.otherIncome||0) * ((b.computablePct?.other ?? 100)/100);
-        const totalComp = salaryComp + varComp + rentComp + otherComp;
-        return (
-          <div key={b.id} className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>Comprador {i+1} · {b.name} {age !== null ? `· ${age} años` : ''}</div>
-            <table style={{ width: '100%', fontSize: 11 }}>
-              <tbody>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Comunidad:</td><td>{b.region}</td><td style={{ color: '#64748b', padding: 2 }}>Empleo:</td><td>{b.employmentType}</td></tr>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Nómina neta:</td><td>{fmtEur(b.monthlyNetSalary)}</td><td style={{ color: '#64748b', padding: 2 }}>Computable ({b.computablePct.salary}%):</td><td>{fmtEur(salaryComp)}</td></tr>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Variables:</td><td>{fmtEur(b.variableIncome)}</td><td style={{ color: '#64748b', padding: 2 }}>Computable ({b.computablePct.variable}%):</td><td>{fmtEur(varComp)}</td></tr>
-                <tr style={{ fontWeight: 700, borderTop: '1px solid #cbd5e1' }}>
-                  <td colSpan={3} style={{ padding: 4, textAlign: 'right' }}>Total computable mensual:</td>
-                  <td style={{ padding: 4 }}>{fmtEur(totalComp)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        );
-      })}
+      <Section title={sec(2) + 'Patrimonio e inmuebles existentes'}>
+        <Table head={['Activo', 'Valor estimado', 'Deuda pendiente', 'Tratamiento en el escenario']} rows={assetRows} />
+        {rentNotes.map((t, i) => <div key={i} className="pr-note">{t}</div>)}
+      </Section>
 
-      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>2. Ahorros y patrimonio</h2>
-      {state.buyers.map((b, i) => {
-        const s = b.savings;
-        return (
-          <div key={b.id} className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>Comprador {i+1} · {b.name}</div>
-            <table style={{ width: '100%', fontSize: 11 }}>
-              <tbody>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Líquido total:</td><td style={{ padding: 2, fontWeight: 700 }}>{fmtEur(computeLiquidSavings(s))}</td><td style={{ color: '#64748b', padding: 2 }}>Aporta:</td><td style={{ padding: 2 }}>{fmtEur(s.willingToUse)}</td></tr>
-                <tr><td style={{ color: '#64748b', padding: 2 }}>Total patrimonio:</td><td style={{ padding: 2 }}>{fmtEur(computeTotalPatrimony(s))}</td><td style={{ color: '#64748b', padding: 2 }}>Reserva:</td><td style={{ padding: 2 }}>{fmtEur(s.emergencyReserve)}</td></tr>
-              </tbody>
-            </table>
-          </div>
-        );
-      })}
+      <Section title={sec(3) + 'Compra y financiación inicial'}>
+        <Table head={['Concepto', 'Importe', 'Detalle']} rows={buyRows} />
+        <div className="pr-note">Condiciones simuladas: tipo {typeLabel} {num(result.tin)} % TIN · plazo {years1(result.months)} años · sistema francés · comisión de apertura {num(m.openingFeePct || 0)} % · productos vinculados {eur(result.linkedAnnual)}/año. Cuota calculada: {eur2(result.basePayment)}/mes.</div>
+      </Section>
 
-      {props.all.length > 0 && (
-        <>
-          <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>3. Inmuebles en propiedad</h2>
-          {props.all.map((p, i) => (
-            <div key={p.id} className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-              <div style={{ fontWeight: 700, marginBottom: 4 }}>{p.alias} {p.ownerships.length > 1 ? `· Copropiedad (${p.ownerships.length})` : ''}</div>
-              <div>Valor: {fmtEur(p.marketValue)} · Hipoteca pendiente: {fmtEur(p.mortgageOutstanding)} · Patrimonio neto: {fmtEur(p.netEquity)} · Plan: {p.planToSell === 'keep' ? 'Conservar' : p.planToSell === 'sell_before' ? 'Vender antes' : 'Vender después'}</div>
-              {p.planToSell === 'keep' && p.grossRent > 0 && <div>Renta bruta: {fmtEur(p.grossRent)}/mes · Computable ({p.computablePct}%): {fmtEur(p.netComputableRent)}/mes</div>}
-            </div>
-          ))}
-        </>
-      )}
+      <div className="pr-page2">
+        <h1 className="pr-title">{page2Title}</h1>
+        <div className="pr-subtitle">Continuación del mismo supuesto · importes estimados y redondeados</div>
 
-      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>{props.all.length > 0 ? '4.' : '3.'} Deudas y gastos</h2>
-      <div className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-        <div>Total cuotas de deudas declaradas: {fmtEur(result.existingDebtDebtsOnly)}/mes</div>
-        <div>Total cuotas de hipotecas de inmuebles: {fmtEur(result.existingDebtPropertiesOnly)}/mes</div>
-        <div>Total gastos familiares: {fmtEur(result.monthlyExpenses)}/mes</div>
-      </div>
+        <Section title={sec(4) + (hasAm ? 'Viabilidad antes de vender' : 'Viabilidad')}>
+          <Table head={['Indicador mensual', 'Importe']} rows={viaRows} />
+          {!isBankMode && <div className={'pr-alert ' + alertCls}><strong>{alertTitle}:</strong> {alertText}</div>}
+        </Section>
 
-      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>{props.all.length > 0 ? '5.' : '4.'} Inmueble a comprar</h2>
-      <div className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-        <div>Precio de compraventa: {fmtEur(state.property.price)} · Total con anexos: {fmtEur(result.totalPrice)}</div>
-        <div>Gastos de adquisición: {fmtEur(result.acq.total + (result.reforms||0) + (result.furniture||0))}</div>
-      </div>
+        {hasAm && (
+          <Section title={sec(5) + 'Venta y amortización'}>
+            {saleBlocks.map((blk, i) => (
+              <div key={i} style={{ marginBottom: i < saleBlocks.length - 1 ? 6 : 0 }}>
+                {saleBlocks.length > 1 && <div style={{ fontWeight: 800, fontSize: 9, margin: '4px 8px 2px' }}>{blk.alias} · mes {blk.month}</div>}
+                <Table head={['Concepto', 'Importe']} rows={blk.rows} />
+              </div>
+            ))}
+          </Section>
+        )}
 
-      {!isBankMode && (
-        <>
-          <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>6. Hipoteca (análisis interno)</h2>
-          <div className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-            <div>Aportación inicial: {fmtEur(result.downPayment)} · Hipoteca: {fmtEur(result.mortgageAmount)} · LTV: {fmtPct(result.effectiveLtv, 0)}</div>
-            <div>Cuota: {fmtEur2(result.payment)}/mes · Plazo efectivo: {result.effectiveMonths} meses · Intereses totales: {fmtEur(result.interestTotal)}</div>
-          </div>
-        </>
-      )}
+        {hasAm && !isBankMode && (
+          <Section title={sec(6) + 'Comparativa después de la amortización'}>
+            <Table head={['Indicador', 'Antes de vender', 'Después: reducir cuota', 'Después: reducir plazo']} rows={compRows} />
+            <div className="pr-note">La opción de reducir cuota mejora el flujo mensual; reducir plazo suele ahorrar más intereses futuros, pero mantiene una cuota alta. El banco debe confirmar cómo tramitar la amortización y si existe comisión.</div>
+          </Section>
+        )}
 
-      <h2 style={{ fontSize: 14, fontWeight: 700, marginTop: 16, marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>Análisis de viabilidad</h2>
-      <div className="print-avoid-break" style={{ marginBottom: 12, padding: 10, border: '2px solid ' + (result.verdict === 'viable' ? '#059669' : result.verdict === 'not_viable' ? '#dc2626' : '#d97706'), borderRadius: 6, fontSize: 11 }}>
-        <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>Veredicto: {result.verdictLabel}</div>
-        {result.reasons.length > 0 && <ul style={{ marginLeft: 16 }}>{result.reasons.map((r,i) => <li key={i}>{r}</li>)}</ul>}
-      </div>
+        {!isBankMode && (
+          <Section title={sec(hasAm ? 7 : 5) + 'Conclusión orientativa'}>
+            <table className="pr-concl"><tbody>
+              <tr><td>{hasAm ? 'Tras la venta y amortización' : 'Resultado'}</td><td>{afterText}</td></tr>
+              <tr><td>Riesgo principal</td><td>{riskText}</td></tr>
+              <tr><td>Precio máximo viable</td><td>{maxPrice && maxPrice.all > 0 ? `Con los datos actuales, el precio máximo estimado es de ${eur(maxPrice.all)}.` : '—'}</td></tr>
+              <tr><td>Verificaciones</td><td>Impuestos y gastos reales, tasación, ingresos computables del alquiler, precio y plazo de venta, política de financiación y posibles garantías.</td></tr>
+            </tbody></table>
+          </Section>
+        )}
 
-      <div className="print-avoid-break" style={{ marginBottom: 12, padding: 8, border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11 }}>
-        <div>Ingresos computables: {fmtEur(result.computableIncome)}/mes · Ratio de endeudamiento: {fmtPct(result.ratioAfter)}</div>
-        <div>Total necesario: {fmtEur(result.totalRequired)} · Disponible: {fmtEur(result.available)} · Diferencia: {fmtEur(-result.liquidityGap)}</div>
-        <div>Precio máximo viable: {fmtEur(maxPrice.all)}</div>
-      </div>
-
-      <div style={{ marginTop: 24, paddingTop: 8, borderTop: '1px solid #cbd5e1', fontSize: 9, color: '#64748b', textAlign: 'center' }}>
-        Simulador de Viabilidad Hipotecaria · España · Informe generado el {now}
+        <div className="pr-note" style={{ marginTop: 8 }}>Nota metodológica: simulación ilustrativa, no constituye oferta, aprobación bancaria ni asesoramiento fiscal. Los gastos de venta y compra son supuestos. {hasAm ? 'La cuota posterior es una estimación calculada con el capital pendiente, el tipo indicado y el plazo restante; puede variar por fecha efectiva, redondeos y condiciones contractuales.' : 'La cuota es una estimación; puede variar por condiciones contractuales.'}</div>
       </div>
     </div>
   );
