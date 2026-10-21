@@ -26,7 +26,7 @@
   body { font-family: 'Inter', system-ui, sans-serif; }
 
   @media print {
-    @page { margin: 14mm 14mm 18mm 14mm; size: A4; @bottom-right { content: "Página " counter(page); font-family: Inter, Arial, sans-serif; font-size: 8px; color: #64748b; } }
+    @page { margin: 16mm 14mm 20mm 14mm; size: A4; @bottom-right { content: "Página " counter(page); font-family: Inter, Arial, sans-serif; font-size: 8px; color: #64748b; } }
     .pr-root, .pr-root * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { background: white !important; color: black !important; }
     .no-print { display: none !important; }
@@ -53,7 +53,10 @@
   .print-only { display: none; }
   .print-report-header { display: none; }
   /* ---------- FICHA DE VIABILIDAD (informe imprimible) ---------- */
-  .pr-root { font-family: 'Inter', Arial, sans-serif; color: #17304f; font-size: 10px; line-height: 1.35; }
+  .pr-root { font-family: 'Inter', Arial, sans-serif; color: #17304f; font-size: 10px; line-height: 1.35; padding: 0 9mm; box-sizing: border-box; }
+  .pr-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 8px; color: #475569; margin: 4px 8px 0; }
+  .pr-legend i { display: inline-block; width: 9px; height: 9px; margin-right: 4px; vertical-align: -1px; }
+  .pr-chart { display: block; width: 100%; height: auto; }
   .pr-title { font-size: 24px; font-weight: 800; color: #17304f; letter-spacing: .2px; margin: 0; text-transform: uppercase; }
   .pr-subtitle { font-size: 10px; color: #64748b; margin: 4px 0 14px; }
   .pr-kpis { display: flex; margin-bottom: 14px; border: 1px solid #d5dfeb; }
@@ -79,7 +82,7 @@
   .pr-concl { width: 100%; border-collapse: collapse; font-size: 9px; border: 1px solid #d5dfeb; }
   .pr-concl td { padding: 5px 8px; border-bottom: 1px solid #d5dfeb; vertical-align: top; }
   .pr-concl td:first-child { width: 22%; background: #e3edf6; font-weight: 800; }
-  .pr-footer { position: fixed; left: 0; bottom: -12mm; width: 70%; border-top: 1px solid #cbd5e1; padding-top: 3px; font-size: 7.5px; color: #64748b; text-transform: uppercase; }
+  .pr-footer { position: fixed; left: 9mm; bottom: -13mm; width: 62%; border-top: 1px solid #cbd5e1; padding-top: 3px; font-size: 7.5px; color: #64748b; text-transform: uppercase; }
   .pr-page2 { page-break-before: always; }
 </style>
 </head>
@@ -1696,6 +1699,102 @@ const MortgageSection = ({ mortgage, setMortgage, property, amortizations }) => 
 /* =========================================================
    INFORME IMPRIMIBLE
 ========================================================= */
+/* ---------- GRÁFICOS SVG PARA EL INFORME ---------- */
+const prNiceMax = (v) => {
+  if (!(v > 0)) return 1;
+  const pow = Math.pow(10, Math.floor(Math.log10(v)));
+  const f = v / pow;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * pow;
+};
+const prFmtAxis = (v) => v >= 1000 ? new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1, useGrouping: 'always' }).format(v / 1000) + ' k€' : Math.round(v) + ' €';
+const prFrame = (xMax, yMax, W, H, M) => {
+  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+  const X = (x) => M.l + (xMax > 0 ? x / xMax : 0) * iw;
+  const Y = (y) => M.t + ih - (yMax > 0 ? y / yMax : 0) * ih;
+  const xStep = xMax > 30 ? 10 : xMax > 12 ? 5 : xMax > 6 ? 2 : 1;
+  const xt = []; for (let x = 0; x <= xMax + 0.001; x += xStep) xt.push(x);
+  const yt = []; for (let i = 0; i <= 5; i++) yt.push(yMax * i / 5);
+  const grid = (
+    <g>
+      {yt.map((v, i) => (
+        <g key={'y' + i}>
+          <line x1={M.l} x2={W - M.r} y1={Y(v)} y2={Y(v)} stroke="#d5dfeb" strokeWidth="0.6" />
+          <text x={M.l - 5} y={Y(v) + 3} fontSize="8" fill="#64748b" textAnchor="end">{prFmtAxis(v)}</text>
+        </g>
+      ))}
+      {xt.map((v, i) => (
+        <text key={'x' + i} x={X(v)} y={H - M.b + 12} fontSize="8" fill="#64748b" textAnchor="middle">{v === 0 ? 'Año 0' : 'Año ' + v}</text>
+      ))}
+      <line x1={M.l} x2={W - M.r} y1={Y(0)} y2={Y(0)} stroke="#17304f" strokeWidth="0.8" />
+    </g>
+  );
+  return { X, Y, grid, iw, ih };
+};
+const PrLineChart = ({ series, xMax, yMax, events = [], height = 210 }) => {
+  const W = 700, H = height, M = { l: 52, r: 12, t: 16, b: 22 };
+  const { X, Y, grid } = prFrame(xMax, yMax, W, H, M);
+  return (
+    <svg className="pr-chart" viewBox={`0 0 ${W} ${H}`} xmlns="http://www.w3.org/2000/svg" fontFamily="Inter, Arial, sans-serif">
+      {grid}
+      {events.map((e, i) => (
+        <g key={'e' + i}>
+          <line x1={X(e.x)} x2={X(e.x)} y1={M.t} y2={Y(0)} stroke="#c2410c" strokeWidth="0.9" strokeDasharray="4 3" />
+          <text x={Math.min(X(e.x) + 4, W - 150)} y={M.t + 8} fontSize="8" fill="#c2410c" fontWeight="700">{e.label}</text>
+        </g>
+      ))}
+      {series.map((sr, i) => (
+        <path key={i} d={sr.points.map((pt, j) => (j ? 'L' : 'M') + X(pt[0]).toFixed(1) + ' ' + Y(pt[1]).toFixed(1)).join(' ')}
+          fill="none" stroke={sr.color} strokeWidth={sr.width || 1.8} strokeDasharray={sr.dash || undefined} strokeLinejoin="round" />
+      ))}
+    </svg>
+  );
+};
+const PrStackedBars = ({ years, yMax, events = [], height = 210 }) => {
+  const W = 700, H = height, M = { l: 52, r: 12, t: 16, b: 22 };
+  const xMax = years.length;
+  const { X, Y, grid, iw } = prFrame(xMax, yMax, W, H, M);
+  const bw = Math.max(2, iw / Math.max(1, years.length) * 0.68);
+  return (
+    <svg className="pr-chart" viewBox={`0 0 ${W} ${H}`} xmlns="http://www.w3.org/2000/svg" fontFamily="Inter, Arial, sans-serif">
+      {grid}
+      {years.map((d, i) => {
+        const cx = X(i + 0.5);
+        const hp = Y(0) - Y(d.principal), hi = Y(0) - Y(d.interest);
+        return (
+          <g key={i}>
+            <rect x={cx - bw / 2} y={Y(0) - hp} width={bw} height={Math.max(0, hp)} fill="#2563a8" />
+            <rect x={cx - bw / 2} y={Y(0) - hp - hi} width={bw} height={Math.max(0, hi)} fill="#e0a43a" />
+          </g>
+        );
+      })}
+      {events.map((e, i) => (
+        <g key={'e' + i}>
+          <line x1={X(e.x)} x2={X(e.x)} y1={M.t} y2={Y(0)} stroke="#c2410c" strokeWidth="0.9" strokeDasharray="4 3" />
+          <text x={Math.min(X(e.x) + 4, W - 150)} y={M.t + 8} fontSize="8" fill="#c2410c" fontWeight="700">{e.label}</text>
+        </g>
+      ))}
+    </svg>
+  );
+};
+const prYearly = (schedule) => {
+  const out = [];
+  schedule.forEach(r => {
+    const y = Math.floor((r.month - 1) / 12);
+    if (!out[y]) out[y] = { principal: 0, interest: 0, payments: 0 };
+    out[y].principal += Math.max(0, r.principal - (r.amortizationAmount || 0));
+    out[y].interest += r.interest;
+    out[y].payments += r.payment;
+  });
+  return out.map(d => d || { principal: 0, interest: 0, payments: 0 });
+};
+const prBalancePoints = (schedule, amount) => {
+  const pts = [[0, amount]];
+  schedule.forEach(r => pts.push([r.month / 12, r.balance]));
+  if (schedule.length && schedule[schedule.length - 1].balance > 0.5) return pts;
+  pts.push([schedule.length / 12, 0]);
+  return pts;
+};
+
 const PrintReport = ({ state, result, maxPrice, mode }) => {
   const isBankMode = mode === 'bank';
   const props = result.properties;
@@ -1876,6 +1975,30 @@ const PrintReport = ({ state, result, maxPrice, mode }) => {
   const page2Title = hasAm ? 'Resultado, venta y amortización' : 'Resultado y viabilidad';
   const sec = (n) => `${n}. `;
 
+  /* --- gráficos --- */
+  const baseSched = result.baseSchedule;
+  const curSched = result.schedule;
+  const maxYears = Math.ceil(Math.max(baseSched.length, curSched.length, scen ? scen.sC.length : 0) / 12);
+  const amEvents = active.map(a => ({ x: a.month / 12, label: `Amortización ${eur(a.amount)} (año ${years1(a.month)})` }));
+  const balSeries = hasAm ? [
+    { name: 'Sin amortizar', color: '#94a3b8', width: 1.6, dash: '5 3', points: prBalancePoints(baseSched, result.mortgageAmount) },
+    { name: 'Reduciendo cuota', color: '#2563a8', width: 2, points: prBalancePoints(scen.sC, result.mortgageAmount) },
+    { name: 'Reduciendo plazo', color: '#1a8a4b', width: 2, points: prBalancePoints(scen.sP, result.mortgageAmount) },
+  ] : [
+    { name: 'Deuda pendiente', color: '#2563a8', width: 2, points: prBalancePoints(curSched, result.mortgageAmount) },
+  ];
+  const yearsData = prYearly(curSched);
+  const barMax = prNiceMax(Math.max(1, ...yearsData.map(d => d.principal + d.interest)));
+  const payMax = prNiceMax(Math.max(1, result.basePayment, hasAm ? scen.payC : 0, hasAm ? scen.payP : 0) * 1.05);
+  const paySeries = hasAm ? [
+    { name: 'Sin amortizar', color: '#94a3b8', width: 1.6, dash: '5 3', points: baseSched.map(r => [r.month / 12, r.payment]) },
+    { name: 'Reduciendo cuota', color: '#2563a8', width: 2, points: scen.sC.map(r => [r.month / 12, r.payment]) },
+    { name: 'Reduciendo plazo', color: '#1a8a4b', width: 2, points: scen.sP.map(r => [r.month / 12, r.payment]) },
+  ] : null;
+  const chartN = isBankMode ? (hasAm ? 6 : 5) : (hasAm ? 8 : 6);
+  const totalInt = result.interestTotal;
+  const totalPaid = curSched.reduce((sum, r) => sum + r.payment, 0) + active.reduce((sum, a) => sum + a.amount, 0);
+
   return (
     <div className="print-only pr-root">
       <div className="pr-footer">Simulación orientativa · No constituye oferta ni aprobación bancaria</div>
@@ -1941,6 +2064,36 @@ const PrintReport = ({ state, result, maxPrice, mode }) => {
               <tr><td>Precio máximo viable</td><td>{maxPrice && maxPrice.all > 0 ? `Con los datos actuales, el precio máximo estimado es de ${eur(maxPrice.all)}.` : '—'}</td></tr>
               <tr><td>Verificaciones</td><td>Impuestos y gastos reales, tasación, ingresos computables del alquiler, precio y plazo de venta, política de financiación y posibles garantías.</td></tr>
             </tbody></table>
+          </Section>
+        )}
+
+      </div>
+
+      <div className="pr-page2">
+        <h1 className="pr-title">Gráficos de amortización y pagos</h1>
+        <div className="pr-subtitle">Evolución de la deuda y reparto de los pagos · calendario según los datos de la simulación</div>
+
+        <Section title={sec(chartN) + 'Evolución de la deuda pendiente'}>
+          <div style={{ padding: '6px 0 0' }}>
+            <PrLineChart series={balSeries} xMax={maxYears} yMax={prNiceMax(result.mortgageAmount)} events={amEvents} />
+            <div className="pr-legend">{balSeries.map((sr, i) => <span key={i}><i style={{ background: sr.color }} />{sr.name}</span>)}{hasAm && <span><i style={{ background: '#c2410c' }} />Venta y amortización anticipada</span>}</div>
+          </div>
+        </Section>
+
+        <Section title={sec(chartN + 1) + 'Pagos anuales: capital e intereses'}>
+          <div style={{ padding: '6px 0 0' }}>
+            <PrStackedBars years={yearsData} yMax={barMax} events={amEvents} />
+            <div className="pr-legend"><span><i style={{ background: '#2563a8' }} />Capital amortizado en cuotas</span><span><i style={{ background: '#e0a43a' }} />Intereses</span>{hasAm && <span><i style={{ background: '#c2410c' }} />Año de la amortización anticipada (no incluida en las barras)</span>}</div>
+            <div className="pr-note">Intereses totales con este calendario: {eur(totalInt)} · Total pagado (cuotas{hasAm ? ' + amortización' : ''}): {eur(totalPaid)}.</div>
+          </div>
+        </Section>
+
+        {hasAm && (
+          <Section title={sec(chartN + 2) + 'Cuota mensual según el escenario'}>
+            <div style={{ padding: '6px 0 0' }}>
+              <PrLineChart series={paySeries} xMax={maxYears} yMax={payMax} events={amEvents} height={190} />
+              <div className="pr-legend">{paySeries.map((sr, i) => <span key={i}><i style={{ background: sr.color }} />{sr.name}</span>)}</div>
+            </div>
           </Section>
         )}
 
