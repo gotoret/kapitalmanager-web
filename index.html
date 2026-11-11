@@ -132,6 +132,23 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="js/config/constants.js"></script>
 <script src="js/config/state.js"></script>
+<script>
+// ── Claves API por defecto (fuentes de precios) ──
+// Se usan si el usuario no ha puesto la suya en ⚙️ Fuentes de precios.
+const DEFAULT_PRICE_KEYS = {
+  fmpKey:          'EcDpEf093hTNAr38idTl2csm5iRVCFWL',
+  twelveDataKey:   'f66152b1c9df4e6393981e5f8f3a310e',
+  fcsapiKey:       'aoa6pjEfMsobgXWj5vN0Z',
+  finnhubKey:      'd9ceh89r01qmn1jh8u10d9ceh89r01qmn1jh8u1g',
+  marketstackKey:  '70b66f27aff7b8219eb7b54ab4e7923c',
+  alphaVantageKey: 'N8RPFKANMLOGFA5F',
+};
+function applyDefaultPriceKeys() {
+  if (typeof state === 'undefined') return;
+  Object.keys(DEFAULT_PRICE_KEYS).forEach(k => { if (!state[k]) state[k] = DEFAULT_PRICE_KEYS[k]; });
+}
+applyDefaultPriceKeys();
+</script>
 <script src="js/utils/date.utils.js"></script>
 <script src="js/utils/helpers.js"></script>
 <script>
@@ -1866,9 +1883,11 @@ async function fetchQuotesAlphaVantage(tickers) {
 
 async function fetchQuotesEdgeFunction(tickers) {
   try {
-    const { data, error } = await supabaseClient.functions.invoke('quotes', {
-      body: { tickers }
-    });
+    // Timeout de 6 s: si la función tarda, se pasa enseguida al siguiente proveedor.
+    const { data, error } = await Promise.race([
+      supabaseClient.functions.invoke('quotes', { body: { tickers } }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout edge function quotes')), 6000))
+    ]);
     if (error || !data?.prices) return null;
     if (data.changes) {
       Object.entries(data.changes).forEach(([t, chg]) => { state.priceChangeCache[t] = chg; });
@@ -2002,13 +2021,15 @@ async function fetchTickerProfile(ticker) {
 
 async function fetchFXRates() {
   const pairs = ["EURUSD=X","EURGBP=X","EURJPY=X","EURCHF=X","EURCAD=X","EURAUD=X"];
-  for (const pair of pairs) {
-    const price = await fetchWithProxy(PROXIES, pair);
-    if (price) {
-      const cur = pair.replace("EUR","").replace("=X","");
-      state.fxCache[cur] = +(1/price).toFixed(6);
-    }
-  }
+  await Promise.all(pairs.map(async (pair) => {
+    try {
+      const price = await fetchWithProxy(PROXIES, pair);
+      if (price) {
+        const cur = pair.replace("EUR","").replace("=X","");
+        state.fxCache[cur] = +(1/price).toFixed(6);
+      }
+    } catch (e) { /* se mantiene el último tipo conocido */ }
+  }));
   state.fxCache["EUR"] = 1.0;
 }
 
@@ -2033,7 +2054,7 @@ function openPriceSourcesModal() {
     ${fields.map(f => `
       <div class="field">
         <label>${f.label} <a href="https://${f.url}" target="_blank" style="font-size:11px;color:#2563eb">(conseguir clave gratis)</a></label>
-        <input id="m-src-${f.key}" class="inp" placeholder="Pega aquí tu API key (opcional)" value="${esc(state[f.key]||'')}">
+        <input id="m-src-${f.key}" class="inp" placeholder="Usando clave por defecto (opcional: pon la tuya)" value="${esc(state[f.key] && state[f.key]!==DEFAULT_PRICE_KEYS[f.key] ? state[f.key] : '')}">
       </div>`).join('')}
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
       <button class="btn-gray" onclick="closeModal()">Cancelar</button>
@@ -2049,7 +2070,7 @@ function savePriceSourcesModal() {
   ];
   fields.forEach(([key, lsKey]) => {
     const val = (document.getElementById(`m-src-${key}`)?.value || '').trim();
-    state[key] = val;
+    state[key] = val || DEFAULT_PRICE_KEYS[key] || '';
     ls.set(lsKey, val);
   });
   closeModal();
@@ -2058,6 +2079,7 @@ function savePriceSourcesModal() {
 
 let pricesInFlight = false;
 async function refreshPrices(isAutoRetry) {
+  applyDefaultPriceKeys();
   if (pricesInFlight) {
     if (isAutoRetry) { if (autoRetryTimer) clearTimeout(autoRetryTimer); autoRetryTimer = setTimeout(() => refreshPrices(true), 5000); }
     return;
@@ -2067,14 +2089,21 @@ async function refreshPrices(isAutoRetry) {
   if (btn && !isAutoRetry) { btn.disabled = true; btn.textContent = "⏳ Actualizando..."; }
   try {
 
-  await fetchFXRates();
+  // Los tipos de cambio se piden a la vez que los precios (antes bloqueaban todo).
+  const fxPromise = fetchFXRates().catch(() => {});
 
   let liveCount = 0;
   const tickers = state.positions.map(p=>p.ticker);
+  // Si ya hay precios en caché, se avisa de que se está actualizando (la tabla ya los muestra).
+  const _tag0 = document.getElementById("price-mode-tag");
+  if (_tag0 && tickers.some(t => state.priceCache[t] != null) && !state.livePrices) {
+    _tag0.textContent = "⏳ Mostrando últimos precios · actualizando...";
+  }
   const missing = tickers.filter(t => state.priceCache[t] == null);
   const already = tickers.filter(t => state.priceCache[t] != null);
   let remaining = [...missing, ...already];
 
+  let _paintedEarly = false;
   const PROVIDER_CHAIN = [
     fetchQuotesEdgeFunction,
     fetchQuotesFMP,
@@ -2095,6 +2124,11 @@ async function refreshPrices(isAutoRetry) {
         if (result[t] != null) { state.priceCache[t] = result[t]; liveCount++; }
       });
       remaining = remaining.filter(t => result[t] == null);
+      // Pintado progresivo: con el primer proveedor que responde se actualiza la pantalla ya.
+      if (!_paintedEarly) {
+        _paintedEarly = true;
+        fxPromise.then(() => { try { renderHeader(); renderActiveTab(); } catch (e) {} });
+      }
     }
   }
 
@@ -2111,6 +2145,7 @@ async function refreshPrices(isAutoRetry) {
     if (i + CONCURRENCY < remaining.length) await sleep(150);
   }
 
+  await fxPromise;
   state.livePrices = liveCount > 0;
   state.pricesStale = liveCount < tickers.length;
   state.lastUpdate = new Date();
@@ -7768,7 +7803,7 @@ function renderValuation() {
       </div>
       ${fmpKey
         ? `<div style="font-size:11px;color:#15803d">Clave activa — las gráficas de Crecimiento, Calidad, Balance y Valoración funcionan para cualquier empresa.</div>
-           <button onclick="state.fmpKey='';ls.set('km_fmp_key','');renderActiveTab()" style="margin-top:6px;font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;text-decoration:underline">Cambiar clave</button>`
+           <button onclick="state.fmpKey=DEFAULT_PRICE_KEYS.fmpKey;ls.set('km_fmp_key','');renderActiveTab()" style="margin-top:6px;font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;text-decoration:underline">Cambiar clave</button>`
         : `<div style="font-size:11px;color:#92400e;margin-bottom:8px;line-height:1.5">
              Las gráficas de análisis necesitan una API key gratuita de <strong>Financial Modeling Prep</strong>.<br>
              1. Regístrate gratis en <strong>financialmodelingprep.com/developer</strong><br>
