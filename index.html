@@ -3688,6 +3688,7 @@ function renderPortfolio() {
 // localStorage, así no se repite la descarga en cada sesión.
 const SPARK_TTL_MS = 24 * 60 * 60 * 1000;
 const SPARK_MAX_PTS = 40;
+const SPARK_FAIL_TTL_MS = 2 * 60 * 1000; // un fallo se reintenta a los 2 min, no a las 24 h
 
 function getSparkCache() {
   if (!state._sparkCache) state._sparkCache = ls.get("km_spark_cache", {});
@@ -3760,7 +3761,7 @@ async function loadSparklines() {
   const now = Date.now();
   const pending = state.positions
     .map(p => p.ticker)
-    .filter(t => t && (!cache[t] || (now - (cache[t].ts||0)) > SPARK_TTL_MS));
+    .filter(t => t && (!cache[t] || (now - (cache[t].ts||0)) > (cache[t].pts ? SPARK_TTL_MS : SPARK_FAIL_TTL_MS)));
   if (!pending.length) return;
 
   state._sparkLoading = true;
