@@ -1881,6 +1881,22 @@ async function fetchQuotesAlphaVantage(tickers) {
   return Object.keys(map).length ? map : null;
 }
 
+// Histórico de Yahoo servido por tu Edge Function (sin proxies de terceros).
+// Devuelve el JSON de Yahoo ({chart:{result:[...]}}) o null si falla.
+async function fetchYahooChartJSON(ticker, range, interval, events) {
+  try {
+    const { data, error } = await Promise.race([
+      supabaseClient.functions.invoke('quotes', { body: { action: 'chart', ticker, range, interval, events: !!events } }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout chart')), 10000))
+    ]);
+    if (error || !data?.chart?.result?.[0]) return null;
+    return data;
+  } catch (e) {
+    console.warn('fetchYahooChartJSON falló, se usarán proxies →', ticker, e?.message || e);
+    return null;
+  }
+}
+
 async function fetchQuotesEdgeFunction(tickers) {
   try {
     // Timeout de 6 s: si la función tarda, se pasa enseguida al siguiente proveedor.
@@ -2020,7 +2036,14 @@ async function fetchTickerProfile(ticker) {
 }
 
 async function fetchFXRates() {
-  const pairs = ["EURUSD=X","EURGBP=X","EURJPY=X","EURCHF=X","EURCAD=X","EURAUD=X"];
+  const allPairs = ["EURUSD=X","EURGBP=X","EURJPY=X","EURCHF=X","EURCAD=X","EURAUD=X"];
+  try {
+    const q = await fetchQuotesEdgeFunction(allPairs);
+    if (q) allPairs.forEach(pair => {
+      if (q[pair]) state.fxCache[pair.replace("EUR","").replace("=X","")] = +(1/q[pair]).toFixed(6);
+    });
+  } catch (e) {}
+  const pairs = allPairs.filter(pair => !state.fxCache[pair.replace("EUR","").replace("=X","")]);
   await Promise.all(pairs.map(async (pair) => {
     try {
       const price = await fetchWithProxy(PROXIES, pair);
@@ -3706,7 +3729,13 @@ async function fetchSparkline(ticker) {
     return closes;
   };
   try {
-    const closes = await Promise.any(proxies.map(attempt));
+    let closes = null;
+    const edgeJson = await fetchYahooChartJSON(ticker, "1y", "1wk");
+    if (edgeJson) {
+      const c = (edgeJson.chart.result[0]?.indicators?.quote?.[0]?.close || []).filter(v => v != null);
+      if (c.length >= 3) closes = c;
+    }
+    if (!closes) closes = await Promise.any(proxies.map(attempt));
     let pts = closes.map(v => isGBp ? v/100 : v);
     // Se reduce el número de puntos: para una miniatura de 70px más
     // resolución no aporta nada y multiplica lo que ocupa en localStorage.
@@ -3788,11 +3817,17 @@ async function fetchPriceHistory(ticker, range="1y") {
     `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${range}`)}`,
   ];
 
-  for (const url of histProxies) {
+  for (const url of ['edge', ...histProxies]) {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-      if (!res.ok) continue;
-      const json = await res.json();
+      let json;
+      if (url === 'edge') {
+        json = await fetchYahooChartJSON(ticker, range, interval);
+        if (!json) continue;
+      } else {
+        const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+        if (!res.ok) continue;
+        json = await res.json();
+      }
       const result = json?.chart?.result?.[0];
       if (!result) continue;
       const timestamps = result.timestamp || [];
@@ -6251,11 +6286,17 @@ async function fetchPriceAndDividendHistory(ticker) {
     `https://corsproxy.io/?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
     `https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=max&interval=1mo&events=div,split`)}`,
   ];
-  for (const url of proxies) {
+  for (const url of ['edge', ...proxies]) {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(7000) });
-      if (!res.ok) continue;
-      const json = await res.json();
+      let json;
+      if (url === 'edge') {
+        json = await fetchYahooChartJSON(ticker, "max", "1mo", true);
+        if (!json) continue;
+      } else {
+        const res = await fetch(url, { signal: AbortSignal.timeout(7000) });
+        if (!res.ok) continue;
+        json = await res.json();
+      }
       const result = json?.chart?.result?.[0];
       if (!result) continue;
       const timestamps = result.timestamp || [];
