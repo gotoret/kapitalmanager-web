@@ -4870,6 +4870,14 @@ function renderDividends() {
     </tr>
   `).join("");
 
+  // Garantiza que cada dividendo tenga un id único (datos antiguos/importados pueden no tenerlo o repetirlo)
+  { const _seen = new Set(); let _fixed = false;
+    state.dividends.forEach(d => {
+      if (d.id == null || _seen.has(String(d.id))) { d.id = uid(); _fixed = true; }
+      _seen.add(String(d.id));
+    });
+    if (_fixed) save(); }
+
   let histRowsData = state.dividends.map(d => {
     let dateStr = safeDateStr(d.date);
     return { id: d.id, date: dateStr, ticker: d.ticker, shares: d.shares, amount: d.amount,
@@ -4888,7 +4896,7 @@ function renderDividends() {
     <td>${fmtEUR(d.amount)}</td>
     <td style="font-weight:600;color:#b45309">${fmtEUR(d.total)}</td>
     <td style="color:#64748b">${esc(d.notes)}</td>
-    <td><button class="btn-edit-sm" onclick="editDividend(${d.id})">✏️</button><button class="btn-danger-sm" onclick="deleteDividend(${d.id})">✕</button></td>
+    <td><button class="btn-edit-sm" onclick="editDividend('${d.id}')">✏️</button><button class="btn-danger-sm" onclick="deleteDividend('${d.id}')">✕</button></td>
   </tr>`).join("");
 
   const esperadosClass = `table-collapsible ${state._divEsperadosCollapsed ? 'collapsed' : ''}`;
@@ -4974,7 +4982,7 @@ function renderDividends() {
   </div>`;
 }
   
-function deleteDividend(id){ state.dividends=state.dividends.filter(d=>d.id!==id); save(); renderActiveTab(); }
+function deleteDividend(id){ state.dividends=state.dividends.filter(d=>String(d.id)!==String(id)); save(); renderActiveTab(); }
   
 // ─────────────────────────────────────────────
 // TAB 3 — TRANSACCIONES
@@ -9022,7 +9030,21 @@ async function importDividendsCsv(event) {
 }
 
 function openAddDividend() { openDividendModal(null); }
-function editDividend(id) { openDividendModal(state.dividends.find(x=>x.id===id)); }
+function editDividend(id) {
+  const d = state.dividends.find(x => String(x.id) === String(id));
+  if (!d) { alert("No se encontró ese dividendo. Recarga la página e inténtalo de nuevo."); return; }
+  try { openDividendModal(d); }
+  catch (e) { console.error("editDividend:", e); alert("No se pudo abrir el editor: " + (e?.message || e)); }
+}
+
+// La fecha del dividendo puede venir como texto, Date o número: se normaliza a YYYY-MM-DD
+function _divDateInput(v) {
+  try {
+    if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+    const dt = v ? new Date(v) : new Date();
+    return (isNaN(dt) ? new Date() : dt).toISOString().slice(0, 10);
+  } catch (e) { return new Date().toISOString().slice(0, 10); }
+}
 
 function openDividendModal(d) {
   const tickerSet = new Set(state.positions.map(p=>p.ticker));
@@ -9037,13 +9059,13 @@ function openDividendModal(d) {
       <div class="field"><label>Importe por acción</label><input id="m-d-amount" type="number" step="0.0001" class="inp" value="${amount}" oninput="updateDivTotal()"></div>
       <div class="field"><label>Nº acciones</label><input id="m-d-shares" type="number" class="inp" value="${shares}" oninput="updateDivTotal()"></div>
     </div>
-    <div class="field"><label>Fecha de cobro</label><input id="m-d-date" type="date" class="inp" value="${(d?.date||new Date().toISOString()).slice(0,10)}"></div>
+    <div class="field"><label>Fecha de cobro</label><input id="m-d-date" type="date" class="inp" value="${_divDateInput(d?.date)}"></div>
     <div class="field"><label>Gastos de custodia/admin (€, opcional)</label><input id="m-d-fee" type="number" step="0.01" class="inp" value="${fee}"></div>
     <div class="field"><label>Notas</label><input id="m-d-notes" class="inp" placeholder="Opcional..." value="${esc(d?.notes||"")}"></div>
     <div id="div-total-preview" style="margin-top:8px;padding:10px;background:#fef9c3;border-radius:8px;font-size:12px;color:#b45309;font-weight:600">Total cobrado: ${d?fmtEUR(amount*shares):"—"}</div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
       <button class="btn-gray" onclick="closeModal()">Cancelar</button>
-      <button class="btn" onclick="saveDividendModal(${d?d.id:"null"})">💾 ${d?"Guardar cambios":"Guardar"}</button>
+      <button class="btn" onclick="saveDividendModal(${d?`'${d.id}'`:"null"})">💾 ${d?"Guardar cambios":"Guardar"}</button>
     </div>`);
   if (!d) updateDivShares(true);
 }
@@ -9075,7 +9097,8 @@ function saveDividendModal(id) {
   const pos = state.positions.find(p=>p.ticker===ticker);
   const currency = pos?.currency||"EUR";
   const isoDate = new Date(date).toISOString();
-  const d = id ? state.dividends.find(x=>x.id===id) : null;
+  const d = id ? state.dividends.find(x=>String(x.id)===String(id)) : null;
+  if (id && !d) { alert("No se encontró el dividendo a modificar."); return; }
   if (d) Object.assign(d, {ticker,amount,shares,notes,fee,currency,date:isoDate});
   else state.dividends.unshift({id:uid(),ticker,amount,shares,notes,fee,currency,date:isoDate});
   save(); closeModal(); renderActiveTab();
