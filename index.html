@@ -407,11 +407,15 @@ function renderBitcoin() {
   const chg = b.change != null ? `<div style="font-size:11px;font-weight:600;color:${btcColor(b.change)}">${b.change >= 0 ? '▲' : '▼'} ${Math.abs(b.change).toFixed(2)}% 24h</div>` : '';
   const pnlC = tot.pnl != null ? btcColor(tot.pnl) : '#64748b';
 
+  const ps = btcPriceStats();
+  const dsub = x => x ? `<div style="font-size:11px;color:#64748b">${esc(String(x.date).slice(0, 10))}</div>` : '';
   const kpi = (label, val, color, sub) => `<div class="metric-card" style="border-left:3px solid ${color};min-width:0;overflow:hidden"><div class="metric-label">${label}</div><div class="metric-value" style="color:${color}">${val}</div>${sub || ''}</div>`;
   const kpis = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px">
     ${kpi('INVERTIDO', fmtEUR(tot.inv), '#2563eb')}
     ${kpi('BITCOIN ACUMULADO', `₿ ${btcQty(tot.qty)}`, '#f7931a')}
-    ${kpi('PRECIO MEDIO COMPRA', tot.avg != null ? fmtEUR(tot.avg) : '—', '#64748b')}
+    ${kpi('COMPRA MÁS BAJA', ps ? fmtEUR(+ps.min.price) : '—', '#16a34a', dsub(ps?.min))}
+    ${kpi('PRECIO MEDIO', tot.avg != null ? fmtEUR(tot.avg) : '—', '#64748b', tot.avg != null ? '<div style="font-size:11px;color:#64748b">ponderado por importe</div>' : '')}
+    ${kpi('COMPRA MÁS ALTA', ps ? fmtEUR(+ps.max.price) : '—', '#b45309', dsub(ps?.max))}
     ${kpi('PRECIO ACTUAL', priceTxt, '#f7931a', chg)}
     ${kpi('VALOR CARTERA', tot.value != null ? fmtEUR(tot.value) : '—', '#0284c7')}
     ${kpi('GANANCIA/PÉRDIDA', tot.pnl != null ? `${btcSign(tot.pnl)}${fmtEUR(Math.abs(tot.pnl))}` : '—', pnlC,
@@ -446,6 +450,7 @@ function renderBitcoin() {
       <span style="flex:1"></span>
       <span style="font-size:11px;color:#94a3b8">${b.ts ? 'Precio actualizado ' + new Date(b.ts).toLocaleTimeString('es-ES') : ''}</span>
       <button class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="btcRefresh()" title="Actualizar precio y gráfica">↻</button>
+      <button class="btn-gray" style="padding:5px 12px;font-size:12px" onclick="openBtcImportModal()">📥 Importar CSV</button>
       <button class="btn" style="padding:5px 12px;font-size:12px" onclick="openBtcModal()">➕ Añadir compra</button>
     </div>
     ${kpis}
@@ -517,6 +522,244 @@ function deleteBtcBuy(id) {
   if (!confirm('¿Eliminar esta compra de Bitcoin?')) return;
   state.btc = state.btc.filter(v => String(v.id) !== String(id));
   save(); renderActiveTab();
+}
+
+// ── precio más bajo / más alto de compra ──
+function btcPriceStats() {
+  const b = (state.btc || []).filter(x => +x.price > 0);
+  if (!b.length) return null;
+  let min = b[0], max = b[0];
+  b.forEach(x => { if (+x.price < +min.price) min = x; if (+x.price > +max.price) max = x; });
+  return { min, max };
+}
+
+// ═════════ IMPORTAR COMPRAS DESDE CSV ═════════
+const BTC_COLS = {
+  date:  ['fecha', 'date', 'datetime', 'time', 'timestamp', 'fechadeadquisicion', 'fechacompra', 'fechaoperacion', 'fechayhora', 'utctime', 'createdat', 'created', 'dia', 'day'],
+  eur:   ['importe', 'importeinvertido', 'importeeur', 'invertido', 'eur', 'total', 'totaleur', 'amounteur', 'spent', 'cost', 'coste', 'gasto', 'fiat', 'subtotal', 'importetotal'],
+  price: ['precio', 'preciocompra', 'preciodecompra', 'precioeur', 'preciobtc', 'price', 'priceeur', 'pricebtc', 'rate', 'cotizacion', 'unitprice', 'spotprice', 'preciounitario'],
+  btc:   ['btc', 'bitcoin', 'cantidad', 'cantidadbtc', 'btcadquiridos', 'btcadquirido', 'quantity', 'qty', 'amountbtc', 'units', 'unidades', 'amount', 'cantidadcomprada'],
+  type:  ['tipo', 'type', 'side', 'operacion', 'operation', 'transactiontype', 'accion', 'transaccion'],
+  asset: ['asset', 'activo', 'coin', 'crypto', 'criptomoneda', 'cripto'],
+  notes: ['notas', 'nota', 'notes', 'note', 'comentario', 'comentarios', 'descripcion', 'exchange', 'plataforma']
+};
+const BTC_COLS_CONTAINS = {
+  date: ['date', 'fecha', 'time', 'hora'],
+  eur: ['total', 'importe', 'invert', 'cost', 'coste', 'spent'],
+  price: ['price', 'precio', 'cotiz'],
+  btc: ['quantity', 'cantidad', 'amount', 'btc', 'bitcoin'],
+  type: ['type', 'tipo', 'side'],
+  notes: ['notes', 'notas', 'nota', 'comment']
+};
+const btcNorm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+
+function btcSplitCSV(text) {
+  text = text.replace(/^\uFEFF/, '');
+  const first = text.split(/\r?\n/).find(l => l.trim()) || '';
+  const cnt = ch => first.split(ch).length - 1;
+  const best = [';', '\t', ','].map(d => [d, cnt(d)]).sort((a, b) => b[1] - a[1])[0];
+  const D = best[1] > 0 ? best[0] : ';';
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true;
+    else if (c === D) { row.push(cur); cur = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(cur); cur = '';
+      if (row.some(x => x.trim() !== '')) rows.push(row);
+      row = [];
+    } else cur += c;
+  }
+  row.push(cur);
+  if (row.some(x => x.trim() !== '')) rows.push(row);
+  return rows;
+}
+
+function btcDetectColumns(header) {
+  const norm = header.map(btcNorm), map = {}, used = new Set();
+  for (const key of Object.keys(BTC_COLS)) {
+    for (const alias of BTC_COLS[key]) {
+      const i = norm.indexOf(alias);
+      if (i >= 0 && !used.has(i)) { map[key] = i; used.add(i); break; }
+    }
+  }
+  for (const key of Object.keys(BTC_COLS_CONTAINS)) {
+    if (map[key] != null) continue;
+    const i = norm.findIndex((n, idx) => !used.has(idx) && BTC_COLS_CONTAINS[key].some(w => n.includes(w)) &&
+      !(key === 'price' && /currency|moneda|divisa/.test(n)));
+    if (i >= 0) { map[key] = i; used.add(i); }
+  }
+  return map;
+}
+
+function btcParseDate(s) {
+  s = String(s ?? '').trim();
+  if (!s) return null;
+  let y, m, d, mt;
+  if ((mt = /^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/.exec(s))) { y = +mt[1]; m = +mt[2]; d = +mt[3]; }
+  else if ((mt = /^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})/.exec(s))) {
+    d = +mt[1]; m = +mt[2]; y = +mt[3];
+    if (y < 100) y += 2000;
+    if (m > 12 && d <= 12) [d, m] = [m, d];
+  } else return null;
+  if (m < 1 || m > 12 || d < 1 || d > 31 || y < 2009) return null;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCMonth() !== m - 1) return null;
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+// Acepta 1.234,56 · 1,234.56 · 60000 · "€ 1 234,5" · 0,00123 …
+function btcParseNum(v, kind) {
+  let s = String(v ?? '').replace(/[^\d.,\-]/g, '');
+  if (!s) return null;
+  const neg = s.startsWith('-');
+  s = s.replace(/-/g, '');
+  if (!s) return null;
+  const lc = s.lastIndexOf(','), ld = s.lastIndexOf('.');
+  if (lc >= 0 && ld >= 0) s = lc > ld ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+  else if (lc >= 0) {
+    const parts = s.split(',');
+    if (parts.length > 2 || (kind !== 'btc' && /^\d{1,3},\d{3}$/.test(s) && parts[0] !== '0')) s = s.replace(/,/g, '');
+    else s = s.replace(',', '.');
+  } else if (ld >= 0) {
+    const parts = s.split('.');
+    if (parts.length > 2 || (kind !== 'btc' && /^\d{1,3}\.\d{3}$/.test(s) && parts[0] !== '0')) s = s.replace(/\./g, '');
+  }
+  const n = parseFloat(s);
+  return isFinite(n) ? (neg ? -n : n) : null;
+}
+
+function btcBuildBuys(rows) {
+  const out = { buys: [], skipped: [], map: {}, header: [] };
+  if (!rows.length) { out.error = 'El archivo está vacío.'; return out; }
+  let header = rows[0], map = btcDetectColumns(header), data = rows.slice(1), firstLine = 2;
+  const nVals = ['eur', 'price', 'btc'].filter(k => map[k] != null).length;
+  if (map.date == null || nVals < 2) {
+    if (btcParseDate(rows[0][0]) && rows[0].length >= 3) { map = { date: 0, eur: 1, price: 2, notes: 3 }; header = []; data = rows; firstLine = 1; }
+    else { out.error = 'No reconozco las columnas. Necesito una fecha y al menos dos de estas tres: importe en €, precio de compra y cantidad de BTC.'; return out; }
+  }
+  out.map = map; out.header = header;
+  const SELL = /venta|vend|sell|sale|retir|withdraw|envi|send/;
+  const get = (r, k) => (map[k] != null ? r[map[k]] : undefined);
+  data.forEach((r, i) => {
+    const line = i + firstLine;
+    const skip = why => out.skipped.push(`Línea ${line}: ${why}`);
+    if (map.asset != null && !/^(btc|bitcoin|xbt|xxbt)$/.test(btcNorm(get(r, 'asset')))) return skip('no es Bitcoin');
+    if (map.type != null && SELL.test(btcNorm(get(r, 'type')))) return skip('es una venta/retirada');
+    const date = btcParseDate(get(r, 'date'));
+    if (!date) return skip('fecha no válida');
+    let eur = btcParseNum(get(r, 'eur'), 'eur'), price = btcParseNum(get(r, 'price'), 'price'), btc = btcParseNum(get(r, 'btc'), 'btc');
+    if ([eur, price, btc].some(v => v != null && v < 0)) return skip('importe negativo (venta)');
+    if (!(btc > 0)) btc = null;
+    if (!(eur > 0)) eur = null;
+    if (!(price > 0)) price = null;
+    if (eur != null && price != null && btc == null) btc = eur / price;
+    else if (eur != null && btc != null && price == null) price = eur / btc;
+    else if (price != null && btc != null && eur == null) eur = price * btc;
+    if (eur == null || price == null || btc == null) return skip('faltan datos (importe, precio o cantidad)');
+    out.buys.push({ date, eur: +eur.toFixed(2), price: +price.toFixed(2), btc, notes: String(get(r, 'notes') ?? '').trim() });
+  });
+  return out;
+}
+
+const btcBuyKey = x => `${String(x.date).slice(0, 10)}|${(+x.eur).toFixed(2)}|${(+x.price).toFixed(2)}`;
+
+function openBtcImportModal() {
+  openModal(`
+    <h3>📥 Importar compras desde CSV</h3>
+    <div style="font-size:12px;line-height:1.55;color:#475569">
+      Sirve un CSV de tu exchange o uno hecho por ti. Las columnas se detectan solas (en español o inglés), con <b>fecha</b> y al menos dos de estas tres:
+      <ul style="margin:6px 0 6px 18px;padding:0">
+        <li><b>importe</b> invertido en € (<i>importe, total, amount EUR…</i>)</li>
+        <li><b>precio</b> de compra (<i>precio, price…</i>)</li>
+        <li><b>cantidad</b> de BTC (<i>btc, cantidad, quantity…</i>)</li>
+      </ul>
+      Si falta una, se calcula con las otras dos. Las ventas y otras monedas se omiten. Separador «;» «,» o tabulador, y decimales con punto o coma.
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+      <button class="btn" onclick="btcPickCsv()">📂 Elegir archivo CSV</button>
+      <button class="btn-gray" onclick="btcDownloadTemplate()">⬇️ Descargar plantilla</button>
+      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
+    </div>`);
+}
+
+function btcDownloadTemplate() {
+  const csv = 'fecha;importe;precio;notas\n2024-03-10;1000;60000;Ejemplo de compra\n2025-01-15;500;90000;\n';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'plantilla_bitcoin.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+function btcPickCsv() {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.csv,.txt,text/csv,text/plain';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    try {
+      const buf = await f.arrayBuffer();
+      let text;
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+      catch (e) { text = new TextDecoder('windows-1252').decode(buf); }
+      btcShowImportPreview(f.name, btcBuildBuys(btcSplitCSV(text)));
+    } catch (e) { alert('No se pudo leer el archivo: ' + (e?.message || e)); }
+  };
+  inp.click();
+}
+
+function btcShowImportPreview(fileName, res) {
+  if (res.error) {
+    openModal(`<h3>📥 Importar CSV</h3><div style="color:#dc2626;font-size:13px">${esc(res.error)}</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px"><button class="btn-gray" onclick="closeModal()">Cerrar</button><button class="btn" onclick="openBtcImportModal()">Ver formato</button></div>`);
+    return;
+  }
+  const existing = new Set((state.btc || []).map(btcBuyKey));
+  const buys = res.buys.map(x => ({ ...x, dup: existing.has(btcBuyKey(x)) }));
+  state._btcImport = { buys };
+  const dups = buys.filter(x => x.dup).length;
+  const colName = k => (res.map[k] != null && res.header[res.map[k]] != null) ? `«${esc(res.header[res.map[k]])}»` : (res.header.length ? '— (se calcula)' : 'posición ' + (res.map[k] + 1));
+  const sample = buys.slice(0, 6).map(x => `<tr><td>${esc(x.date)}</td><td>${btcEUR2(x.eur)}</td><td>${btcEUR2(x.price)}</td><td>₿ ${x.btc.toLocaleString('es-ES', { maximumFractionDigits: 8 })}</td><td>${x.dup ? '<span style="color:#b45309">duplicada</span>' : ''}</td></tr>`).join('');
+  const totalEur = buys.reduce((s, x) => s + x.eur, 0), totalBtc = buys.reduce((s, x) => s + x.btc, 0);
+  openModal(`
+    <h3>📥 Importar compras</h3>
+    <div style="font-size:12px;color:#475569;margin-bottom:8px"><b>${esc(fileName)}</b> — ${buys.length} compra${buys.length === 1 ? '' : 's'} válida${buys.length === 1 ? '' : 's'}
+      (${btcEUR2(totalEur)} · ₿ ${totalBtc.toLocaleString('es-ES', { maximumFractionDigits: 8 })})${res.skipped.length ? ` · ${res.skipped.length} fila${res.skipped.length === 1 ? '' : 's'} omitida${res.skipped.length === 1 ? '' : 's'}` : ''}</div>
+    <div style="font-size:11px;color:#64748b;margin-bottom:8px">Columnas detectadas — fecha: ${colName('date')} · importe: ${colName('eur')} · precio: ${colName('price')} · BTC: ${colName('btc')}</div>
+    ${buys.length ? `<div style="overflow-x:auto"><table style="min-width:420px;font-size:11px"><thead><tr><th>Fecha</th><th>Importe</th><th>Precio</th><th>BTC</th><th></th></tr></thead><tbody>${sample}</tbody></table></div>
+      ${buys.length > 6 ? `<div style="font-size:11px;color:#94a3b8;margin-top:4px">…y ${buys.length - 6} más</div>` : ''}` : '<div style="color:#dc2626;font-size:13px">No se ha encontrado ninguna compra válida.</div>'}
+    ${res.skipped.length ? `<details style="margin-top:8px;font-size:11px;color:#64748b"><summary>Ver filas omitidas</summary>${res.skipped.slice(0, 15).map(esc).join('<br>')}${res.skipped.length > 15 ? '<br>…' : ''}</details>` : ''}
+    ${buys.length ? `<div style="margin-top:12px;font-size:12px">
+      <label style="display:block;margin-bottom:4px"><input type="radio" name="btc-imp-mode" value="add" checked> Añadir a mis compras${dups ? ` (se omiten ${dups} duplicada${dups === 1 ? '' : 's'})` : ''}</label>
+      <label style="display:block"><input type="radio" name="btc-imp-mode" value="replace"> Reemplazar todas mis compras actuales (${(state.btc || []).length})</label></div>` : ''}
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
+      ${buys.length ? '<button class="btn" onclick="btcImportConfirm()">📥 Importar</button>' : ''}
+    </div>`);
+}
+
+function btcImportConfirm() {
+  const imp = state._btcImport;
+  if (!imp || !imp.buys.length) { closeModal(); return; }
+  const mode = document.querySelector('input[name="btc-imp-mode"]:checked')?.value || 'add';
+  if (mode === 'replace') {
+    if (!confirm('Se borrarán tus ' + (state.btc || []).length + ' compras actuales y se sustituirán por las del CSV. ¿Continuar?')) return;
+    state.btc = [];
+  }
+  const keys = new Set((state.btc || []).map(btcBuyKey));
+  let added = 0;
+  imp.buys.forEach(x => {
+    if (keys.has(btcBuyKey(x))) return;
+    keys.add(btcBuyKey(x));
+    state.btc.push({ id: uid(), date: x.date, eur: x.eur, price: x.price, btc: x.btc, notes: x.notes || '' });
+    added++;
+  });
+  state._btcImport = null;
+  save(); closeModal(); renderActiveTab();
+  setTimeout(() => alert(`Importación completada: ${added} compra${added === 1 ? '' : 's'} añadida${added === 1 ? '' : 's'}.`), 50);
 }
 </script>
 <script>
