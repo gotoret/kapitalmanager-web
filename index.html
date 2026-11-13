@@ -152,6 +152,374 @@ applyDefaultPriceKeys();
 <script src="js/utils/date.utils.js"></script>
 <script src="js/utils/helpers.js"></script>
 <script>
+// ═══════════════════════════════════════════════════════════
+// PESTAÑA ₿ BITCOIN
+// Compras (fecha, importe €, precio de compra €/BTC) → BTC adquiridos,
+// precio actual, valor de la cartera, G/P y gráfica.
+// ═══════════════════════════════════════════════════════════
+const BTC_TAB_LABEL = '₿ Bitcoin';
+if (typeof TABS !== 'undefined' && Array.isArray(TABS) && !TABS.includes(BTC_TAB_LABEL)) TABS.push(BTC_TAB_LABEL);
+const BTC_TAB_INDEX = (typeof TABS !== 'undefined') ? TABS.indexOf(BTC_TAB_LABEL) : -1;
+
+if (!Array.isArray(state.btc)) state.btc = ls.get('km_btc', []);
+(function () {
+  const last = ls.get('km_btc_last', null);
+  state._btc = {
+    price: last?.price ?? null, change: last?.change ?? null, ts: 0,
+    loading: false, error: false,
+    range: '1A', mode: 'price',
+    hist: {}, histLoading: false
+  };
+})();
+
+const BTC_RANGES = {            // clave: [range Yahoo, intervalo Yahoo, días CoinGecko (respaldo)]
+  '1M':  ['1mo', '1d', 30],
+  '6M':  ['6mo', '1d', 180],
+  '1A':  ['1y',  '1d', 365],
+  '5A':  ['5y',  '1wk', null],
+  'MAX': ['max', '1mo', null]
+};
+
+// ── utilidades ──
+const btcDateMs = d => Date.parse(String(d).slice(0, 10) + 'T00:00:00Z');
+const btcEUR0 = v => Number(v).toLocaleString('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });   // precio de mercado (dato público)
+const btcEUR2 = v => Number(v).toLocaleString('es-ES', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const btcQty = v => state.privacyMode ? '•••' : Number(v).toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 8 });
+const btcColor = v => (v >= 0 ? '#16a34a' : '#dc2626');
+const btcSign = v => (v >= 0 ? '+' : '−');
+const btcDateLabel = t => new Date(t).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' });
+
+function btcTotals() {
+  const buys = state.btc || [];
+  const inv = buys.reduce((s, x) => s + (+x.eur || 0), 0);
+  const qty = buys.reduce((s, x) => s + (+x.btc || 0), 0);
+  const price = state._btc.price;
+  const value = price != null ? qty * price : null;
+  return {
+    inv, qty, price, value,
+    avg: qty > 0 ? inv / qty : null,
+    pnl: value != null ? value - inv : null,
+    pct: value != null && inv > 0 ? (value - inv) / inv * 100 : null
+  };
+}
+
+// ── datos de mercado ──
+async function fetchBtcPrice() {
+  const b = state._btc;
+  if (b.loading) return;
+  b.loading = true;
+  let price = null, change = null;
+  try {
+    const q = await fetchQuotesEdgeFunction(['BTC-EUR']);
+    if (q && q['BTC-EUR'] != null) { price = +q['BTC-EUR']; change = state.priceChangeCache['BTC-EUR'] ?? null; }
+  } catch (e) {}
+  if (price == null) {
+    try {
+      const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=eur&include_24hr_change=true', { signal: AbortSignal.timeout(8000) });
+      if (r.ok) {
+        const j = await r.json();
+        price = j?.bitcoin?.eur ?? null;
+        change = j?.bitcoin?.eur_24h_change != null ? +(+j.bitcoin.eur_24h_change).toFixed(2) : null;
+      }
+    } catch (e) {}
+  }
+  b.loading = false;
+  b.ts = Date.now();
+  if (price != null && isFinite(price)) {
+    b.price = price; b.change = change; b.error = false;
+    ls.set('km_btc_last', { price, change, ts: b.ts });
+  } else { b.error = true; }
+  if (state.activeTab === BTC_TAB_INDEX) renderActiveTab();
+}
+
+async function fetchBtcHistory(key) {
+  const b = state._btc;
+  if (b.histLoading) return;
+  b.histLoading = true;
+  const [range, interval, days] = BTC_RANGES[key];
+  let pts = null;
+  try {
+    const j = await fetchYahooChartJSON('BTC-EUR', range, interval);
+    const r = j?.chart?.result?.[0];
+    if (r) {
+      const ts = r.timestamp || [], cl = r.indicators?.quote?.[0]?.close || [];
+      pts = [];
+      ts.forEach((t, i) => { if (cl[i] != null) pts.push([t * 1000, cl[i]]); });
+    }
+  } catch (e) {}
+  if ((!pts || pts.length < 2) && days) {
+    try {
+      const r = await fetch(`https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=eur&days=${days}`, { signal: AbortSignal.timeout(10000) });
+      if (r.ok) { const j = await r.json(); pts = (j.prices || []).map(p => [p[0], p[1]]); }
+    } catch (e) {}
+  }
+  b.histLoading = false;
+  b.hist[key] = (pts && pts.length >= 2) ? { pts, ts: Date.now() } : { error: true, ts: Date.now() };
+  if (state.activeTab === BTC_TAB_INDEX) renderActiveTab();
+}
+
+function btcRefresh() {
+  const b = state._btc;
+  b.ts = 0; delete b.hist[b.range];
+  fetchBtcPrice();
+  fetchBtcHistory(b.range);
+  renderActiveTab();
+}
+function btcReloadHistory() { delete state._btc.hist[state._btc.range]; fetchBtcHistory(state._btc.range); renderActiveTab(); }
+function btcSetRange(k) { state._btc.range = k; renderActiveTab(); }
+function btcSetMode(m) { state._btc.mode = m; renderActiveTab(); }
+
+// Actualización automática del precio mientras la pestaña está abierta
+setInterval(() => {
+  if (state.activeTab === BTC_TAB_INDEX && document.visibilityState === 'visible') fetchBtcPrice();
+}, 60000);
+
+// ── gráfica ──
+function btcChartHTML() {
+  const b = state._btc, key = b.range, h = b.hist[key];
+  const msg = t => `<div style="padding:40px 10px;text-align:center;color:#94a3b8;font-size:13px">${t}</div>`;
+  if (!h) return msg('⏳ Cargando gráfica...');
+  if (h.error) return msg('No se pudo cargar la gráfica. <button class="btn-gray" style="padding:4px 10px;font-size:12px" onclick="btcReloadHistory()">↻ Reintentar</button>');
+
+  let pts = h.pts.map(p => p.slice());
+  if (b.price != null) {
+    const last = pts[pts.length - 1];
+    if (Date.now() - last[0] < 3 * 86400e3) { last[0] = Date.now(); last[1] = b.price; }
+    else pts.push([Date.now(), b.price]);
+  }
+
+  const buys = (state.btc || []).map(x => ({ t: btcDateMs(x.date), eur: +x.eur || 0, btc: +x.btc || 0, price: +x.price || 0, date: x.date }))
+    .filter(x => isFinite(x.t)).sort((a, c) => a.t - c.t);
+  const mode = b.mode;
+  let series;
+  if (mode === 'portfolio') {
+    if (!buys.length) return msg('Añade una compra para ver la evolución de tu cartera.');
+    series = pts.filter(p => p[0] >= buys[0].t).map(p => {
+      let q = 0, inv = 0;
+      for (const x of buys) if (x.t <= p[0]) { q += x.btc; inv += x.eur; }
+      return { t: p[0], v: q * p[1], inv };
+    });
+    if (series.length < 2) return msg('Con este rango hay muy pocos datos desde tu primera compra. Prueba con uno mayor.');
+  } else {
+    series = pts.map(p => ({ t: p[0], v: p[1] }));
+  }
+
+  const W = 800, H = 290, PL = 56, PR = 14, PT = 22, PB = 26;
+  const gW = W - PL - PR, gH = H - PT - PB;
+  const t0 = series[0].t, t1 = series[series.length - 1].t;
+  let lo = Math.min(...series.map(s => s.v)), hi = Math.max(...series.map(s => s.v));
+  if (mode === 'portfolio') { lo = Math.min(lo, ...series.map(s => s.inv)); hi = Math.max(hi, ...series.map(s => s.inv)); }
+  const tot = btcTotals();
+  if (mode === 'price' && tot.avg) { if (tot.avg > lo * 0.6 && tot.avg < hi * 1.4) { lo = Math.min(lo, tot.avg); hi = Math.max(hi, tot.avg); } }
+  const pad = (hi - lo || hi || 1) * 0.06;
+  const minV = Math.max(0, lo - pad), maxV = hi + pad, span = (maxV - minV) || 1;
+  const toX = t => PL + (t1 === t0 ? 0 : (t - t0) / (t1 - t0) * gW);
+  const toY = v => PT + gH - (v - minV) / span * gH;
+
+  const fmtAxis = v => v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k' : v.toFixed(0);
+  const yTicks = [0, .25, .5, .75, 1].map(f => {
+    const v = minV + f * span, y = toY(v);
+    return `<line x1="${PL}" y1="${y.toFixed(1)}" x2="${W - PR}" y2="${y.toFixed(1)}" stroke="rgba(148,163,184,.25)"/>
+            <text x="${PL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="#94a3b8">${state.privacyMode && mode === 'portfolio' ? '' : fmtAxis(v)}</text>`;
+  }).join('');
+  const short = (t1 - t0) < 100 * 86400e3;
+  const xTicks = [0, .25, .5, .75, 1].map(f => {
+    const t = t0 + f * (t1 - t0);
+    const l = new Date(t).toLocaleDateString('es-ES', short ? { day: '2-digit', month: 'short' } : { month: 'short', year: '2-digit' });
+    return `<text x="${toX(t).toFixed(1)}" y="${H - 8}" text-anchor="${f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}" font-size="10" fill="#94a3b8">${l}</text>`;
+  }).join('');
+
+  const line = series.map(s => `${toX(s.t).toFixed(1)},${toY(s.v).toFixed(1)}`).join(' ');
+  const baseY = (PT + gH).toFixed(1);
+  const area = `${toX(t0).toFixed(1)},${baseY} ${line} ${toX(t1).toFixed(1)},${baseY}`;
+  const color = mode === 'portfolio' ? '#2563eb' : '#f7931a';
+  let extra = '';
+  if (mode === 'portfolio') {
+    extra += `<polyline points="${series.map(s => `${toX(s.t).toFixed(1)},${toY(s.inv).toFixed(1)}`).join(' ')}" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="6,4"/>`;
+  } else {
+    if (tot.avg && toY(tot.avg) >= PT && toY(tot.avg) <= PT + gH) {
+      extra += `<line x1="${PL}" y1="${toY(tot.avg).toFixed(1)}" x2="${W - PR}" y2="${toY(tot.avg).toFixed(1)}" stroke="#16a34a" stroke-width="1.3" stroke-dasharray="5,4"/>
+                <text x="${W - PR - 4}" y="${(toY(tot.avg) - 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#16a34a">Precio medio ${btcEUR0(tot.avg)}</text>`;
+    }
+    extra += buys.filter(x => x.t >= t0 && x.t <= t1 && x.price > 0).map(x => {
+      const cy = Math.min(PT + gH, Math.max(PT, toY(x.price)));
+      return `<circle cx="${toX(x.t).toFixed(1)}" cy="${cy.toFixed(1)}" r="4.5" fill="#16a34a" stroke="#fff" stroke-width="1.5"><title>Compra ${x.date}: ${btcEUR2(x.eur)} a ${btcEUR0(x.price)}</title></circle>`;
+    }).join('');
+  }
+
+  window._btcChart = { W, PL, PT, gH, gW, t0, t1, series, mode, toY };
+  const lastS = series[series.length - 1];
+  const legend = mode === 'portfolio'
+    ? `<span><span style="display:inline-block;width:12px;height:3px;background:#94a3b8;vertical-align:middle;margin-right:4px"></span>Invertido: ${fmtEUR(lastS.inv)}</span>
+       <span><span style="display:inline-block;width:12px;height:3px;background:#2563eb;vertical-align:middle;margin-right:4px"></span>Valor: ${fmtEUR(lastS.v)}</span>`
+    : `<span><span style="display:inline-block;width:12px;height:3px;background:#f7931a;vertical-align:middle;margin-right:4px"></span>Precio BTC/EUR</span>
+       <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#16a34a;vertical-align:middle;margin-right:4px"></span>Tus compras</span>
+       ${tot.avg ? '<span style="color:#16a34a">- - - Tu precio medio</span>' : ''}`;
+
+  return `
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px;font-size:11px">${legend}</div>
+    <svg id="btc_svg" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;touch-action:pan-y"
+         onmousemove="btcChartHover(event)" ontouchmove="btcChartHover(event)" onmouseleave="btcChartLeave()">
+      <defs><linearGradient id="btcg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+      ${yTicks}${xTicks}
+      <polygon points="${area}" fill="url(#btcg)"/>
+      <polyline points="${line}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round"/>
+      ${extra}
+      <line id="btc_vline" x1="0" y1="${PT}" x2="0" y2="${PT + gH}" stroke="#94a3b8" stroke-dasharray="3,2" display="none"/>
+      <circle id="btc_dot" r="4" fill="${color}" stroke="#fff" stroke-width="1.5" display="none"/>
+      <text id="btc_tip" x="${PL + 6}" y="${PT - 6}" font-size="11" font-weight="600" fill="#64748b"></text>
+    </svg>`;
+}
+
+function btcChartHover(evt) {
+  const c = window._btcChart, svg = document.getElementById('btc_svg');
+  if (!c || !svg) return;
+  const cx = evt.touches ? evt.touches[0].clientX : evt.clientX;
+  const r = svg.getBoundingClientRect();
+  const x = (cx - r.left) / r.width * c.W;
+  const t = c.t0 + (x - c.PL) / c.gW * (c.t1 - c.t0);
+  let best = 0, bd = Infinity;
+  for (let i = 0; i < c.series.length; i++) { const d = Math.abs(c.series[i].t - t); if (d < bd) { bd = d; best = i; } }
+  const s = c.series[best];
+  const px = c.PL + (c.t1 === c.t0 ? 0 : (s.t - c.t0) / (c.t1 - c.t0) * c.gW);
+  const vl = document.getElementById('btc_vline'), dot = document.getElementById('btc_dot'), tip = document.getElementById('btc_tip');
+  vl.setAttribute('x1', px); vl.setAttribute('x2', px); vl.removeAttribute('display');
+  dot.setAttribute('cx', px); dot.setAttribute('cy', c.toY(s.v)); dot.removeAttribute('display');
+  tip.textContent = c.mode === 'portfolio'
+    ? `${btcDateLabel(s.t)} · Valor ${fmtEUR(s.v)} · Invertido ${fmtEUR(s.inv)}`
+    : `${btcDateLabel(s.t)} · ${btcEUR0(s.v)}`;
+}
+function btcChartLeave() {
+  ['btc_vline', 'btc_dot'].forEach(id => document.getElementById(id)?.setAttribute('display', 'none'));
+  const tip = document.getElementById('btc_tip'); if (tip) tip.textContent = '';
+}
+
+// ── pestaña ──
+function renderBitcoin() {
+  const b = state._btc, tot = btcTotals();
+  const now = Date.now();
+  if (!b.loading && now - b.ts > 60000) fetchBtcPrice();
+  const h = b.hist[b.range];
+  if (!b.histLoading && (!h || (now - h.ts > 15 * 60000 && !h.error) || (h.error && now - h.ts > 60000))) fetchBtcHistory(b.range);
+
+  const buys = [...(state.btc || [])].sort((x, y) => String(y.date).localeCompare(String(x.date)));
+  const priceTxt = b.price != null ? btcEUR0(b.price) : (b.error ? 'No disponible' : '⏳');
+  const chg = b.change != null ? `<div style="font-size:11px;font-weight:600;color:${btcColor(b.change)}">${b.change >= 0 ? '▲' : '▼'} ${Math.abs(b.change).toFixed(2)}% 24h</div>` : '';
+  const pnlC = tot.pnl != null ? btcColor(tot.pnl) : '#64748b';
+
+  const kpi = (label, val, color, sub) => `<div class="metric-card" style="border-left:3px solid ${color};min-width:0;overflow:hidden"><div class="metric-label">${label}</div><div class="metric-value" style="color:${color}">${val}</div>${sub || ''}</div>`;
+  const kpis = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px">
+    ${kpi('INVERTIDO', fmtEUR(tot.inv), '#2563eb')}
+    ${kpi('BITCOIN ACUMULADO', `₿ ${btcQty(tot.qty)}`, '#f7931a')}
+    ${kpi('PRECIO MEDIO COMPRA', tot.avg != null ? fmtEUR(tot.avg) : '—', '#64748b')}
+    ${kpi('PRECIO ACTUAL', priceTxt, '#f7931a', chg)}
+    ${kpi('VALOR CARTERA', tot.value != null ? fmtEUR(tot.value) : '—', '#0284c7')}
+    ${kpi('GANANCIA/PÉRDIDA', tot.pnl != null ? `${btcSign(tot.pnl)}${fmtEUR(Math.abs(tot.pnl))}` : '—', pnlC,
+          tot.pct != null ? `<div style="font-size:11px;font-weight:600;color:${pnlC}">${btcSign(tot.pct)}${Math.abs(tot.pct).toFixed(2)}%</div>` : '')}
+  </div>`;
+
+  const rangeBtns = Object.keys(BTC_RANGES).map(k =>
+    `<button class="${b.range === k ? 'btn' : 'btn-gray'}" style="padding:4px 10px;font-size:11px" onclick="btcSetRange('${k}')">${k}</button>`).join('');
+  const modeBtns = [['price', 'Precio BTC'], ['portfolio', 'Mi cartera']].map(([m, l]) =>
+    `<button class="${b.mode === m ? 'btn' : 'btn-gray'}" style="padding:4px 10px;font-size:11px" onclick="btcSetMode('${m}')">${l}</button>`).join('');
+
+  const rows = buys.map(x => {
+    const val = b.price != null ? (+x.btc || 0) * b.price : null;
+    const pnl = val != null ? val - (+x.eur || 0) : null;
+    const pct = pnl != null && +x.eur > 0 ? pnl / +x.eur * 100 : null;
+    return `<tr>
+      <td>${esc(String(x.date).slice(0, 10))}</td>
+      <td style="font-weight:600">${fmtEUR(+x.eur || 0)}</td>
+      <td>${fmtEUR(+x.price || 0)}</td>
+      <td>₿ ${btcQty(+x.btc || 0)}</td>
+      <td style="font-weight:600">${val != null ? fmtEUR(val) : '—'}</td>
+      <td style="font-weight:600;color:${pnl != null ? btcColor(pnl) : '#64748b'}">${pnl != null ? btcSign(pnl) + fmtEUR(Math.abs(pnl)) : '—'}</td>
+      <td style="font-weight:600;color:${pct != null ? btcColor(pct) : '#64748b'}">${pct != null ? btcSign(pct) + Math.abs(pct).toFixed(2) + '%' : '—'}</td>
+      <td style="font-size:11px;color:#64748b">${esc(x.notes || '')}</td>
+      <td style="white-space:nowrap"><button class="btn-edit-sm" onclick="openBtcModal('${x.id}')">✏️</button><button class="btn-danger-sm" onclick="deleteBtcBuy('${x.id}')">✕</button></td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <span style="font-weight:700;font-size:14px;color:#f7931a">₿ Mi inversión en Bitcoin</span>
+      <span style="flex:1"></span>
+      <span style="font-size:11px;color:#94a3b8">${b.ts ? 'Precio actualizado ' + new Date(b.ts).toLocaleTimeString('es-ES') : ''}</span>
+      <button class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="btcRefresh()" title="Actualizar precio y gráfica">↻</button>
+      <button class="btn" style="padding:5px 12px;font-size:12px" onclick="openBtcModal()">➕ Añadir compra</button>
+    </div>
+    ${kpis}
+    <div style="border:1px solid rgba(148,163,184,.35);border-radius:10px;padding:12px;margin-bottom:14px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+        <div style="display:flex;gap:4px">${modeBtns}</div><span style="flex:1"></span><div style="display:flex;gap:4px">${rangeBtns}</div>
+      </div>
+      ${btcChartHTML()}
+    </div>
+    <div style="font-weight:700;font-size:13px;color:#1d4ed8;margin-bottom:6px">📜 Mis compras</div>
+    <div style="overflow-x:auto">
+      <table style="min-width:760px">
+        <thead><tr><th>Fecha</th><th>Importe</th><th>Precio compra</th><th>BTC adquiridos</th><th>Valor actual</th><th>G/P €</th><th>G/P %</th><th>Notas</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:20px">Todavía no has registrado ninguna compra. Pulsa «➕ Añadir compra».</td></tr>'}</tbody>
+        ${buys.length ? `<tfoot><tr style="font-weight:700"><td>Total</td><td>${fmtEUR(tot.inv)}</td><td>${tot.avg != null ? fmtEUR(tot.avg) : '—'}</td><td>₿ ${btcQty(tot.qty)}</td>
+          <td>${tot.value != null ? fmtEUR(tot.value) : '—'}</td><td style="color:${pnlC}">${tot.pnl != null ? btcSign(tot.pnl) + fmtEUR(Math.abs(tot.pnl)) : '—'}</td>
+          <td style="color:${pnlC}">${tot.pct != null ? btcSign(tot.pct) + Math.abs(tot.pct).toFixed(2) + '%' : '—'}</td><td></td><td></td></tr></tfoot>` : ''}
+      </table>
+    </div>
+    <div style="font-size:11px;color:#94a3b8;margin-top:10px">Precios de BTC/EUR de Yahoo Finance (respaldo: CoinGecko). Esta inversión es independiente de las posiciones de la pestaña Cartera y no se suma a sus totales.</div>`;
+}
+
+// ── alta / edición / borrado ──
+function openBtcModal(id) {
+  const x = id ? (state.btc || []).find(v => String(v.id) === String(id)) : null;
+  const today = new Date().toISOString().slice(0, 10);
+  openModal(`
+    <h3>${x ? '✏️ Editar compra de Bitcoin' : '₿ Añadir compra de Bitcoin'}</h3>
+    <div class="field"><label>Fecha de adquisición</label><input id="m-btc-date" type="date" class="inp" value="${x ? esc(String(x.date).slice(0, 10)) : today}"></div>
+    <div class="grid2">
+      <div class="field"><label>Importe invertido (€)</label><input id="m-btc-eur" type="number" step="any" min="0" class="inp" value="${x ? x.eur : ''}" oninput="btcModalPreview()"></div>
+      <div class="field"><label>Precio de compra (€ por BTC)</label><input id="m-btc-price" type="number" step="any" min="0" class="inp" value="${x ? x.price : ''}" oninput="btcModalPreview()"></div>
+    </div>
+    ${state._btc.price != null ? `<div style="margin:-4px 0 8px"><a href="#" style="font-size:11px" onclick="event.preventDefault();document.getElementById('m-btc-price').value=${state._btc.price.toFixed(2)};btcModalPreview()">Usar el precio actual (${btcEUR0(state._btc.price)})</a></div>` : ''}
+    <div class="field"><label>Notas (opcional)</label><input id="m-btc-notes" class="inp" placeholder="Ej.: compra en Bit2Me" value="${esc(x?.notes || '')}"></div>
+    <div id="m-btc-preview" style="margin-top:8px;padding:10px;background:#fff7ed;border-radius:8px;font-size:12px;color:#c2410c;font-weight:600">BTC adquiridos: ${x ? '₿ ' + Number(x.btc).toLocaleString('es-ES', { maximumFractionDigits: 8 }) : '—'}</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn-gray" onclick="closeModal()">Cancelar</button>
+      <button class="btn" onclick="saveBtcModal(${x ? `'${x.id}'` : 'null'})">💾 ${x ? 'Guardar cambios' : 'Guardar'}</button>
+    </div>`);
+}
+
+function btcModalPreview() {
+  const eur = parseFloat(document.getElementById('m-btc-eur')?.value), price = parseFloat(document.getElementById('m-btc-price')?.value);
+  const el = document.getElementById('m-btc-preview');
+  if (el) el.textContent = 'BTC adquiridos: ' + (eur > 0 && price > 0 ? '₿ ' + (eur / price).toLocaleString('es-ES', { maximumFractionDigits: 8 }) : '—');
+}
+
+function saveBtcModal(id) {
+  const date = document.getElementById('m-btc-date').value;
+  const eur = parseFloat(document.getElementById('m-btc-eur').value);
+  const price = parseFloat(document.getElementById('m-btc-price').value);
+  const notes = document.getElementById('m-btc-notes').value.trim();
+  if (!date || !isFinite(btcDateMs(date))) { alert('Indica una fecha válida.'); return; }
+  if (!(eur > 0)) { alert('El importe invertido debe ser mayor que 0.'); return; }
+  if (!(price > 0)) { alert('El precio de compra debe ser mayor que 0.'); return; }
+  const rec = { date, eur, price, btc: eur / price, notes };
+  if (id) {
+    const x = state.btc.find(v => String(v.id) === String(id));
+    if (!x) { alert('No se encontró la compra a modificar.'); return; }
+    Object.assign(x, rec);
+  } else {
+    state.btc.push({ id: uid(), ...rec });
+  }
+  save(); closeModal(); renderActiveTab();
+}
+
+function deleteBtcBuy(id) {
+  if (!confirm('¿Eliminar esta compra de Bitcoin?')) return;
+  state.btc = state.btc.filter(v => String(v.id) !== String(id));
+  save(); renderActiveTab();
+}
+</script>
+<script>
 
 // NOTA: sleep(ms) ya está definido en js/utils/helpers.js (cargado antes de
 // este bloque inline), así que NO se redeclara aquí — hacerlo causaba un
@@ -633,6 +1001,7 @@ async function loadCloudData() {
       state.dividendCashUsed = data.dividend_cash_used || [];
       state.goalConfig = data.goal_config || state.goalConfig;
       state.transactions = data.transactions || [];
+      if (Array.isArray(data.bitcoin) && (data.bitcoin.length || !(state.btc || []).length)) state.btc = data.bitcoin;
       normalizeAllDates(); // dividendos y transacciones llegan como strings ISO desde Supabase
       save(); // refresca la caché local con lo que viene de la nube
     } else {
@@ -658,12 +1027,14 @@ async function saveCloud() {
     dividend_cash_used: state.dividendCashUsed,
     goal_config: state.goalConfig,
     transactions: state.transactions,
+    bitcoin: state.btc || [],
     updated_at: new Date().toISOString()
   };
   try {
     const { error } = await supabaseClient.from('portfolios').upsert(payload, { onConflict: 'user_id' });
     if (error) {
-      const missingColMatch = /column .*"?([a-z_]+)"?.* does not exist/i.exec(error.message || '');
+      const missingColMatch = /column .*"?([a-z_]+)"?.* does not exist/i.exec(error.message || '')
+                           || /Could not find the '([a-z_]+)' column/i.exec(error.message || '');
       if (missingColMatch) {
         console.warn(`saveCloud: falta la columna ${missingColMatch[1]} en Supabase, guardando el resto sin ella.`);
         const rest = { ...payload };
@@ -695,6 +1066,7 @@ const save = () => {
   ls.set("km_dividend_cash_used", state.dividendCashUsed);
   ls.set("km_goal_config", state.goalConfig);
   ls.set("km_transactions", state.transactions);
+  ls.set("km_btc", state.btc || []);
   saveUiState();
   if (state.authUserId) saveCloud();
 };
@@ -751,7 +1123,7 @@ function restoreUiState() {
   try {
     const saved = ls.get(uiStateStorageKey(), null);
     if (!saved || typeof saved !== "object") return;
-    if (Number.isInteger(saved.activeTab) && saved.activeTab >= 0 && saved.activeTab <= 9) {
+    if (Number.isInteger(saved.activeTab) && saved.activeTab >= 0 && saved.activeTab < TABS.length) {
       state.activeTab = saved.activeTab;
     }
     if (saved.selectedTicker) state.selectedTicker = saved.selectedTicker;
@@ -2949,7 +3321,8 @@ function renderActiveTab() {
   const selStart = activeId && typeof active.selectionStart === "number" ? active.selectionStart : null;
   const selEnd = activeId && typeof active.selectionEnd === "number" ? active.selectionEnd : null;
   try {
-    switch(state.activeTab) {
+    switch(state.activeTab === BTC_TAB_INDEX ? 'btc' : state.activeTab) {
+      case 'btc': el.innerHTML = renderBitcoin(); break;
       case 0: el.innerHTML = renderPortfolio(); break;
       case 1: el.innerHTML = renderAlerts(); break;
       case 2: el.innerHTML = renderDividends(); break;
