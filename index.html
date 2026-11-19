@@ -911,6 +911,20 @@ const OPP_INDEX = [
 const oppIndexFor = t => { const m = OPP_INDEX.find(x => x[0].test(String(t).toUpperCase())); return m ? { sym: m[1], name: m[2] } : { sym: '^GSPC', name: 'S&P 500' }; };
 state._opp = { running: false, done: 0, total: 0, rows: {}, errors: {}, current: '', ts: 0, showAll: false, added: {} };
 const _oppIdxCache = {};
+// Niveles de exigencia: se filtran los mismos resultados ya calculados, así que cambiar de nivel es instantáneo
+const OPP_LEVELS = [
+  { name: 'Estrictos', min: 55, allowTrap: false, desc: 'puntuación ≥ 55 y sin señales de deterioro' },
+  { name: 'Moderados', min: 45, allowTrap: false, desc: 'puntuación ≥ 45 y sin señales de deterioro' },
+  { name: 'Amplios',   min: 35, allowTrap: true,  desc: 'puntuación ≥ 35; admite 1-2 señales de riesgo (nunca recorte de dividendo)' }
+];
+state._opp.level = 0;
+const oppPass = (r, lv) => r.score >= OPP_LEVELS[lv].min && (OPP_LEVELS[lv].allowTrap ? !r.divCut : !r.trap);
+function oppSetLevel(d) {
+  const o = state._opp;
+  o.level = Math.max(0, Math.min(OPP_LEVELS.length - 1, (o.level || 0) + d));
+  o.showAll = false;
+  oppRender();
+}
 
 // Unidad de los datos de valoración respecto al precio en vivo (1, peniques↔libras…)
 function oppUnit(k) {
@@ -1078,7 +1092,7 @@ function oppScore(ticker, s, mkt) {
   const entry = below.length ? { v: below[0].v, src: below[0].src } : { v: priceE * 0.97, src: 'un 3% por debajo del actual (ya está en zona de compra)' };
   entry.v = +entry.v.toFixed(2);
 
-  return { ticker, name: s.name || pos.name || '', score, label, trap, pos52, dd, vsAvg, per, perFwd: s.perFwd, perRange, yld: s.yld, weiss, ddmUp, cause, mkt,
+  return { ticker, name: s.name || pos.name || '', score, label, trap, divCut: !!s.divCut, pos52, dd, vsAvg, per, perFwd: s.perFwd, perRange, yld: s.yld, weiss, ddmUp, cause, mkt,
            reasons, warns, reds, priceE, loE: toE(lo), hiE: toE(hi), entry, pts };
 }
 
@@ -1156,6 +1170,7 @@ function oppCardHTML(r) {
       <span style="font-weight:800;color:#1d4ed8;font-size:15px">${esc(r.ticker)}</span>
       <span style="font-size:12px;color:#64748b">${esc(r.name)}</span>
       <span style="background:${col};color:#fff;border-radius:8px;padding:3px 10px;font-size:12px;font-weight:700">${r.score}/100 · ${r.label}</span>
+      ${r.trap ? '<span style="background:#fef3c7;color:#b45309;border:1px solid #f59e0b;border-radius:8px;padding:2px 8px;font-size:11px;font-weight:700">⚠️ Con riesgo</span>' : ''}
       <span style="flex:1"></span>
       <span style="font-size:13px"><span style="color:#94a3b8;font-size:11px">Precio actual</span> <b>${fmtEUR(r.priceE)}</b></span>
     </div>
@@ -1175,7 +1190,8 @@ function oppCardHTML(r) {
 function oppHTML() {
   const o = state._opp;
   const rows = Object.values(o.rows);
-  const good = rows.filter(r => r.score >= 55 && !r.trap).sort((a, b) => b.score - a.score);
+  const lv = o.level || 0, LV = OPP_LEVELS[lv];
+  const good = rows.filter(r => oppPass(r, lv)).sort((a, b) => b.score - a.score);
   const rest = rows.filter(r => !good.includes(r)).sort((a, b) => b.score - a.score);
   const shown = o.showAll ? good : good.slice(0, 10);
   const errs = Object.entries(o.errors);
@@ -1191,9 +1207,14 @@ function oppHTML() {
       <button class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="oppRun(true)" ${o.running ? 'disabled' : ''}>↻ Reanalizar</button>
       <button class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="closeModal()">✕ Cerrar</button>
     </div>
-    <div style="font-size:11px;color:#64748b;margin:6px 0 4px;line-height:1.5">Puntúa de 0 a 100 cada empresa según: cercanía a mínimos de 52 semanas (20), descuento sobre su media (10), PER (15), método de Geraldine Weiss (25), fundamentales sanos (20) y si la bajada se explica por un mercado bajista (10). Las que muestran señales de deterioro real se descartan como posible trampa de valor.</div>
+    <div style="font-size:11px;color:#64748b;margin:6px 0 4px;line-height:1.5">Puntúa de 0 a 100 cada empresa según: cercanía a mínimos de 52 semanas (20), descuento sobre su media (10), PER (15), método de Geraldine Weiss (25), fundamentales sanos (20) y si la bajada se explica por un mercado bajista (10). Las que muestran señales de deterioro real se descartan como posible trampa de valor. Si salen pocas, puedes bajar los requisitos.</div>
     ${bar}
-    ${!o.running && !good.length ? `<div style="padding:24px;text-align:center;color:#64748b;font-size:13px">Ahora mismo ninguna de tus empresas reúne señales suficientes de compra (puntuación ≥ 55 y sin deterioro fundamental).</div>` : ''}
+    ${!o.running && rows.length ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 10px;padding:8px 10px;border-radius:8px;background:rgba(124,58,237,.08)">
+        <span style="font-size:12px"><b>Requisitos ${LV.name.toLowerCase()}</b> — ${LV.desc}. <b>${good.length}</b> resultado${good.length === 1 ? '' : 's'}.</span><span style="flex:1"></span>
+        ${lv > 0 ? `<button class="btn-gray" style="font-size:11px;padding:4px 10px" onclick="oppSetLevel(-1)">⬆️ Subir requisitos</button>` : ''}
+        ${lv < OPP_LEVELS.length - 1 ? `<button class="btn" style="font-size:11px;padding:4px 10px;background:#7c3aed" onclick="oppSetLevel(1)">⬇️ Bajar requisitos${(() => { const n = rows.filter(r => oppPass(r, lv + 1)).length - good.length; return n > 0 ? ` (+${n} más)` : ' (no añade ninguna)'; })()}</button>` : '<span style="font-size:11px;color:#94a3b8">Es el nivel más amplio</span>'}
+      </div>` : ''}
+    ${!o.running && !good.length ? `<div style="padding:24px;text-align:center;color:#64748b;font-size:13px">Con requisitos ${LV.name.toLowerCase()} ninguna de tus empresas reúne señales suficientes ahora.${lv < OPP_LEVELS.length - 1 ? ' Prueba a bajar los requisitos.' : ''}</div>` : ''}
     ${shown.map(oppCardHTML).join('')}
     ${good.length > 10 ? `<div style="text-align:center;margin-bottom:10px"><button class="btn-gray" style="font-size:12px" onclick="oppToggleAll()">${o.showAll ? 'Ver solo las 10 mejores' : `Ver las ${good.length} oportunidades`}</button></div>` : ''}
     ${rest.length ? `<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;font-weight:600;color:#475569">Resto de la cartera (${rest.length})</summary><div style="margin-top:6px">${rest.map(restLine).join('')}</div></details>` : ''}
@@ -4717,6 +4738,7 @@ function renderPortfolio() {
   <button class="btn" style="font-size:11px;padding:5px 10px" onclick="openEditPos()">✏️ Editar</button>
   <button class="btn-danger" style="font-size:11px;padding:5px 10px" onclick="deletePosition()">🗑 Eliminar</button>
   <button class="btn-green" style="font-size:11px;padding:5px 10px" onclick="openAddAlert()">🔔 Alerta</button>
+  <button class="btn" style="font-size:11px;padding:5px 10px;background:#7c3aed" onclick="openOppModal()" title="Analiza tu cartera y sugiere qué comprar ahora">🎯 Oportunidades</button>
   <button class="btn" style="font-size:15px;padding:5px 9px;line-height:1" onclick="openImportBroker()" title="Importar extracto de broker">📥</button>
   <button class="btn" style="font-size:15px;padding:5px 9px;line-height:1" onclick="exportCarteraExcel()" title="Exportar cartera a Excel">📊</button>
   <button class="btn" style="font-size:15px;padding:5px 9px;line-height:1" onclick="openSnapshotCartera(this)" title="Snapshot — Informe visual de cartera">📸</button>
@@ -5293,7 +5315,7 @@ function renderAlerts() {
   const headers = ["Ticker","Condición","Precio objetivo","Precio actual","Estado","Creada",""];
   return `<div style="padding:14px">
     ${renderNewsEventsPanel()}
-    <div style="margin-bottom:12px"><button class="btn" data-action="new-alert">＋ Nueva alerta</button> <button class="btn" style="background:#16a34a;margin-left:6px" onclick="openOppModal()" title="Analiza tu cartera y sugiere qué comprar ahora">🎯 Oportunidades de compra</button></div>
+    <div style="margin-bottom:12px"><button class="btn" data-action="new-alert">＋ Nueva alerta</button></div>
     <table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead>
     <tbody>${rows||`<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:28px">Sin alertas configuradas</td></tr>`}</tbody>
   </div>`;
