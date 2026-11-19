@@ -895,6 +895,313 @@ function btcImportConfirm() {
 }
 </script>
 <script>
+// ═══════════════════════════════════════════════════════════
+// 🎯 OPORTUNIDADES DE COMPRA (pestaña Alertas)
+// Analiza las empresas en cartera y puntúa (0-100) cuáles están en mejor
+// momento de compra: cerca de mínimos de 52 semanas, PER bajo, método de
+// Geraldine Weiss, fundamentales sanos y caída explicada por el mercado.
+// Reutiliza la Edge Function 'valuation' y el histórico de índices de 'quotes'.
+// ═══════════════════════════════════════════════════════════
+const OPP_CACHE_KEY = 'km_opp_cache';
+const OPP_TTL_MS = 12 * 3600e3;
+const OPP_INDEX = [
+  [/\.(MC|MAD)$/, '^IBEX', 'IBEX 35'], [/\.L$/, '^FTSE', 'FTSE 100'], [/\.(DE|F|BE|MU|DU)$/, '^GDAXI', 'DAX'],
+  [/\.(PA|NX)$/, '^FCHI', 'CAC 40'], [/\.AS$/, '^AEX', 'AEX'], [/\.MI$/, 'FTSEMIB.MI', 'FTSE MIB'], [/\.(SW|VX)$/, '^SSMI', 'SMI']
+];
+const oppIndexFor = t => { const m = OPP_INDEX.find(x => x[0].test(String(t).toUpperCase())); return m ? { sym: m[1], name: m[2] } : { sym: '^GSPC', name: 'S&P 500' }; };
+state._opp = { running: false, done: 0, total: 0, rows: {}, errors: {}, current: '', ts: 0, showAll: false, added: {} };
+const _oppIdxCache = {};
+
+// Unidad de los datos de valoración respecto al precio en vivo (1, peniques↔libras…)
+function oppUnit(k) {
+  if (!isFinite(k) || k <= 0) return 1;
+  let best = 1, bd = Infinity;
+  [1, 0.01, 100, 0.1, 10].forEach(v => { const d = Math.abs(Math.log(k / v)); if (d < bd) { bd = d; best = v; } });
+  return bd > 0.4 ? 1 : best;
+}
+const oppNum = v => (v != null && v !== '' && isFinite(+v)) ? +v : null;
+
+// Resumen ligero de la respuesta de 'valuation' (lo único que se guarda en caché)
+function oppReduce(r) {
+  const items = (r?.priceHistory?.priceItems || []).map(p => ({ t: new Date(p.date).getTime(), c: +p.close }))
+    .filter(p => isFinite(p.t) && p.c > 0).sort((a, b) => a.t - b.t);
+  if (items.length < 20) return null;
+  const last = items[items.length - 1];
+  const yr = items.filter(p => p.t >= last.t - 365 * 86400e3);
+  if (yr.length < 20) return null;
+  const closes = yr.map(p => p.c);
+  const ret = d => { const tg = last.t - d * 86400e3; const p = items.find(x => x.t >= tg); return p ? last.c / p.c - 1 : null; };
+  let weiss = null, divCut = null;
+  const dby = r.priceHistory?.divByYear, yby = r.priceHistory?.yieldByYear;
+  if (dby && yby) {
+    const thisYear = new Date().getFullYear();
+    const years = Object.keys(dby).map(Number).filter(isFinite).sort((a, b) => a - b);
+    const full = years.filter(y => y < thisYear);
+    const annYear = full.length ? full[full.length - 1] : years[years.length - 1];
+    const ann = annYear != null ? +dby[annYear] : 0;
+    const yv = Object.values(yby).map(Number).filter(v => v > 0 && isFinite(v));
+    if (ann > 0 && yv.length >= 2) weiss = { buy: ann / Math.max(...yv), fair: ann / (yv.reduce((a, b) => a + b, 0) / yv.length), sell: ann / Math.min(...yv) };
+    if (full.length >= 2) { const a = +dby[full[full.length - 2]], b = +dby[full[full.length - 1]]; if (a > 0 && b / a < 0.85) divCut = { from: a, to: b }; }
+  }
+  const m = r.metrics || {};
+  return {
+    ts: Date.now(), name: r.name || '', sector: r.sector || '',
+    last: last.c, lo: Math.min(...closes), hi: Math.max(...closes), avg: closes.reduce((a, b) => a + b, 0) / closes.length,
+    ret3: ret(91), ret6: ret(182),
+    per: oppNum(m.PER), perFwd: oppNum(m.PER_fwd), yld: oppNum(m.Yield_pct), ddm: oppNum(m.DDM_fair_value),
+    roe: oppNum(m.ROE_pct), payout: oppNum(m.Payout_pct), debt: oppNum(m.Deuda_EBITDA), fcf: oppNum(m.FCF_yield),
+    overall: oppNum(r.overall_score), weissVerdict: r.weiss_verdict || '', weiss, divCut
+  };
+}
+
+async function oppFetchSummary(ticker, force) {
+  const cache = ls.get(OPP_CACHE_KEY, {});
+  const c = cache[ticker];
+  if (!force && c && Date.now() - c.ts < OPP_TTL_MS) return c;
+  const { data, error } = await Promise.race([
+    supabaseClient.functions.invoke('valuation', { body: { ticker, forceRefresh: false } }),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('tiempo de espera agotado')), 90000))
+  ]);
+  if (error) throw new Error(error.message || 'error en la función de valoración');
+  if (data?.error) throw new Error(data.error);
+  const sum = oppReduce(data);
+  if (!sum) throw new Error('sin histórico de precios suficiente');
+  const cc = ls.get(OPP_CACHE_KEY, {}); cc[ticker] = sum; ls.set(OPP_CACHE_KEY, cc);
+  return sum;
+}
+
+// Estado del mercado de referencia (índice) de cada valor
+async function oppMarket(ticker) {
+  const { sym, name } = oppIndexFor(ticker);
+  const c = _oppIdxCache[sym];
+  if (c && Date.now() - c.ts < 15 * 60e3) return c.v;
+  let v = null;
+  try {
+    const j = await fetchYahooChartJSON(sym, '1y', '1d');
+    const r = j?.chart?.result?.[0], ts = r?.timestamp || [], cl = r?.indicators?.quote?.[0]?.close || [];
+    const pts = []; ts.forEach((t, i) => { if (cl[i] != null) pts.push([t * 1000, cl[i]]); });
+    if (pts.length > 40) {
+      const lastP = pts[pts.length - 1], hi = Math.max(...pts.map(p => p[1]));
+      const at = d => { const p = pts.find(x => x[0] >= lastP[0] - d * 86400e3); return p ? p[1] : null; };
+      const a3 = at(91), a6 = at(182);
+      v = { sym, name, dd: (hi - lastP[1]) / hi, ret3: a3 ? lastP[1] / a3 - 1 : null, ret6: a6 ? lastP[1] / a6 - 1 : null };
+    }
+  } catch (e) {}
+  _oppIdxCache[sym] = { ts: Date.now(), v };
+  return v;
+}
+
+// ── puntuación ──
+function oppScore(ticker, s, mkt) {
+  const pos = state.positions.find(p => p.ticker === ticker) || { currency: 'EUR' };
+  const live = state.priceCache[ticker];
+  if (!(live > 0)) return { ticker, error: 'sin precio en tiempo real' };
+  const k = oppUnit(live / s.last);
+  const lo = s.lo * k, hi = s.hi * k, avg = s.avg * k, price = live;
+  const rng = hi - lo;
+  const pos52 = rng > 0 ? Math.min(1, Math.max(0, (price - lo) / rng)) : 0.5;
+  const dd = hi > 0 ? Math.max(0, (hi - price) / hi) : 0;
+  const vsAvg = avg > 0 ? (price - avg) / avg : 0;
+  const reasons = [], warns = [], pts = {};
+  const pct = (v, d = 0) => (v * 100).toFixed(d) + '%';
+
+  // 1) Cercanía al mínimo de 52 semanas (0-20)
+  pts.low = (1 - pos52) * 20;
+  if (pos52 <= 0.3) reasons.push(`Cotiza en el ${Math.round(pos52 * 100)}% inferior de su rango de 52 semanas, a un ${pct(dd)} de su máximo.`);
+  // 2) Descuento frente a su precio medio de 52 semanas (0-10)
+  pts.avg = Math.min(Math.max(-vsAvg, 0), 0.25) / 0.25 * 10;
+  if (vsAvg <= -0.05) reasons.push(`Está un ${pct(-vsAvg)} por debajo de su precio medio de las últimas 52 semanas.`);
+  // 3) PER (0-15)
+  const per = s.per > 0 && s.per < 200 ? s.per : null;
+  let perRange = null;
+  if (per) {
+    pts.per = per <= 10 ? 15 : per <= 15 ? 12 : per <= 20 ? 8 : per <= 25 ? 4 : 0;
+    perRange = [per * lo / price, per * hi / price];
+    if (per <= 15) reasons.push(`PER bajo: ${per.toFixed(1)}x. Con el BPA actual, su PER habría oscilado entre ${perRange[0].toFixed(1)}x y ${perRange[1].toFixed(1)}x en 52 semanas.`);
+  } else { pts.per = 3; warns.push('Sin PER válido (beneficios negativos o no disponibles).'); }
+  // 4) Geraldine Weiss (0-25) o, si no paga dividendo, DDM / puntuación global
+  let weiss = null;
+  const ddm = s.ddm > 0 ? s.ddm * k : null;
+  const ddmUp = ddm ? ddm / price - 1 : null;
+  if (s.weiss) {
+    const buy = s.weiss.buy * k, fair = s.weiss.fair * k, sell = s.weiss.sell * k;
+    let status, p;
+    if (price <= buy) { status = 'infravalorada'; p = 25; }
+    else if (price <= fair) { status = 'con descuento'; p = 25 - 15 * (price - buy) / Math.max(fair - buy, 1e-9); }
+    else if (price < sell) { status = 'zona neutra'; p = 10 - 10 * (price - fair) / Math.max(sell - fair, 1e-9); }
+    else { status = 'sobrevalorada'; p = 0; }
+    pts.weiss = p; weiss = { buy, fair, sell, status };
+    if (price <= fair) reasons.push(`Método Geraldine Weiss: ${status}. Su yield actual supera al histórico medio (precio justo ${fair.toFixed(2)}, de compra ${buy.toFixed(2)}).`);
+  } else if (ddm) {
+    pts.weiss = ddmUp >= 0.3 ? 20 : ddmUp >= 0.1 ? 12 : ddmUp >= 0 ? 6 : 0;
+    if (ddmUp >= 0.1) reasons.push(`Valor por descuento de dividendos un ${pct(ddmUp)} por encima del precio.`);
+  } else { pts.weiss = s.overall != null ? s.overall / 100 * 15 : 6; }
+  // 5) Fundamentales: ¿hay motivo real para la caída? (0-20)
+  let greens = 0; const reds = [];
+  if (s.roe != null) { if (s.roe >= 10) greens++; else if (s.roe < 5) reds.push(`ROE bajo (${s.roe.toFixed(1)}%)`); }
+  if (s.debt != null && s.debt > 0) { if (s.debt <= 3.5) greens++; else if (s.debt > 5) reds.push(`deuda alta (${s.debt.toFixed(1)}x EBITDA)`); }
+  if (s.payout != null) { if (s.payout > 0 && s.payout <= 85) greens++; else if (s.payout > 130) reds.push(`payout muy alto (${s.payout.toFixed(0)}%)`); }
+  if (s.fcf != null) { if (s.fcf > 0) greens++; else if (s.fcf < 0) reds.push('flujo de caja libre negativo'); }
+  if (s.overall != null) { if (s.overall >= 55) greens++; else if (s.overall < 40) reds.push(`puntuación global baja (${s.overall}/100)`); }
+  if (s.divCut) reds.push(`recorte de dividendo (${s.divCut.from.toFixed(2)} → ${s.divCut.to.toFixed(2)})`);
+  pts.fund = Math.max(0, Math.min(20, 10 + greens * 2 - reds.length * 5));
+  const trap = reds.length >= 2 || !!s.divCut;
+  if (!reds.length && greens >= 2) reasons.push(`Fundamentales sin señales de deterioro (${greens} indicadores sanos).`);
+  reds.forEach(x => warns.push(`Posible causa real de la caída: ${x}.`));
+  // 6) ¿La bajada es del mercado o de la empresa? (0-10)
+  let cause = 'none';
+  if (dd >= 0.10) {
+    const idxDown = !!mkt && (mkt.dd >= 0.07 || (mkt.ret3 != null && mkt.ret3 <= -0.04));
+    const rel = (s.ret6 != null && mkt?.ret6 != null) ? s.ret6 - mkt.ret6 : null;
+    if (!mkt) cause = 'unknown';
+    else if (idxDown && (rel == null || rel > -0.12)) cause = 'market';
+    else if (idxDown) cause = 'market_worse';
+    else cause = 'own';
+  }
+  pts.mkt = { none: 3, unknown: 3, market: 10, market_worse: 4, own: 0 }[cause];
+  if (cause === 'market') reasons.push(`El ${mkt.name} está un ${pct(mkt.dd)} por debajo de su máximo: la bajada se explica en buena parte por el mercado bajista.`);
+  if (cause === 'market_worse') warns.push(`El mercado (${mkt.name}) cae, pero esta acción lo hace bastante peor que el índice en 6 meses.`);
+  if (cause === 'own') warns.push(`La caída (${pct(dd)} desde máximos) no se explica por el mercado${mkt ? ` (${mkt.name} cae solo un ${pct(mkt.dd)})` : ''}. Revisa noticias y resultados antes de comprar.`);
+
+  let score = Math.round(Object.values(pts).reduce((a, b) => a + b, 0));
+  if (trap) score = Math.min(score, 49);
+  const label = score >= 75 ? 'Excelente momento' : score >= 60 ? 'Buen momento' : score >= 45 ? 'A vigilar' : 'Sin interés ahora';
+
+  // Valor sugerido para la alerta de compra (en €, como el resto de alertas)
+  const toE = v => priceToEUR(v, pos);
+  const priceE = toE(price);
+  const levels = [];
+  if (weiss) levels.push({ v: toE(weiss.buy), src: 'precio de compra de Weiss' });
+  if (ddm) levels.push({ v: toE(ddm * 0.9), src: 'valor DDM con 10% de margen' });
+  levels.push({ v: toE(lo * 1.05), src: 'mínimo de 52 semanas +5%' });
+  const below = levels.filter(l => l.v > 0 && l.v < priceE * 0.995).sort((a, b) => b.v - a.v);
+  const entry = below.length ? { v: below[0].v, src: below[0].src } : { v: priceE * 0.97, src: 'un 3% por debajo del actual (ya está en zona de compra)' };
+  entry.v = +entry.v.toFixed(2);
+
+  return { ticker, name: s.name || pos.name || '', score, label, trap, pos52, dd, vsAvg, per, perFwd: s.perFwd, perRange, yld: s.yld, weiss, ddmUp, cause, mkt,
+           reasons, warns, reds, priceE, loE: toE(lo), hiE: toE(hi), entry, pts };
+}
+
+// ── ejecución ──
+async function oppRun(force) {
+  const o = state._opp;
+  if (o.running) return;
+  const tickers = [...new Set(state.positions.map(p => p.ticker))];
+  Object.assign(o, { running: true, done: 0, total: tickers.length, rows: {}, errors: {}, current: '', ts: Date.now() });
+  oppRender();
+  let i = 0;
+  const worker = async () => {
+    while (i < tickers.length) {
+      const t = tickers[i++]; o.current = t;
+      try {
+        const s = await oppFetchSummary(t, force);
+        const mkt = await oppMarket(t);
+        const row = oppScore(t, s, mkt);
+        if (row.error) o.errors[t] = row.error; else o.rows[t] = row;
+      } catch (e) { o.errors[t] = e?.message || String(e); }
+      o.done++; oppRender();
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  o.running = false; o.current = ''; o.ts = Date.now();
+  oppRender();
+}
+
+function openOppModal() {
+  const o = state._opp;
+  openModal('<div id="opp-root"></div>');
+  const box = document.getElementById('modal-box');
+  box.style.maxWidth = '940px'; box.style.width = '96vw'; box.style.maxHeight = '90vh'; box.style.overflowY = 'auto';
+  if (!o.running && !(o.total && Date.now() - o.ts < 30 * 60e3)) oppRun(false); else oppRender();
+}
+function oppRender() { const el = document.getElementById('opp-root'); if (el) el.innerHTML = oppHTML(); }
+function oppToggleAll() { state._opp.showAll = !state._opp.showAll; oppRender(); }
+
+function oppAddAlert(ticker) {
+  const price = parseFloat(document.getElementById('opp-px-' + ticker)?.value);
+  if (!(price > 0)) { alert('Introduce un precio válido.'); return; }
+  const dup = state.alerts.find(a => a.ticker === ticker && a.direction === 'BELOW' && !a.triggered && Math.abs(a.price - price) / price < 0.005);
+  if (dup) { alert('Ya tienes una alerta casi igual para ' + ticker + '.'); return; }
+  state.alerts.push({ id: uid(), ticker, direction: 'BELOW', price, active: true, triggered: false, created_at: new Date().toISOString() });
+  state._opp.added[ticker] = price;
+  save();
+  try { maybeRequestNotificationPermission(); } catch (e) {}
+  try { renderHeader(); } catch (e) {}
+  renderActiveTab();
+  oppRender();
+}
+
+function oppCardHTML(r) {
+  const col = r.score >= 75 ? '#16a34a' : r.score >= 60 ? '#65a30d' : '#d97706';
+  const wl = { 'infravalorada': '#16a34a', 'con descuento': '#65a30d', 'zona neutra': '#d97706', 'sobrevalorada': '#dc2626' };
+  const chip = (t, c) => `<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid ${c};color:${c};margin:2px 4px 2px 0">${t}</span>`;
+  const chips = [
+    r.per ? chip(`PER ${r.per.toFixed(1)}x`, r.per <= 15 ? '#16a34a' : '#64748b') : '',
+    r.yld ? chip(`Yield ${(+r.yld).toFixed(1)}%`, '#64748b') : '',
+    r.weiss ? chip(`Weiss: ${r.weiss.status}`, wl[r.weiss.status]) : '',
+    r.ddmUp != null ? chip(`DDM ${r.ddmUp >= 0 ? '+' : ''}${(r.ddmUp * 100).toFixed(0)}%`, r.ddmUp >= 0 ? '#16a34a' : '#dc2626') : '',
+    r.cause === 'market' ? chip('🌐 Caída por mercado', '#2563eb') : r.cause === 'own' ? chip('⚠️ Caída propia', '#dc2626') : r.cause === 'market_worse' ? chip('⚠️ Peor que el mercado', '#d97706') : ''
+  ].join('');
+  const existing = state.alerts.filter(a => a.ticker === r.ticker && a.direction === 'BELOW' && !a.triggered && a.active);
+  const added = state._opp.added[r.ticker];
+  const foot = added != null
+    ? `<span style="color:#16a34a;font-weight:700;font-size:12px">✅ Alerta añadida: avisará cuando baje a ${fmtEUR(added)}</span>`
+    : `<span style="font-size:12px;font-weight:600">Valor para comprar:</span>
+       <input id="opp-px-${esc(r.ticker)}" type="number" step="0.01" class="inp" style="width:100px;padding:4px 8px" value="${r.entry.v}"> €
+       <button class="btn" style="padding:5px 12px;font-size:12px" onclick="oppAddAlert('${esc(r.ticker)}')">🔔 Añadir a alertas</button>
+       <span style="font-size:11px;color:#94a3b8">sugerido: ${esc(r.entry.src)}</span>
+       ${existing.length ? `<span style="font-size:11px;color:#2563eb">· ya tienes alerta a ${existing.map(a => fmtEUR(a.price)).join(', ')}</span>` : ''}`;
+  return `<div style="border:1px solid rgba(148,163,184,.4);border-radius:12px;padding:12px;margin-bottom:10px">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span style="font-weight:800;color:#1d4ed8;font-size:15px">${esc(r.ticker)}</span>
+      <span style="font-size:12px;color:#64748b">${esc(r.name)}</span>
+      <span style="background:${col};color:#fff;border-radius:8px;padding:3px 10px;font-size:12px;font-weight:700">${r.score}/100 · ${r.label}</span>
+      <span style="flex:1"></span>
+      <span style="font-size:13px"><span style="color:#94a3b8;font-size:11px">Precio actual</span> <b>${fmtEUR(r.priceE)}</b></span>
+    </div>
+    <div style="margin:10px 0 6px">
+      <div style="position:relative;height:6px;border-radius:3px;background:linear-gradient(90deg,#16a34a,#facc15,#dc2626)">
+        <div style="position:absolute;left:calc(${(r.pos52 * 100).toFixed(1)}% - 6px);top:-4px;width:12px;height:14px;border-radius:3px;background:#1e293b;border:2px solid #fff"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;margin-top:3px"><span>Mín. 52 sem. ${fmtEUR(r.loE)}</span><span>Máx. 52 sem. ${fmtEUR(r.hiE)}</span></div>
+    </div>
+    <div style="margin-bottom:6px">${chips}</div>
+    ${r.reasons.length ? `<ul style="margin:4px 0 6px 18px;padding:0;font-size:12px;color:#334155">${r.reasons.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    ${r.warns.length ? `<ul style="margin:4px 0 6px 18px;padding:0;font-size:12px;color:#b45309">${r.warns.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">${foot}</div>
+  </div>`;
+}
+
+function oppHTML() {
+  const o = state._opp;
+  const rows = Object.values(o.rows);
+  const good = rows.filter(r => r.score >= 55 && !r.trap).sort((a, b) => b.score - a.score);
+  const rest = rows.filter(r => !good.includes(r)).sort((a, b) => b.score - a.score);
+  const shown = o.showAll ? good : good.slice(0, 10);
+  const errs = Object.entries(o.errors);
+  const bar = o.running ? `<div style="margin:8px 0 12px">
+      <div style="font-size:12px;color:#475569;margin-bottom:4px">Analizando ${o.done}/${o.total}${o.current ? ' · ' + esc(o.current) : ''}… la primera vez puede tardar 1-3 minutos; después se guarda 12 h.</div>
+      <div style="height:6px;background:rgba(148,163,184,.3);border-radius:3px;overflow:hidden"><div style="height:100%;width:${o.total ? (o.done / o.total * 100).toFixed(0) : 0}%;background:#2563eb"></div></div></div>` : '';
+  const restLine = r => `<div style="display:flex;gap:8px;font-size:11px;padding:3px 0;border-bottom:1px solid rgba(148,163,184,.2)">
+      <b style="width:80px;color:#1d4ed8">${esc(r.ticker)}</b><span style="width:42px">${r.score}</span>
+      <span style="color:${r.trap ? '#b45309' : '#64748b'}">${r.trap ? '⚠️ Posible trampa de valor: ' + esc(r.reds.join(', ')) : r.pos52 > 0.6 ? 'Cotiza en la zona alta de su rango de 52 semanas' : 'Sin señales suficientes de compra ahora'}</span></div>`;
+  return `
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <h3 style="margin:0;flex:1">🎯 Oportunidades de compra en tu cartera</h3>
+      <button class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="oppRun(true)" ${o.running ? 'disabled' : ''}>↻ Reanalizar</button>
+      <button class="btn-gray" style="padding:5px 10px;font-size:12px" onclick="closeModal()">✕ Cerrar</button>
+    </div>
+    <div style="font-size:11px;color:#64748b;margin:6px 0 4px;line-height:1.5">Puntúa de 0 a 100 cada empresa según: cercanía a mínimos de 52 semanas (20), descuento sobre su media (10), PER (15), método de Geraldine Weiss (25), fundamentales sanos (20) y si la bajada se explica por un mercado bajista (10). Las que muestran señales de deterioro real se descartan como posible trampa de valor.</div>
+    ${bar}
+    ${!o.running && !good.length ? `<div style="padding:24px;text-align:center;color:#64748b;font-size:13px">Ahora mismo ninguna de tus empresas reúne señales suficientes de compra (puntuación ≥ 55 y sin deterioro fundamental).</div>` : ''}
+    ${shown.map(oppCardHTML).join('')}
+    ${good.length > 10 ? `<div style="text-align:center;margin-bottom:10px"><button class="btn-gray" style="font-size:12px" onclick="oppToggleAll()">${o.showAll ? 'Ver solo las 10 mejores' : `Ver las ${good.length} oportunidades`}</button></div>` : ''}
+    ${rest.length ? `<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;font-weight:600;color:#475569">Resto de la cartera (${rest.length})</summary><div style="margin-top:6px">${rest.map(restLine).join('')}</div></details>` : ''}
+    ${errs.length ? `<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;color:#94a3b8">No analizadas (${errs.length})</summary><div style="font-size:11px;color:#94a3b8;margin-top:4px">${errs.map(([t, m]) => `${esc(t)}: ${esc(m)}`).join('<br>')}</div></details>` : ''}
+    <div style="font-size:10px;color:#94a3b8;margin-top:12px">Análisis automático con datos de Yahoo Finance y tu función de valoración, solo orientativo: no es asesoramiento financiero. El PER de 52 semanas se estima con el BPA actual.</div>`;
+}
+</script>
+<script>
 
 // NOTA: sleep(ms) ya está definido en js/utils/helpers.js (cargado antes de
 // este bloque inline), así que NO se redeclara aquí — hacerlo causaba un
@@ -4986,7 +5293,7 @@ function renderAlerts() {
   const headers = ["Ticker","Condición","Precio objetivo","Precio actual","Estado","Creada",""];
   return `<div style="padding:14px">
     ${renderNewsEventsPanel()}
-    <div style="margin-bottom:12px"><button class="btn" data-action="new-alert">＋ Nueva alerta</button></div>
+    <div style="margin-bottom:12px"><button class="btn" data-action="new-alert">＋ Nueva alerta</button> <button class="btn" style="background:#16a34a;margin-left:6px" onclick="openOppModal()" title="Analiza tu cartera y sugiere qué comprar ahora">🎯 Oportunidades de compra</button></div>
     <table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead>
     <tbody>${rows||`<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:28px">Sin alertas configuradas</td></tr>`}</tbody>
   </div>`;
@@ -9400,11 +9707,13 @@ function footballField(result) {
   </div>`;
 }
 function openModal(html) {
+  { const b = document.getElementById("modal-box"); b.style.maxWidth = ""; b.style.width = ""; b.style.maxHeight = ""; b.style.overflowY = ""; }
   document.getElementById("modal-box").innerHTML = html;
   document.getElementById("modal-overlay").style.display = "flex";
 }
 function closeModal() {
   document.getElementById("modal-overlay").style.display = "none";
+  { const b = document.getElementById("modal-box"); b.style.maxWidth = ""; b.style.width = ""; b.style.maxHeight = ""; b.style.overflowY = ""; }
 }
 
 function openAddPos() {
