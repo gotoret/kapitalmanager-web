@@ -895,234 +895,6 @@ function btcImportConfirm() {
 }
 </script>
 <script>
-// ═══════════════════════════════════════════════════════════════
-// 🏆 RANKING DE CARTERA — 5 mejores y 5 peores desde que entraron
-// ═══════════════════════════════════════════════════════════════
-// Ordena las posiciones por su G/P actual (mismo cálculo que la tabla de
-// Cartera: valor actual en € − invertido en €) y dibuja, para cada una, la
-// evolución del precio DESDE su fecha de entrada con una línea de coste medio.
-// El histórico se descarga en segundo plano (3 a la vez) y se cachea 15 min.
-function rkSt() {
-  if (!state._rank) state._rank = { by: 'pct', cache: {}, inflight: {} };
-  return state._rank;
-}
-const rkSafe = t => String(t).replace(/[^a-z0-9]/gi, '_');
-const rkMoney = v => state.privacyMode ? '••••' : fmtEUR(v);
-const rkPct = v => (v >= 0 ? '+' : '') + v.toLocaleString('es-ES', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%';
-
-function rkEntryDate(p) {
-  let d = p.date ? new Date(p.date) : null;
-  if (!d || isNaN(d.getTime())) {
-    const ds = (state.transactions || [])
-      .filter(t => t.ticker === p.ticker && t.type === 'BUY' && t.date)
-      .map(t => new Date(t.date)).filter(x => !isNaN(x.getTime())).sort((a, b) => a - b);
-    d = ds[0] || null;
-  }
-  return d;
-}
-
-function rkHeld(d) {
-  if (!d) return '';
-  const days = Math.max(0, Math.round((Date.now() - d.getTime()) / 864e5));
-  if (days < 45) return days + (days === 1 ? ' día' : ' días');
-  if (days < 700) return Math.round(days / 30.4) + ' meses';
-  return (days / 365.25).toLocaleString('es-ES', { maximumFractionDigits: 1 }) + ' años';
-}
-
-function rkRangeFor(d) {
-  if (!d) return { range: '1y', interval: '1wk' };
-  const days = (Date.now() - d.getTime()) / 864e5;
-  if (days <= 170) return { range: '6mo', interval: '1d' };
-  if (days <= 350) return { range: '1y', interval: '1wk' };
-  if (days <= 1050) return { range: '3y', interval: '1wk' };
-  if (days <= 1750) return { range: '5y', interval: '1wk' };
-  return { range: '10y', interval: '1mo' };
-}
-
-function rkCompute() {
-  const rows = [];
-  state.positions.forEach(p => {
-    const cp = state.priceCache[p.ticker];
-    if (cp == null) return;
-    const inv = posInvEUR(p);
-    if (!(inv > 0)) return;
-    const cur = p.shares * priceToEUR(cp, p);
-    if (!isFinite(cur)) return;
-    const pnl = cur - inv;
-    rows.push({ pos: p, inv, cur, pnl, pct: pnl / inv * 100 });
-  });
-  const key = rkSt().by === 'eur' ? 'pnl' : 'pct';
-  rows.sort((a, b) => b[key] - a[key]);
-  const n = rows.length;
-  const k = Math.min(5, Math.ceil(n / 2));
-  const best = rows.slice(0, k);
-  const worst = rows.slice(k).slice(-5).reverse(); // la peor primero
-  return { n, best, worst };
-}
-
-async function rkFetchHistory(p) {
-  const ed = rkEntryDate(p);
-  const { range, interval } = rkRangeFor(ed);
-  const st = rkSt();
-  const ck = p.ticker + '|' + range;
-  const hit = st.cache[ck];
-  if (hit && Date.now() - hit.ts < 15 * 60e3) return hit.pts;
-
-  const isGBp = p.ticker.toUpperCase().endsWith('.L');
-  const mk = host => `https://query${host}.finance.yahoo.com/v8/finance/chart/${p.ticker}?interval=${interval}&range=${range}`;
-  const sources = ['edge',
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(mk(1))}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(mk(1))}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(mk(2))}`,
-    `https://corsproxy.io/?url=${encodeURIComponent(mk(1))}`];
-
-  for (const src of sources) {
-    try {
-      let json;
-      if (src === 'edge') {
-        json = await fetchYahooChartJSON(p.ticker, range, interval);
-        if (!json) continue;
-      } else {
-        const res = await fetch(src, { signal: AbortSignal.timeout(10000) });
-        if (!res.ok) continue;
-        json = await res.json();
-      }
-      const r = json?.chart?.result?.[0];
-      const ts = r?.timestamp || [];
-      const cl = r?.indicators?.quote?.[0]?.close || [];
-      let pts = ts.map((t, i) => ({ t, v: cl[i] != null ? (isGBp ? cl[i] / 100 : cl[i]) : null })).filter(x => x.v != null);
-      if (ed) pts = pts.filter(x => x.t * 1000 >= ed.getTime() - 864e5);
-      if (pts.length < 3) continue;
-      const step = Math.ceil(pts.length / 70);
-      if (step > 1) pts = pts.filter((_, i) => i % step === 0 || i === pts.length - 1);
-      st.cache[ck] = { ts: Date.now(), pts };
-      return pts;
-    } catch (e) {}
-  }
-  st.cache[ck] = { ts: Date.now() - 12 * 60e3, pts: null }; // fallo: se reintenta a los ~3 min
-  return null;
-}
-
-function rkChartSvg(pts, avgCost, up, w = 170, h = 56) {
-  if (!pts || pts.length < 3) {
-    return `<div style="width:${w}px;height:${h}px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#94a3b8;text-align:center">Sin datos<br>históricos</div>`;
-  }
-  const P = 4, color = up ? '#16a34a' : '#dc2626';
-  const vals = pts.map(p => p.v);
-  let lo = Math.min(...vals), hi = Math.max(...vals);
-  const showCost = avgCost > 0 && avgCost >= lo * 0.6 && avgCost <= hi * 1.5;
-  if (showCost) { lo = Math.min(lo, avgCost); hi = Math.max(hi, avgCost); }
-  const rng = (hi - lo) || 1;
-  const t0 = pts[0].t, t1 = pts[pts.length - 1].t, dt = (t1 - t0) || 1;
-  const X = t => P + (t - t0) / dt * (w - 2 * P);
-  const Y = v => P + (h - 2 * P) - (v - lo) / rng * (h - 2 * P);
-  const line = pts.map(p => `${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ');
-  const area = `M${X(t0).toFixed(1)},${h - P} L${line.replace(/ /g, ' L')} L${X(t1).toFixed(1)},${h - P} Z`;
-  const gid = 'rkg' + Math.random().toString(36).slice(2, 8);
-  const cy = showCost ? Y(avgCost).toFixed(1) : null;
-  const lx = X(t1).toFixed(1), ly = Y(pts[pts.length - 1].v).toFixed(1);
-  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block">
-    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".28"/><stop offset="100%" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
-    <path d="${area}" fill="url(#${gid})"/>
-    ${cy ? `<line x1="${P}" y1="${cy}" x2="${w - P}" y2="${cy}" stroke="#f59e0b" stroke-width="1" stroke-dasharray="3,2"/>` : ''}
-    <polyline points="${line}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
-    <circle cx="${lx}" cy="${ly}" r="2.6" fill="${color}"/>
-  </svg>`;
-}
-
-function rkCardHTML(r, idx, good) {
-  const p = r.pos, up = r.pnl >= 0, col = up ? '#16a34a' : '#dc2626';
-  const ed = rkEntryDate(p);
-  const { range } = rkRangeFor(ed);
-  const hit = rkSt().cache[p.ticker + '|' + range];
-  const chart = hit && hit.pts ? rkChartSvg(hit.pts, p.avg_cost, up)
-    : (hit && hit.pts === null ? rkChartSvg(null) : '<div style="width:170px;height:56px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#94a3b8">⏳ Cargando…</div>');
-  const since = ed ? `Desde ${ed.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })} · ${rkHeld(ed)}` : 'Fecha de entrada desconocida';
-  const badge = good ? ['#dcfce7', '#15803d'] : ['#fee2e2', '#b91c1c'];
-  return `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid #e2e8f0;border-left:3px solid ${col};border-radius:10px;background:#fff;margin-bottom:8px">
-    <div style="width:22px;height:22px;border-radius:50%;background:${badge[0]};color:${badge[1]};font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0">${idx + 1}</div>
-    ${logoImg(p.ticker, p.name, 34)}
-    <div style="min-width:110px;flex:1 1 120px">
-      <div style="font-weight:700;color:#1d4ed8;font-size:13px">${esc(p.ticker)}</div>
-      <div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px">${esc(p.name || '')}</div>
-      <div style="font-size:10px;color:#94a3b8;margin-top:2px">${since}</div>
-    </div>
-    <div id="rk-ch-${rkSafe(p.ticker)}" style="flex-shrink:0">${chart}</div>
-    <div style="text-align:right;min-width:84px">
-      <div style="font-size:16px;font-weight:800;color:${col}">${rkPct(r.pct)}</div>
-      <div style="font-size:11px;font-weight:600;color:${col}">${up ? '+' : '−'}${rkMoney(Math.abs(r.pnl))}</div>
-      <div style="font-size:10px;color:#94a3b8">invertido ${rkMoney(r.inv)}</div>
-    </div>
-  </div>`;
-}
-
-function rkHTML() {
-  const { n, best, worst } = rkCompute();
-  const by = rkSt().by;
-  const tog = (v, l) => `<button onclick="rkSetBy('${v}')" style="padding:4px 12px;border:1px solid ${by === v ? '#2563eb' : '#e2e8f0'};border-radius:6px;font-size:12px;font-weight:600;background:${by === v ? '#2563eb' : '#fff'};color:${by === v ? '#fff' : '#64748b'};cursor:pointer">${l}</button>`;
-  const head = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
-      <h3 style="margin:0;flex:1">🏆 Ranking de tu cartera</h3>
-      <div style="display:flex;gap:4px;align-items:center"><span style="font-size:11px;color:#64748b;margin-right:2px">Ordenar por</span>${tog('pct', 'G/P %')}${tog('eur', 'G/P €')}</div>
-      <button class="btn-gray" style="padding:4px 10px;font-size:12px" onclick="closeModal()">✕</button>
-    </div>
-    <div style="font-size:12px;color:#64748b;margin-bottom:12px">Ganancia o pérdida de cada posición desde que entró en tu cartera. Las gráficas muestran el precio desde la fecha de entrada; la línea naranja discontinua es tu coste medio.</div>`;
-  if (!n) {
-    return head + `<div style="padding:30px;text-align:center;color:#94a3b8;font-size:13px">Aún no hay posiciones con precio cargado. Espera a que se actualicen las cotizaciones y vuelve a abrir el ranking.</div>`;
-  }
-  const col = (title, color, list, good) => `<div style="min-width:0">
-      <div style="font-weight:700;font-size:13px;color:${color};margin-bottom:8px">${title}</div>
-      ${list.length ? list.map((r, i) => rkCardHTML(r, i, good)).join('') : '<div style="font-size:12px;color:#94a3b8">—</div>'}
-    </div>`;
-  return head + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px">
-      ${col('🟢 Las ' + best.length + ' mejores', '#15803d', best, true)}
-      ${col('🔴 Las ' + worst.length + ' peores', '#b91c1c', worst, false)}
-    </div>
-    <div style="font-size:11px;color:#94a3b8;margin-top:6px">Sobre ${n} posiciones con precio · G/P calculado igual que en la tabla de Cartera (incluye efecto divisa, sin dividendos).</div>`;
-}
-
-function rkRender() {
-  const el = document.getElementById('rk-root');
-  if (!el) return;
-  el.innerHTML = rkHTML();
-  rkLoadCharts();
-}
-
-function rkSetBy(v) { rkSt().by = v; rkRender(); }
-
-async function rkLoadCharts() {
-  const { best, worst } = rkCompute();
-  const st = rkSt();
-  const todo = [...best, ...worst].map(r => r.pos).filter(p => {
-    const { range } = rkRangeFor(rkEntryDate(p));
-    const h = st.cache[p.ticker + '|' + range];
-    return !(h && Date.now() - h.ts < 15 * 60e3) && !st.inflight[p.ticker];
-  });
-  const queue = [...todo];
-  const worker = async () => {
-    while (queue.length) {
-      const p = queue.shift();
-      st.inflight[p.ticker] = true;
-      const pts = await rkFetchHistory(p);
-      delete st.inflight[p.ticker];
-      const el = document.getElementById('rk-ch-' + rkSafe(p.ticker));
-      if (!el) continue; // modal cerrado o ticker ya fuera del top
-      const cp = state.priceCache[p.ticker];
-      const up = cp != null ? (p.shares * priceToEUR(cp, p) - posInvEUR(p)) >= 0 : true;
-      el.innerHTML = rkChartSvg(pts, p.avg_cost, up);
-    }
-  };
-  await Promise.all([worker(), worker(), worker()]);
-}
-
-function openRankingModal() {
-  openModal('<div id="rk-root"></div>');
-  const box = document.getElementById('modal-box');
-  box.style.maxWidth = '1020px'; box.style.width = '96vw'; box.style.maxHeight = '90vh'; box.style.overflowY = 'auto';
-  rkRender();
-}
-</script>
-
-<script>
 // ═══════════════════════════════════════════════════════════
 // 🎯 OPORTUNIDADES DE COMPRA (pestaña Alertas)
 // Analiza las empresas en cartera y puntúa (0-100) cuáles están en mejor
@@ -1130,7 +902,7 @@ function openRankingModal() {
 // Geraldine Weiss, fundamentales sanos y caída explicada por el mercado.
 // Reutiliza la Edge Function 'valuation' y el histórico de índices de 'quotes'.
 // ═══════════════════════════════════════════════════════════
-const OPP_CACHE_KEY = 'km_opp_cache';
+const OPP_CACHE_KEY = 'km_opp_cache_v2';
 const OPP_TTL_MS = 12 * 3600e3;
 const OPP_INDEX = [
   [/\.(MC|MAD)$/, '^IBEX', 'IBEX 35'], [/\.L$/, '^FTSE', 'FTSE 100'], [/\.(DE|F|BE|MU|DU)$/, '^GDAXI', 'DAX'],
@@ -1167,12 +939,11 @@ const oppNum = v => (v != null && v !== '' && isFinite(+v)) ? +v : null;
 function oppReduce(r) {
   const items = (r?.priceHistory?.priceItems || []).map(p => ({ t: new Date(p.date).getTime(), c: +p.close }))
     .filter(p => isFinite(p.t) && p.c > 0).sort((a, b) => a.t - b.t);
-  if (items.length < 20) return null;
-  const last = items[items.length - 1];
-  const yr = items.filter(p => p.t >= last.t - 365 * 86400e3);
-  if (yr.length < 20) return null;
+  const last = items.length ? items[items.length - 1] : null;
+  const yr = last ? items.filter(p => p.t >= last.t - 365 * 86400e3) : [];
+  const okPx = yr.length >= 6;   // el histórico de 'valuation' es mensual (≈13 cierres al año)
   const closes = yr.map(p => p.c);
-  const ret = d => { const tg = last.t - d * 86400e3; const p = items.find(x => x.t >= tg); return p ? last.c / p.c - 1 : null; };
+  const ret = d => { if (!okPx) return null; const tg = last.t - d * 86400e3; const p = items.find(x => x.t >= tg); return p ? last.c / p.c - 1 : null; };
   let weiss = null, divCut = null;
   const dby = r.priceHistory?.divByYear, yby = r.priceHistory?.yieldByYear;
   if (dby && yby) {
@@ -1188,12 +959,29 @@ function oppReduce(r) {
   const m = r.metrics || {};
   return {
     ts: Date.now(), name: r.name || '', sector: r.sector || '',
-    last: last.c, lo: Math.min(...closes), hi: Math.max(...closes), avg: closes.reduce((a, b) => a + b, 0) / closes.length,
+    valLast: last ? last.c : null, nItems: items.length, nYear: yr.length, dense: yr.length >= 100,
+    last: okPx ? last.c : null, lo: okPx ? Math.min(...closes) : null, hi: okPx ? Math.max(...closes) : null,
+    avg: okPx ? closes.reduce((a, b) => a + b, 0) / closes.length : null,
     ret3: ret(91), ret6: ret(182),
     per: oppNum(m.PER), perFwd: oppNum(m.PER_fwd), yld: oppNum(m.Yield_pct), ddm: oppNum(m.DDM_fair_value),
     roe: oppNum(m.ROE_pct), payout: oppNum(m.Payout_pct), debt: oppNum(m.Deuda_EBITDA), fcf: oppNum(m.FCF_yield),
     overall: oppNum(r.overall_score), weissVerdict: r.weiss_verdict || '', weiss, divCut
   };
+}
+
+// Rango de 52 semanas exacto con cierres diarios (Edge Function 'quotes' → Yahoo)
+async function oppDaily(ticker) {
+  try {
+    const j = await fetchYahooChartJSON(ticker, '1y', '1d');
+    const r = j?.chart?.result?.[0], ts = r?.timestamp || [], cl = r?.indicators?.quote?.[0]?.close || [];
+    const pts = []; ts.forEach((t, i) => { if (cl[i] != null && cl[i] > 0) pts.push([t * 1000, cl[i]]); });
+    if (pts.length < 100) return null;
+    const lastP = pts[pts.length - 1], closes = pts.map(p => p[1]);
+    const at = d => { const p = pts.find(x => x[0] >= lastP[0] - d * 86400e3); return p ? p[1] : null; };
+    const a3 = at(91), a6 = at(182);
+    return { last: lastP[1], lo: Math.min(...closes), hi: Math.max(...closes), avg: closes.reduce((a, b) => a + b, 0) / closes.length,
+             ret3: a3 ? lastP[1] / a3 - 1 : null, ret6: a6 ? lastP[1] / a6 - 1 : null, dense: true };
+  } catch (e) { return null; }
 }
 
 async function oppFetchSummary(ticker, force) {
@@ -1207,7 +995,9 @@ async function oppFetchSummary(ticker, force) {
   if (error) throw new Error(error.message || 'error en la función de valoración');
   if (data?.error) throw new Error(data.error);
   const sum = oppReduce(data);
-  if (!sum) throw new Error('sin histórico de precios suficiente');
+  if (!sum.dense) { const d = await oppDaily(ticker); if (d) Object.assign(sum, d); }
+  if (!(sum.lo > 0)) throw new Error(`sin histórico de precios suficiente (valoración: ${sum.nItems} cierres; Yahoo diario: no disponible)`);
+  sum.approx = !sum.dense;
   const cc = ls.get(OPP_CACHE_KEY, {}); cc[ticker] = sum; ls.set(OPP_CACHE_KEY, cc);
   return sum;
 }
@@ -1238,13 +1028,15 @@ function oppScore(ticker, s, mkt) {
   const pos = state.positions.find(p => p.ticker === ticker) || { currency: 'EUR' };
   const live = state.priceCache[ticker];
   if (!(live > 0)) return { ticker, error: 'sin precio en tiempo real' };
-  const k = oppUnit(live / s.last);
+  const k = oppUnit(live / s.last);                              // unidad de los precios del histórico
+  const kv = oppUnit(live / (s.valLast || s.last));              // unidad de los datos de 'valuation' (DDM, Weiss)
   const lo = s.lo * k, hi = s.hi * k, avg = s.avg * k, price = live;
   const rng = hi - lo;
   const pos52 = rng > 0 ? Math.min(1, Math.max(0, (price - lo) / rng)) : 0.5;
   const dd = hi > 0 ? Math.max(0, (hi - price) / hi) : 0;
   const vsAvg = avg > 0 ? (price - avg) / avg : 0;
   const reasons = [], warns = [], pts = {};
+  if (s.approx) warns.push('Rango de 52 semanas aproximado con cierres mensuales (no se pudo obtener el histórico diario).');
   const pct = (v, d = 0) => (v * 100).toFixed(d) + '%';
 
   // 1) Cercanía al mínimo de 52 semanas (0-20)
@@ -1263,10 +1055,10 @@ function oppScore(ticker, s, mkt) {
   } else { pts.per = 3; warns.push('Sin PER válido (beneficios negativos o no disponibles).'); }
   // 4) Geraldine Weiss (0-25) o, si no paga dividendo, DDM / puntuación global
   let weiss = null;
-  const ddm = s.ddm > 0 ? s.ddm * k : null;
+  const ddm = s.ddm > 0 ? s.ddm * kv : null;
   const ddmUp = ddm ? ddm / price - 1 : null;
   if (s.weiss) {
-    const buy = s.weiss.buy * k, fair = s.weiss.fair * k, sell = s.weiss.sell * k;
+    const buy = s.weiss.buy * kv, fair = s.weiss.fair * kv, sell = s.weiss.sell * kv;
     let status, p;
     if (price <= buy) { status = 'infravalorada'; p = 25; }
     else if (price <= fair) { status = 'con descuento'; p = 25 - 15 * (price - buy) / Math.max(fair - buy, 1e-9); }
@@ -4967,7 +4759,6 @@ function renderPortfolio() {
   <button class="btn-danger" style="font-size:11px;padding:5px 10px" onclick="deletePosition()">🗑 Eliminar</button>
   <button class="btn-green" style="font-size:11px;padding:5px 10px" onclick="openAddAlert()">🔔 Alerta</button>
   <button class="btn" style="font-size:11px;padding:5px 10px;background:#7c3aed" onclick="openOppModal()" title="Analiza tu cartera y sugiere qué comprar ahora">🎯 Oportunidades</button>
-  <button class="btn" style="font-size:11px;padding:5px 10px;background:#0f766e" onclick="openRankingModal()" title="Las 5 mejores y las 5 peores posiciones desde que entraron en cartera">🏆 Ranking</button>
   <button class="btn" style="font-size:15px;padding:5px 9px;line-height:1" onclick="openImportBroker()" title="Importar extracto de broker">📥</button>
   <button class="btn" style="font-size:15px;padding:5px 9px;line-height:1" onclick="exportCarteraExcel()" title="Exportar cartera a Excel">📊</button>
   <button class="btn" style="font-size:15px;padding:5px 9px;line-height:1" onclick="openSnapshotCartera(this)" title="Snapshot — Informe visual de cartera">📸</button>
